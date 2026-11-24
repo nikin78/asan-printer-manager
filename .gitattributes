@@ -1,0 +1,4 @@
+# Keep Windows CRLF line endings for BAT and PowerShell 5.1 files
+* text=auto
+*.bat text eol=crlf
+*.ps1 text eol=crlf

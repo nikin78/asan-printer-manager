@@ -1,0 +1,11 @@
+# Temporary runtime logs & local offline backup outputs
+*.log
+*.tmp
+_AsanPrtOffline/
+AsanPrinterMgr/
+
+# OS & editor files
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
