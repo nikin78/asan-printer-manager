@@ -17,7 +17,8 @@
 
 ## 2. 프로젝트 구조 및 단일 진실 원천
 
-* **최종 배포물:** `dist/Asan_Printer_Manager.bat` (단일 실행 파일, 외부 의존성 0개 — Python 등 미사용)
+* **최종 배포물:** `dist/Asan_Printer_Manager.bat` (단일 실행 파일, 외부 의존성 0개 — Python 등 미사용, `.gitignore` 처리로 로컬 빌드 전용)
+* **비밀 설정 분리 (안 A):** 병원 공용 암호는 Git에 커밋하지 않고 로컬 비추적 파일 **`secrets.local.json`**(`secrets.local.example.json` 참고)에만 보관하며, `scripts/build_single_bat.ps1` 빌드 시점에만 `dist/Asan_Printer_Manager.bat`에 주입합니다.
 * **버전 기준:** `VERSION` 파일 (현재 SemVer `1.0.0-beta.x`, `src/01_core.ps1`의 `$global:AsanCtx.AppVersion`과 항상 동기화)
 * **소스 모듈 (`src/`):**
   * `00_bootstrap.bat` — Zero-USB-Write `%TEMP%` 스테이징, WOW64 `Sysnative`, URL-Safe Base64 UAC, `-STA`, `RC == 99` 가드 (`UTF-8 No BOM` + `CRLF`)
@@ -45,7 +46,7 @@
    * JSON 직렬화 전 문자열 배열 빈 값/`$null` 필터링.
    * 인라인 `Add-Type` C# 코드는 **C# 5.0**만 사용 (`$"..."`, `?.`, `nameof`, 식 본문 멤버 금지).
 5. **Runspace 격리 규칙:** 비동기 `$work = { ... }` 블록에서 호출하는 모든 내부 함수는 반드시 `src/01_core.ps1`의 `$script:CoreFunctionNames` 스냅샷 **이전**에 정의하고 `Verb-Noun` 형식(`^[A-Za-z]+-[A-Za-z0-9]+$`)을 지킬 것.
-6. **고정 상수 임의 변경 금지:** 백업 서버 `172.25.152.232`, 사내 DNS `10.71.1.5`, 공유 후보 `\\172.25.152.232\백업 작업` / `백업폴더`(하위 `_PRTBAK`), 계정/암호 3종 `admin` / `[REDACTED_LEGACY_SECRET]`, `[REDACTED_LEGACY_SECRET].`, `[REDACTED_LEGACY_SECRET]`, 로컬 PRT 경로(`스캔유틸|ScannerFileUtility|ScanUtility` 제외), `C:\_AsanPrtOffline`, `$global:AsanCtx`.
+6. **고정 상수 임의 변경 금지:** 백업 서버 `172.25.152.232`, 사내 DNS `10.71.1.5`, 공유 후보 `\\172.25.152.232\백업 작업` / `백업폴더`(하위 `_PRTBAK`), 기본 계정 `admin` + 공용 암호 3종(Git 소스에는 `@('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')` 유지, 로컬 `secrets.local.json`에서 빌드 주입), 로컬 PRT 경로(`스캔유틸|ScannerFileUtility|ScanUtility` 제외), `C:\_AsanPrtOffline`, `$global:AsanCtx`.
 7. **IPv4 대역 하드코딩 금지:** 병원망은 `172.*`, `10.*` 외 `19*.*`도 사용하므로 특정 사설 대역만 허용하지 말 것.
 8. **현장 안전 규칙:**
    * `net.exe` 파싱 및 `cmdkey.exe` 호출 금지 (`AsanWin32.NativeApi` P/Invoke 유지).
@@ -75,7 +76,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_static.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\smoke_test_local.ps1
 ```
 
-릴리스 버전을 올릴 때는 `VERSION`, `src/01_core.ps1`(`AppVersion`), `CHANGELOG.md`, `README.md`를 함께 갱신한 뒤 위 3단계 검증을 통과시키고, `git push` + `gh release create vX.Y.Z "dist\Asan_Printer_Manager.bat#Asan_Printer_Manager.bat"`으로 배포 파일을 첨부합니다.
+릴리스 버전을 올릴 때는 `VERSION`, `src/01_core.ps1`(`AppVersion`), `CHANGELOG.md`, `README.md`를 함께 갱신한 뒤 위 3단계 검증을 통과시키고 `git push`합니다. *(주의: 안 A 정책상 공용 암호가 주입된 `dist/Asan_Printer_Manager.bat`은 Git/개인 클라우드에 커밋·업로드하지 않고 로컬 빌드 후 사내 경로/USB로만 배포합니다.)*
 
 ---
 

@@ -300,25 +300,30 @@ function Initialize-Tab3VerifyUi {
         [void]$dgv.Columns.Add($c)
     }
 
-    # [3] 하단 테스트 인쇄 및 제어 액션 바
-    $pnlBot = New-Object System.Windows.Forms.Panel
-    $pnlBot.Dock   = [System.Windows.Forms.DockStyle]::Bottom
-    $pnlBot.Height = 48
+    # [3] 하단 테스트 인쇄 및 제어 액션 바 (DPI 125~150% 대응 FlowLayoutPanel)
+    $pnlBot = New-Object System.Windows.Forms.FlowLayoutPanel
+    $pnlBot.Dock          = [System.Windows.Forms.DockStyle]::Bottom
+    $pnlBot.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+    $pnlBot.WrapContents  = $true
+    $pnlBot.AutoSize      = $true
+    $pnlBot.AutoSizeMode  = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
+    $pnlBot.Padding       = New-Object System.Windows.Forms.Padding(0, 6, 0, 2)
 
     $btnBulk = New-StyledButton -Text '일반 프린터 전체 인쇄 (특수제외)' -Width 230 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(22, 163, 74)) -RegisterBusy
-    $btnBulk.Location = New-Object System.Drawing.Point(0, 8)
+    $btnBulk.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
     $btnBulk.Add_Click({ Invoke-Tab3BulkNormalTestPrint })
 
     $btnSingle = New-StyledButton -Text '선택 테스트 인쇄' -Width 130 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(37, 99, 235))
-    $btnSingle.Location = New-Object System.Drawing.Point(240, 8)
+    $btnSingle.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
     $btnSingle.Add_Click({
         $sel = Get-Tab3SelectedPrinterItem
         if (-not $sel) {
-            [System.Windows.Forms.MessageBox]::Show('테스트 인쇄할 프린터 행을 선택하세요.', '선택 없음', 'OK', 'Warning') | Out-Null
+            [System.Windows.Forms.MessageBox]::Show($script:Ui.Form, '테스트 인쇄할 프린터 행을 선택하세요.', '선택 없음', 'OK', 'Warning') | Out-Null
             return
         }
         if ($sel.IsSpecial) {
             $warn = [System.Windows.Forms.MessageBox]::Show(
+                $script:Ui.Form,
                 "선택한 '$($sel.PrinterName)' 은(는) [$($sel.Category)] 특수 장비입니다.`r`nWindows 테스트 페이지를 보내면 공카드·팔찌·라벨이 낭비되거나 걸릴 수 있으며, 일반적으로 AMIS에서 테스트합니다.`r`n`r`n그래도 테스트 페이지를 전송하시겠습니까?",
                 '특수 장비 테스트 인쇄 주의',
                 'YesNo',
@@ -332,7 +337,7 @@ function Initialize-Tab3VerifyUi {
     })
 
     $btnProps = New-StyledButton -Text '프린터 속성' -Width 105 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105))
-    $btnProps.Location = New-Object System.Drawing.Point(380, 8)
+    $btnProps.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
     $btnProps.Add_Click({
         $sel = Get-Tab3SelectedPrinterItem
         if (-not $sel) { return }
@@ -341,7 +346,7 @@ function Initialize-Tab3VerifyUi {
     })
 
     $btnPrefs = New-StyledButton -Text '인쇄 기본 설정' -Width 118 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105))
-    $btnPrefs.Location = New-Object System.Drawing.Point(493, 8)
+    $btnPrefs.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
     $btnPrefs.Add_Click({
         $sel = Get-Tab3SelectedPrinterItem
         if (-not $sel) { return }
@@ -350,7 +355,7 @@ function Initialize-Tab3VerifyUi {
     })
 
     $btnDef = New-StyledButton -Text '기본 프린터 지정' -Width 126 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(15, 118, 110)) -RegisterBusy
-    $btnDef.Location = New-Object System.Drawing.Point(620, 8)
+    $btnDef.Margin = New-Object System.Windows.Forms.Padding(0, 2, 0, 2)
     $btnDef.Add_Click({
         $sel = Get-Tab3SelectedPrinterItem
         if (-not $sel) { return }
@@ -691,7 +696,9 @@ function Initialize-Tab4ServerUi {
             $tFull = [IO.Path]::GetFullPath([string]$arg.TargetDir).TrimEnd('\')
             $bFull = [IO.Path]::GetFullPath([string]$arg.PrtBakDir).TrimEnd('\')
             $pFull = [IO.Path]::GetDirectoryName($tFull).TrimEnd('\')
+            $tName = [IO.Path]::GetFileName($tFull)
             if ($pFull -ine $bFull) { throw '안전 가드: _PRTBAK 직계 하위 폴더만 삭제할 수 있습니다.' }
+            if ($tName.StartsWith('_')) { throw '안전 가드: 시스템 폴더(_접두어)는 삭제할 수 없습니다.' }
             $hasMarker = (Test-Path -LiteralPath (Join-Path $tFull 'PrinterBackup.json')) -or (Test-Path -LiteralPath (Join-Path $tFull 'PrinterBackup.printerExport'))
             if (-not $hasMarker) { throw '안전 가드: PrinterBackup 파일이 없는 폴더는 삭제할 수 없습니다.' }
 

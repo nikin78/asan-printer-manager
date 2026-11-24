@@ -4,11 +4,14 @@
     아산병원 프린터/드라이버 통합 마이그레이션 도구 단일 .bat 무손실 빌드 스크립트
 .DESCRIPTION
     src/ 하위 5개 모듈을 번호 순서대로 순수 Windows CRLF(\r\n)로 결합하고
+    로컬 secrets.local.json의 공용 암호를 빌드 시점에만 주입하여
     UTF-8 (No BOM) 인코딩으로 dist/Asan_Printer_Manager.bat을 생성합니다.
 #>
 param(
-    [string]$SrcDir  = (Join-Path (Split-Path -Parent $PSScriptRoot) 'src'),
-    [string]$OutFile = (Join-Path (Split-Path -Parent $PSScriptRoot) 'dist\Asan_Printer_Manager.bat')
+    [string]$SrcDir      = (Join-Path (Split-Path -Parent $PSScriptRoot) 'src'),
+    [string]$OutFile     = (Join-Path (Split-Path -Parent $PSScriptRoot) 'dist\Asan_Printer_Manager.bat'),
+    [string]$SecretsFile = (Join-Path (Split-Path -Parent $PSScriptRoot) 'secrets.local.json'),
+    [switch]$AllowPlaceholderBuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,6 +22,10 @@ $versionFile = Join-Path $projRoot 'VERSION'
 $appVer      = 'unknown'
 if (Test-Path -LiteralPath $versionFile) {
     $appVer = ([IO.File]::ReadAllText($versionFile, [Text.Encoding]::UTF8)).Trim()
+}
+
+if (-not [string]::IsNullOrWhiteSpace($env:ASAN_SECRETS_FILE) -and $SecretsFile -eq (Join-Path $projRoot 'secrets.local.json')) {
+    $SecretsFile = $env:ASAN_SECRETS_FILE
 }
 
 $moduleOrder = @(
@@ -32,8 +39,9 @@ $moduleOrder = @(
 Write-Host '===================================================================='
 Write-Host (" Asan Printer Manager v{0} - Single BAT Lossless Build" -f $appVer)
 Write-Host '===================================================================='
-Write-Host "Source Dir : $SrcDir"
-Write-Host "Output File: $OutFile"
+Write-Host "Source Dir  : $SrcDir"
+Write-Host "Output File : $OutFile"
+Write-Host "Secrets File: $SecretsFile"
 
 if (-not (Test-Path -LiteralPath $SrcDir)) {
     throw "소스 폴더를 찾을 수 없습니다: $SrcDir"
@@ -41,6 +49,32 @@ if (-not (Test-Path -LiteralPath $SrcDir)) {
 
 $utf8StrictReader = New-Object System.Text.UTF8Encoding($false, $true)
 $utf8NoBomWriter  = New-Object System.Text.UTF8Encoding($false)
+
+# 로컬 비밀 설정 로드 (Git 비추적 secrets.local.json -> 빌드 시점 주입)
+$injectedPwCount = 0
+$pwLiteral       = $null
+$userOverride    = $null
+$placeholderExpr = "@('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')"
+
+if (Test-Path -LiteralPath $SecretsFile) {
+    $secRaw = [IO.File]::ReadAllText($SecretsFile, $utf8StrictReader)
+    if ($secRaw.Length -gt 0 -and $secRaw[0] -eq [char]0xFEFF) { $secRaw = $secRaw.Substring(1) }
+    $secObj = $secRaw | ConvertFrom-Json
+    $pws = @($secObj.DefaultPasswords | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
+    if ($pws.Count -eq 0) {
+        throw "비밀 설정 파일($SecretsFile)에 유효한 DefaultPasswords 항목이 없습니다."
+    }
+    $escapedItems    = @($pws | ForEach-Object { "'" + ($_.Replace("'", "''")) + "'" })
+    $pwLiteral       = '@(' + ($escapedItems -join ', ') + ')'
+    $injectedPwCount = $pws.Count
+    if ($secObj.PSObject.Properties.Name -contains 'DefaultUser' -and -not [string]::IsNullOrWhiteSpace([string]$secObj.DefaultUser)) {
+        $userOverride = [string]$secObj.DefaultUser
+    }
+} elseif (-not $AllowPlaceholderBuild) {
+    throw ("로컬 비밀 설정 파일이 없습니다: {0}`r`n" +
+           "-> 프로젝트 루트의 secrets.local.example.json을 secrets.local.json으로 복사한 뒤 병원 공용 암호를 입력하고 다시 빌드하세요.`r`n" +
+           "-> (암호 없는 테스트 빌드만 필요하면 -AllowPlaceholderBuild 옵션을 사용하세요.)") -f $SecretsFile
+}
 
 $sb = New-Object System.Text.StringBuilder
 $totalLines = 0
@@ -78,6 +112,17 @@ foreach ($modName in $moduleOrder) {
 }
 
 $mergedText = $sb.ToString()
+
+if ($null -ne $pwLiteral) {
+    if ($mergedText.IndexOf($placeholderExpr, [StringComparison]::Ordinal) -lt 0) {
+        throw "빌드 실패: 소스에서 암호 주입 플레이스홀더($placeholderExpr)를 찾을 수 없습니다."
+    }
+    $mergedText = $mergedText.Replace($placeholderExpr, $pwLiteral)
+    if ($userOverride) {
+        $safeUser = $userOverride.Replace("'", "''")
+        $mergedText = [regex]::Replace($mergedText, "(?m)^(\s*DefaultUser\s*=\s*)'[^']*'", "`$1'$safeUser'")
+    }
+}
 
 # 출력 디렉터리 생성 및 UTF-8 (No BOM) + 순수 CRLF 저장
 $outDir = Split-Path -Parent $OutFile
@@ -129,6 +174,11 @@ Write-Host ("  - 파일 크기     : {0:N0} bytes" -f $outBytes.Length)
 Write-Host ("  - 인코딩        : UTF-8 (No BOM) [PASS]")
 Write-Host ("  - 개행 규칙     : 순수 CRLF (LoneLF=0, LoneCR=0) [PASS]")
 Write-Host ("  - 페이로드 마커 : 1개 확인 [PASS]")
+if ($injectedPwCount -gt 0) {
+    Write-Host ("  - 비밀 설정 주입: secrets.local.json ({0}종 암호 주입 완료) [PASS]" -f $injectedPwCount)
+} else {
+    Write-Host ("  - 비밀 설정 주입: 플레이스홀더 모드 (-AllowPlaceholderBuild)")
+}
 Write-Host ("  - SHA-256       : $shaHex")
 Write-Host ''
 Write-Host 'BUILD SUCCEEDED.'

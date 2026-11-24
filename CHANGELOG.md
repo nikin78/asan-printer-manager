@@ -8,6 +8,32 @@
 
 ---
 
+## [v1.0.0-beta.3] - 2026-11-25
+
+### 보안 강화 (Security — 안 A 적용 및 현장 잔존물 차단)
+* **Git 저장소 평문 암호 완전 제거 (안 A):** `src/`·`scripts/`·문서 전반에서 병원 공용 암호 평문을 제거하고, 로컬 비추적 `secrets.local.json`에서 `scripts/build_single_bat.ps1` 빌드 시점에만 주입하도록 전환(`secrets.local.example.json` 템플릿 제공, `dist/*.bat` `.gitignore` 처리).
+* **교체 PC 내 백업 서버 관리자 자격증명 영구 저장 제거:** `Connect-AsanBackupServer`에서 `WriteDomainCredential`(`Persist=2`) 호출을 제거하고 세션 연결만 사용하며, 프로그램 종료(`FormClosing`) 시 `Disconnect-AllHostSessions`로 백업 서버 SMB 세션을 즉시 해제.
+* **`%TEMP%` 스테이징 `.bat` 자동 삭제 및 인스턴스 분리:** `00_bootstrap.bat`이 인스턴스별 임시 스테이징 파일(`AsanMgr_Staged_*.bat`)과 로그(`AsanPrinterMgr_Startup_*.log`)를 사용하고 종료 시 자가 삭제하여 `%TEMP%` 평문 잔존 및 중복 실행 오류를 동시 해소.
+* **버그 리포트 민감정보 마스킹 강화:** `HostCredCache` 세션 암호 포함 마스킹, 3글자 미만 문자열 오탐 방지(IP/JSON 훼손 차단), `TargetPrinter`/`LoadedBackupSource`/최종 텍스트·JSON 전면 마스킹 및 서버 전송 실패 사유(`FallbackNote`) 표시.
+
+### 추가 · 개선 (Added / Changed — 약제팀 `ZT411` PDF 공식 규격 반영)
+* **약제팀 `Zebra ZT411-203dpi ZPL` 공식 설치·용지 설정(`.drs`) 규격 완전 반영:**
+  * `C:\ZD5-1-17-7412\ZBRN\ZBRN.inf` 자동 INF 탐색 루트 추가 및 `Get-DetectedVendors`/`Export-PreciseThirdPartyDrivers`에 `ZT410`/`ZT411`/`ZBRN` 추가.
+  * `Find-LocalSpecialInstaller`에 `ZEBRA_ZT411` 전용 탐색(로컬 및 사내 `\\172.23.2.130\driver\...\ZT411*`) 추가하여 `zd51177412-certified.exe`, `ZBRN.inf`, **`ZebraDriver 설정.drs`** 자동 감지.
+  * 특수 프린터 도우미 체크리스트에 공식 절차 반영(셋업 마법사 **[나가기]** 종료 주의, USB/TCP·IP `Generic Network Card` 설치 경로, 용지값 수동 입력 금지 및 **`ZebraDriver 설정.drs`** 가져오기 안내).
+* **자동 검증 스위트 고도화:** `verify_static.ps1`에 `src/`·`scripts/` 인코딩/CRLF 전수 검사, `src/`↔`dist/` SHA-256 동기화 검사, 안 A 비밀 분리 검증 추가; `smoke_test_local.ps1`에 다국어 INF·5일 정리 NTFS 타임스탬프·TM-T88 포트 분기·ZT411 PDF 규격·`@($null)` 고스트 행·동적 마스킹 단위테스트 확장.
+
+### 버그 수정 (Fixed — P0/P1 전면 패치)
+* **USB 바코드 자동 재인식 오탐 및 `SEWOO_TE201` 격리 우회 수정:** 정상 `USB 인쇄 지원`(`PNPClass=USB`) 및 범용 `VID_0525` 오제거를 차단하고 실제 오류/미지정 상태의 검증된 바코드 VID(`0A5F`, `1504`)만 표적 재인식; 백업 시 `SEWOO_TE201` INF 추출을 제외하고 복원 5단계 USB 선등록도 해당 제조사 INF만 선별 적용; 신규 포트 생성/오류 해제로 성공 판정 정확화.
+* **복원 4·5단계 안정화:** 선설치된 Win 11 `SEWOO_TE201` 보호(`$wasPreExisting`), USB 포트 미할당 시 타 프린터 포트 중복 매핑 금지 및 Case A 실패 기록(`[실패 항목만 재시도]` 정상 활성화), 오프라인 공유 호스트 거짓 성공 차단, Spooler 중지/재시작 `try/finally` 및 상태 대기(`Stop-SpoolerSafe`), INF 인덱스 `DriverStore`/`LocalPrt` 지연(Lazy) 구축.
+* **네트워크 외부망 오판 수정:** `Test-AsanNetworkAndServer`가 일반 게이트웨이 Ping만으로 `IntranetOnly`를 반환하던 버그 수정(사내 DNS `10.71.1.5` 응답 또는 NIC DNS 설정 검증).
+* **5일 경과 정리 데이터 유실 버그 수정:** NTFS 디렉터리 타임스탬프 대신 `PrinterBackup.json`/`PrinterBackup.printerExport` 최신 수정 시각(`Get-BackupEffectiveWriteTime`)과 비반올림 일수 기준으로 통일.
+* **`EPSON_TMT88_LPT` 포트 분기 및 `LPT2`/`LPT3` 안내:** `LPT` 포트일 때만 무드라이버 격리 적용(USB/네트워크 TM-T88 보호) 및 `LPT1` 미감지 시 타 LPT 포트(`LPT2`/`LPT3`) 번호 변경 안내 표시.
+* **다국어 INF 파싱 & `PrintUIEntry` / `.reg` / USB 복사 오류 감지 수정:** `Get-InfDisplayNames` 영문/한글 `[Strings]` 우선순위 적용 + `pnputil` `3010` 성공 허용, `PrintUIEntry /Ss` 실제 파일 생성/크기 기반 판정, `.reg` 치환 실패 시 잘못된 원본 키 import 차단, 오프라인 ZIP USB 복사 실존/크기 검증.
+* **기타 P1 안정화:** `DeleteDomainCredential`에 `Domain:target=` 삭제 추가, WSD UUID 우선 매칭, `@($null)` 고스트 행/배너 방어, 버그 리포트 메모 `AcceptsReturn=$true`, 복원 중 `RestoreRows` 스냅샷 복사, DPI 125~150% 대응 `FlowLayoutPanel` 전환, 탭 4 단건 삭제 `_` 시스템 폴더 가드, `FormClosing` 비동기 강제 중단 데드락 방지.
+
+---
+
 ## [v1.0.0-beta.2] - 2026-11-24
 
 ### 추가 (Added)

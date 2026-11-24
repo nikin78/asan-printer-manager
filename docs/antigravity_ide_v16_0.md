@@ -58,7 +58,7 @@
 * **공유 호스트 Win32 네이티브 인증 & SID 충돌 판별:**
   * `net.exe` 텍스트 파싱 및 `cmdkey.exe` 외부 호출을 사용하지 않고 Win32 API(`WNetAddConnection2W`, `WNetCancelConnection2W`, `NetShareEnum` Level 1 `STYPE_PRINTQ=1`, `CredReadW`, `CredWriteW`, `CredDeleteW`) 직접 호출.
   * 기존 PC에 저장 자격 증명(`CredReadW`) 또는 비-게스트 SMB 세션이 있을 때만 기존 세션 보존(게스트 익명 열거 오탐 차단).
-  * 미인증 시 `$HostName\admin` 계정으로 `[REDACTED_LEGACY_SECRET]` → `[REDACTED_LEGACY_SECRET].` → `[REDACTED_LEGACY_SECRET]` 3종 비밀번호 무인 순차 시도. `Win32 1219`(다중 세션 충돌) 시 해당 호스트 세션 정리 후 재시도.
+  * 미인증 시 `$HostName\admin` 계정으로 병원 공용 3종 비밀번호(`secrets.local.json` 빌드 주입) 무인 순차 시도. `Win32 1219`(다중 세션 충돌) 시 해당 호스트 세션 정리 후 재시도.
   * Win32 오류 `5`, `86`, `1326`, `1331`, `1909` 발생 시 `AuthOrSidConflict`로 판정. 인증 성공 시 `NetShareEnum`으로 공유 프린터명 실존 확인.
 * **WSD IP·실제 모델명 추출:**
   * `WSD Port\Ports\$PortName` 레지스트리에서 `Printer UUID`/`Device UUID` 선추출.
@@ -239,7 +239,7 @@ asan-printer-manager-v16/
 10. 고정 상수 임의 변경 금지:
     * 백업 서버 IP: `172.25.152.232` / 사내 DNS: `10.71.1.5`
     * 공유 후보 경로: `\\172.25.152.232\백업 작업`, `\\172.25.152.232\백업폴더` (하위 숨김 `_PRTBAK`)
-    * 기본 계정 및 3종 비밀번호: `admin` / `[REDACTED_LEGACY_SECRET]`, `[REDACTED_LEGACY_SECRET].`, `[REDACTED_LEGACY_SECRET]`
+    * 기본 계정 및 3종 비밀번호: `admin` / 로컬 비추적 `secrets.local.json`에서 빌드 시 주입 (Git 평문 커밋 금지)
     * 로컬 PRT 드라이버 탐색 경로: `C:\Users\admin\드라이버(win10_x64)\PRT`, `win10x64\PRT`, `AMIS3.0장비\PRT` (`스캔유틸|ScannerFileUtility|ScanUtility` 제외)
     * 오프라인 로컬 저장 루트: `C:\_AsanPrtOffline`
     * Runspace 공유 컨텍스트 변수명: `$global:AsanCtx`

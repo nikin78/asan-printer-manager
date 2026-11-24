@@ -148,7 +148,7 @@ $global:AsanCtx = [hashtable]::Synchronized(@{
     ServerIP                   = $serverIpVal
     InternalDnsIP              = '10.71.1.5'
     DefaultUser                = 'admin'
-    DefaultPasswords           = @('[REDACTED_LEGACY_SECRET]', '[REDACTED_LEGACY_SECRET].', '[REDACTED_LEGACY_SECRET]')
+    DefaultPasswords           = @('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')
     CandidateShares            = @("\\$serverIpVal\백업 작업", "\\$serverIpVal\백업폴더")
     DriverRoots                = @(
         'C:\Users\admin\드라이버(win10_x64)\PRT',
@@ -1114,7 +1114,7 @@ function Connect-SharedHostSmart {
     }
 
     if ($authErrDetected) {
-        $sidHint = "기본 암호 3종([REDACTED_LEGACY_SECRET] / .. / 5.) 인증 실패 (Win32=$lastRc) -> 메인 PC 암호 변경 또는 동일 Windows SID 충돌 의심"
+        $sidHint = "기본 공용 암호 3종 인증 실패 (Win32=$lastRc) -> 메인 PC 암호 변경 또는 동일 Windows SID 충돌 의심"
         if (-not [string]::IsNullOrWhiteSpace($CustomUser)) {
             $sidHint = "입력한 계정($CustomUser)도 로그온 거부됨 (Win32=$lastRc) -> 메인 PC와 Windows Machine SID 동일 충돌 가능성 높음!"
         }

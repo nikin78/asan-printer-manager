@@ -108,12 +108,12 @@ try {
 
     $synJsonObj = [pscustomobject]@{
         FormatVersion    = 6
-        AppVersion       = '1.0.0-beta.1'
+        AppVersion       = '1.0.0-beta.3'
         SourceComputer   = 'WIN10-TEST-PC'
         SourceIP         = '172.25.99.99'
         SourceMachineSID = 'S-1-5-21-1111111111-2222222222-3333333333'
         IsOfflineBackup  = $false
-        ExportedAt       = '2026-11-23 12:00:00'
+        ExportedAt       = '2026-11-25 03:55:00'
         DefaultPrinter   = '병동_교세라_5000'
         ExcludedVirtuals = 2
         ExportedPrtCount = 0
@@ -143,6 +143,12 @@ try {
                 WsdTargetShare = $null; SpecialDatFile = $null; SpecialRegFile = $null; Default = $false
             },
             [pscustomobject]@{
+                Name = '약제팀_ZT411'; DriverName = 'ZDesigner ZT411-203dpi ZPL'; PortName = '172.23.38.215'; PortKind = 'TCPIP'
+                ConnectionName = $null; Category = '라벨(ZT410/411)'; SpecialType = 'ZEBRA_ZT411'; BackupStatusCode = 'Healthy'; BackupStatusText = '특수(라벨(ZT410/411))'
+                BackupReason = '인쇄 포트(172.23.38.215:9100) 정상 응답'; WsdTargetIp = $null; WsdModelName = $null; WsdTargetMode = $null
+                WsdTargetShare = $null; SpecialDatFile = $null; SpecialRegFile = $null; Default = $false
+            },
+            [pscustomobject]@{
                 Name = '폐기의심_구형프린터'; DriverName = 'Samsung M382x Series'; PortName = '172.25.99.88'; PortKind = 'TCPIP'
                 ConnectionName = $null; Category = '일반'; SpecialType = 'STANDARD'; BackupStatusCode = 'SuspectedInactive'; BackupStatusText = '비활성의심'
                 BackupReason = 'TCP/IP(172.25.99.88) 무응답'; WsdTargetIp = $null; WsdModelName = $null; WsdTargetMode = $null
@@ -151,7 +157,8 @@ try {
         )
         Ports            = @(
             [pscustomobject]@{ Name = '172.25.99.10'; Kind = 'TCPIP'; HostAddress = '172.25.99.10'; Protocol = 'RAW'; PortNumber = 9100; Queue = $null; SNMPEnabled = $false; ByteCount = $false },
-            [pscustomobject]@{ Name = '172.25.99.20'; Kind = 'TCPIP'; HostAddress = '172.25.99.20'; Protocol = 'RAW'; PortNumber = 9100; Queue = $null; SNMPEnabled = $false; ByteCount = $false }
+            [pscustomobject]@{ Name = '172.25.99.20'; Kind = 'TCPIP'; HostAddress = '172.25.99.20'; Protocol = 'RAW'; PortNumber = 9100; Queue = $null; SNMPEnabled = $false; ByteCount = $false },
+            [pscustomobject]@{ Name = '172.23.38.215'; Kind = 'TCPIP'; HostAddress = '172.23.38.215'; Protocol = 'RAW'; PortNumber = 9100; Queue = $null; SNMPEnabled = $false; ByteCount = $false }
         )
     }
     $synJson = $synJsonObj | ConvertTo-Json -Depth 10
@@ -179,49 +186,107 @@ if (`$sid -notmatch '^S-1-5-21-\d+-\d+-\d+$') { throw "SID 형식 오류: `$sid"
 if (`$null -eq `$wpp -or `$null -eq `$wpp.IsEnabled) { throw 'WPP 결과 null' }
 if (`$net.Status -notin @('Online','IntranetOnly','Offline')) { throw "알 수 없는 망 상태: `$(`$net.Status)" }
 
-# 2. 특수장비(4종 + EPSON TM-T88VI LPT1 무드라이버) + 가상 프린터 필터 인메모리 검증
-`$pSip  = Get-SpecialPrinterProfile -PrinterName 'id카드' -DriverName 'SISS HODOO SIP-30' -PortName '10.1.1.1'
-`$pSew  = Get-SpecialPrinterProfile -PrinterName 'Sewoo' -DriverName 'SLK-TE201' -PortName 'USBPOS0'
-`$pZeb  = Get-SpecialPrinterProfile -PrinterName '투약바코드' -DriverName 'ZDesigner ZD410-203dpi ZPL' -PortName 'USB001'
-`$pZt4  = Get-SpecialPrinterProfile -PrinterName '약제팀 라벨' -DriverName 'ZDesigner ZT411-203dpi ZPL' -PortName '172.25.99.30'
-`$pBix  = Get-SpecialPrinterProfile -PrinterName '팔찌' -DriverName 'BIXOLON SLP-TX220' -PortName 'USB002'
-`$pT88  = Get-SpecialPrinterProfile -PrinterName 'EPSON TM-T88VI' -DriverName 'EPSON TM-T88VI Receipt' -PortName 'LPT1:'
-`$pStd  = Get-SpecialPrinterProfile -PrinterName '병동레이저' -DriverName 'Kyocera ECOSYS PA5000x KX' -PortName '10.1.1.2'
+# 2. 특수장비(ZT411 PDF 규격 + EPSON TM-T88 LPT/USB 포트 분기) + 가상 프린터 필터 인메모리 검증
+`$pSip    = Get-SpecialPrinterProfile -PrinterName 'id카드' -DriverName 'SISS HODOO SIP-30' -PortName '10.1.1.1'
+`$pSew    = Get-SpecialPrinterProfile -PrinterName 'Sewoo' -DriverName 'SLK-TE201' -PortName 'USBPOS0'
+`$pZeb    = Get-SpecialPrinterProfile -PrinterName '투약바코드' -DriverName 'ZDesigner ZD410-203dpi ZPL' -PortName 'USB001'
+`$pZt4    = Get-SpecialPrinterProfile -PrinterName '약제팀 라벨' -DriverName 'ZDesigner ZT411-203dpi ZPL' -PortName '172.23.38.215'
+`$pBix    = Get-SpecialPrinterProfile -PrinterName '팔찌' -DriverName 'BIXOLON SLP-TX220' -PortName 'USB002'
+`$pT88Lpt = Get-SpecialPrinterProfile -PrinterName 'EPSON TM-T88VI' -DriverName 'EPSON TM-T88VI Receipt' -PortName 'LPT1:'
+`$pT88Usb = Get-SpecialPrinterProfile -PrinterName 'EPSON TM-T88VI' -DriverName 'EPSON TM-T88VI Receipt' -PortName 'USB003'
+`$pStd    = Get-SpecialPrinterProfile -PrinterName '병동레이저' -DriverName 'Kyocera ECOSYS PA5000x KX' -PortName '10.1.1.2'
 `$lptDevs = @(Get-DeviceManagerLptPorts)
 if (`$pSip.Type -ne 'SIP30M_IDCARD' -or (-not `$pSip.SkipAliveFilter)) { throw 'SIP30M 분류 오류' }
 if (`$pSew.Type -ne 'SEWOO_TE201' -or (-not `$pSew.Win11ReinstallOnly)) { throw 'SEWOO 분류 오류' }
 if (`$pZeb.Type -ne 'ZD410_411') { throw 'ZD410 분류 오류' }
 if (`$pZt4.Type -ne 'ZEBRA_ZT411' -or (-not `$pZt4.ExcludeFromPcl6) -or (-not `$pZt4.ExcludeBulkTest)) { throw 'ZT411 분류 오류' }
+if ((@(Get-DetectedVendors -Text 'ZT411 ZBRN')) -notcontains 'ZEBRA') { throw 'ZT411 벤더 감지 오류' }
 if (`$pBix.Type -ne 'BIXOLON_TX220') { throw 'TX220 분류 오류' }
-if (`$pT88.Type -ne 'EPSON_TMT88_LPT' -or (-not `$pT88.NoDriverBackup)) { throw 'EPSON TM-T88VI 무드라이버 분류 오류' }
+if (`$pT88Lpt.Type -ne 'EPSON_TMT88_LPT' -or (-not `$pT88Lpt.NoDriverBackup)) { throw 'EPSON TM-T88VI LPT1 무드라이버 분류 오류' }
+if (`$pT88Usb.NoDriverBackup) { throw 'EPSON TM-T88VI USB 포트가 무드라이버 삭제 대상으로 오분류됨' }
 if (`$pStd.IsSpecial) { throw '일반 프린터 오분류' }
 if (-not (Test-IsVirtualPrinter -PrinterName 'Microsoft Print to PDF' -PortName 'PORTPROMPT:')) { throw '가상 프린터 필터 오류' }
 
-# 2-B. 버그 리포트 민감정보 마스킹 + _PRTBAK\_REPORTS 격리 + Get-ServerBackupEntries 시스템폴더 제외 검증
-`$masked = Protect-ReportSensitiveText -Text 'pw1=[REDACTED_LEGACY_SECRET] pw2=[REDACTED_LEGACY_SECRET]. pw3=[REDACTED_LEGACY_SECRET] custom=MySecret!' -ExtraSecrets @('MySecret!')
-if (`$masked -match 'asan1234|MySecret') { throw "민감정보 마스킹 실패: `$masked" }
+# 2-A. ZT411 도우미 체크리스트 PDF 규격 검증 (ZebraDriver 설정.drs / ZBRN.inf / 나가기)
+`$ztRow  = [pscustomobject]@{ SpecialType = 'ZEBRA_ZT411'; PortKind = 'TCPIP'; PortName = '172.23.38.215'; HostAddress = '172.23.38.215'; PrinterName = '약제팀_ZT411' }
+`$ztInfo = Get-SpecialPrinterAssistantInfo -SpecialRow `$ztRow
+if (`$ztInfo.Checklist -notmatch 'ZebraDriver 설정\.drs' -or `$ztInfo.Checklist -notmatch 'ZBRN\.inf' -or `$ztInfo.Checklist -notmatch '나가기') {
+    throw 'ZT411 PDF 공식 안내 문구 누락'
+}
+
+# 2-B. 버그 리포트 민감정보 마스킹(동적 공용암호 + HostCredCache + 2글자 미만 미훼손) + 5일 정리 NTFS 타임스탬프 검증
+`$cfgPws = @(Get-ConfiguredDefaultPasswords)
+`$sampleDefPw = 'DummySecretPw99!'
+if (`$cfgPws.Count -gt 0) { `$sampleDefPw = `$cfgPws[0] }
+`$global:AsanCtx.HostCredCache['10.0.0.99'] = [pscustomobject]@{ User = 'admin'; Pass = 'CachedHostPw77!' }
+`$masked = Protect-ReportSensitiveText -Text "pw=`$sampleDefPw cache=CachedHostPw77! custom=MySecret! ip=172.25.1.1" -ExtraSecrets @('MySecret!', '1')
+`$global:AsanCtx.HostCredCache.Remove('10.0.0.99')
+if (`$masked.Contains(`$sampleDefPw) -or `$masked -match 'CachedHostPw77|MySecret' -or `$masked -notmatch '172\.25\.1\.1') {
+    throw "민감정보 마스킹 검증 실패: `$masked"
+}
 
 `$fakePrtBak = Join-Path '$($workRoot -replace "'", "''")' 'FakePrtBak'
 New-Item -ItemType Directory -Path `$fakePrtBak -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path `$fakePrtBak '_REPORTS') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path `$fakePrtBak '_DB') -Force | Out-Null
-`$validBakDir = Join-Path `$fakePrtBak 'TESTPC(172.25.1.1)'
-New-Item -ItemType Directory -Path `$validBakDir -Force | Out-Null
-[IO.File]::WriteAllText((Join-Path `$validBakDir 'PrinterBackup.json'), '{}', (New-Object System.Text.UTF8Encoding(`$true)))
 
-`$repRes = Send-AsanBugReport -Category '테스트' -UserDescription 'pw=[REDACTED_LEGACY_SECRET]' -TargetPrinter '약제팀 ZT411' -UiLogText 'log [REDACTED_LEGACY_SECRET]' -PrtBakDir `$fakePrtBak -PcIp '172.25.1.1'
+# 폴더 타임스탬프는 7일 전이지만 PrinterBackup.json은 오늘 갱신된 재백업(삭제되면 안 됨!)
+`$refreshedDir = Join-Path `$fakePrtBak 'TESTPC(172.25.1.1)'
+New-Item -ItemType Directory -Path `$refreshedDir -Force | Out-Null
+`$refJson = Join-Path `$refreshedDir 'PrinterBackup.json'
+[IO.File]::WriteAllText(`$refJson, '{}', (New-Object System.Text.UTF8Encoding(`$true)))
+(Get-Item -LiteralPath `$refreshedDir).LastWriteTime = (Get-Date).AddDays(-7)
+
+# 폴더와 json 모두 6일 전인 실제 만료 백업(삭제되어야 함!)
+`$expiredDir = Join-Path `$fakePrtBak 'OLDPC(172.25.1.2)'
+New-Item -ItemType Directory -Path `$expiredDir -Force | Out-Null
+`$expJson = Join-Path `$expiredDir 'PrinterBackup.json'
+[IO.File]::WriteAllText(`$expJson, '{}', (New-Object System.Text.UTF8Encoding(`$true)))
+(Get-Item -LiteralPath `$expJson).LastWriteTime    = (Get-Date).AddDays(-6)
+(Get-Item -LiteralPath `$expiredDir).LastWriteTime = (Get-Date).AddDays(-6)
+
+`$repRes = Send-AsanBugReport -Category '테스트' -UserDescription "pw=`$sampleDefPw" -TargetPrinter "약제팀 `$sampleDefPw" -UiLogText "log `$sampleDefPw" -PrtBakDir `$fakePrtBak -PcIp '172.25.1.1'
 if (-not `$repRes.Success -or (-not `$repRes.SavedToServer) -or (-not (Test-Path -LiteralPath (Join-Path `$repRes.SavedPath 'BugReport_Summary.txt')))) {
     throw '버그 리포트 저장 검증 실패'
 }
 `$repSumTxt = [IO.File]::ReadAllText((Join-Path `$repRes.SavedPath 'BugReport_Summary.txt'), [Text.Encoding]::UTF8)
-if (`$repSumTxt -match 'asan1234') { throw '저장된 버그 리포트에 비밀번호 평문 잔존!' }
+if (`$cfgPws.Count -gt 0 -and `$repSumTxt.Contains(`$sampleDefPw)) { throw '저장된 버그 리포트에 비밀번호 평문 잔존!' }
 
 `$srvEntries = @(Get-ServerBackupEntries -PrtBakDir `$fakePrtBak -PcIp '172.25.1.1')
-if (`$srvEntries.Count -ne 1 -or `$srvEntries[0].Name -ne 'TESTPC(172.25.1.1)') {
-    throw ("_REPORTS/_DB 시스템 폴더 격리 실패: count=" + `$srvEntries.Count)
+if (`$srvEntries.Count -ne 2) { throw ("_REPORTS/_DB 시스템 폴더 격리 실패: count=" + `$srvEntries.Count) }
+`$entFresh = `$srvEntries | Where-Object { `$_.Name -eq 'TESTPC(172.25.1.1)' } | Select-Object -First 1
+`$entOld   = `$srvEntries | Where-Object { `$_.Name -eq 'OLDPC(172.25.1.2)' } | Select-Object -First 1
+if (`$entFresh.IsOld5Days -or (-not `$entOld.IsOld5Days)) {
+    throw "NTFS 재백업 타임스탬프 판정 오류 (FreshOld=`$(`$entFresh.IsOld5Days), OldOld=`$(`$entOld.IsOld5Days))"
+}
+`$removedOld = @(Remove-OldServerBackups -PrtBakDir `$fakePrtBak -DaysThreshold 5)
+if (`$removedOld.Count -ne 1 -or `$removedOld[0] -ne 'OLDPC(172.25.1.2)' -or (-not (Test-Path -LiteralPath `$refreshedDir))) {
+    throw ("5일 경과 정리 보호 실패: removed=" + (`$removedOld -join ','))
 }
 
-# 2-C. USB 바코드 자동 재인식 함수 안전 실행 확인 (미등록 바코드 없으면 0건 정상 종료)
+# 2-C. 다국어 INF [Strings.xxxx] 영문/한글 우선순위 + 비모델 섹션 제외 검증
+`$multiInf = @(
+    '[Version]',
+    'Signature="`$Windows NT`$"',
+    '[SourceDisksNames]',
+    '1 = "Driver Install Disk"',
+    '[Kyocera.NTamd64]',
+    '%MODEL_PA5000% = PA5000_INST, USBPRINT\Kyocera',
+    '[Strings]',
+    'MODEL_PA5000 = "Kyocera ECOSYS PA5000x KX"',
+    '[Strings.0804]',
+    'MODEL_PA5000 = "京瓷 ECOSYS PA5000x KX"'
+) -join [Environment]::NewLine
+`$parsedInfNames = @(Get-InfDisplayNames -InfText `$multiInf)
+if (`$parsedInfNames -notcontains 'Kyocera ECOSYS PA5000x KX' -or `$parsedInfNames -contains 'Driver Install Disk') {
+    throw ("다국어 INF 파싱 오류: " + (`$parsedInfNames -join ' | '))
+}
+
+# 2-D. @(`$null) 고스트 행 차단 검증
+`$nullPrtDef = Test-BackupDataDeferred -BackupData ([pscustomobject]@{ Printers = `$null; Ports = `$null })
+if (`$nullPrtDef.Printers.Count -ne 0) { throw "Printers=`$null 고스트 행 생성 오류: `$(`$nullPrtDef.Printers.Count)" }
+
+# 2-E. USB 바코드 자동 재인식 함수 안전 실행 확인 (정상 일반 USB 프린터 미건드림)
 `$usbRes = Invoke-UsbBarcodeAutoReenumerate -WaitSeconds 2
 if (`$null -eq `$usbRes -or [string]::IsNullOrWhiteSpace(`$usbRes.Summary)) { throw 'USB 재인식 반환값 오류' }
 
@@ -394,7 +459,7 @@ Sync-AllUiButtonStates
                     }
                 }
                 `$script:SmokeMeta['SewooLocked'] = `$sewooLocked
-                if (`$dgv2.Rows.Count -ne 4) { `$script:SmokeErrors.Add("Tab2 그리드 행 수 불일치: `$(`$dgv2.Rows.Count)") }
+                if (`$dgv2.Rows.Count -ne 5) { `$script:SmokeErrors.Add("Tab2 그리드 행 수 불일치: `$(`$dgv2.Rows.Count)") }
                 if (-not `$sewooLocked)      { `$script:SmokeErrors.Add('SEWOO_TE201 체크박스 잠금(ReadOnly+False) 미작동') }
                 if (-not `$script:Tab2Ui.HelperExpanded) { `$script:SmokeErrors.Add('특수장비 감지 시 도우미 패널 자동 펼침 미작동') }
                 if (-not `$script:Tab2Ui.BtnStartRestore.Enabled) { `$script:SmokeErrors.Add('선택 항목 있음에도 복원 시작 버튼 비활성') }

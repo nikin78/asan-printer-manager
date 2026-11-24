@@ -283,17 +283,24 @@ function New-AsanChildInitialSessionState {
 }
 
 function Stop-ActiveAsyncRunspace {
+    param([switch]$ForceAbort)
     if ($script:AsyncState.PollTimer) {
         try { $script:AsyncState.PollTimer.Stop() } catch {}
     }
     if ($script:AsyncState.PowerShell) {
-        try { $script:AsyncState.PowerShell.Stop() } catch {}
-        try { $script:AsyncState.PowerShell.Dispose() } catch {}
+        if ($ForceAbort) {
+            try { [void]$script:AsyncState.PowerShell.BeginStop($null, $null) } catch {}
+        } else {
+            try { $script:AsyncState.PowerShell.Stop() } catch {}
+            try { $script:AsyncState.PowerShell.Dispose() } catch {}
+        }
         $script:AsyncState.PowerShell = $null
     }
     if ($script:AsyncState.Runspace) {
-        try { $script:AsyncState.Runspace.Close() } catch {}
-        try { $script:AsyncState.Runspace.Dispose() } catch {}
+        if (-not $ForceAbort) {
+            try { $script:AsyncState.Runspace.Close() } catch {}
+            try { $script:AsyncState.Runspace.Dispose() } catch {}
+        }
         $script:AsyncState.Runspace = $null
     }
     $script:AsyncState.AsyncResult   = $null
@@ -607,9 +614,10 @@ function Show-BugReportDialog {
     $lblMemo.Height = 22
 
     $txtMemo = New-Object System.Windows.Forms.TextBox
-    $txtMemo.Dock        = [System.Windows.Forms.DockStyle]::Fill
-    $txtMemo.Multiline   = $true
-    $txtMemo.ScrollBars  = [System.Windows.Forms.ScrollBars]::Vertical
+    $txtMemo.Dock          = [System.Windows.Forms.DockStyle]::Fill
+    $txtMemo.Multiline     = $true
+    $txtMemo.AcceptsReturn = $true
+    $txtMemo.ScrollBars    = [System.Windows.Forms.ScrollBars]::Vertical
     $txtMemo.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
     $txtMemo.Font        = $script:FontBase
     if (-not [string]::IsNullOrWhiteSpace($ErrorSummary)) {
@@ -710,9 +718,15 @@ function Show-BugReportDialog {
                 'Information'
             ) | Out-Null
         } else {
+            $fbDetail = ''
+            if (-not [string]::IsNullOrWhiteSpace([string]$data.FallbackNote)) {
+                $fbDetail = "`r`n• 서버 전송 실패 사유: $($data.FallbackNote)"
+                Add-UiLog -Message "서버 리포트 전송 실패 사유: $($data.FallbackNote)" -Level 'WARN'
+            }
             Add-UiLog -Message "오프라인/로컬 리포트 저장 완료: $($data.SavedPath)" -Level 'WARN'
             [System.Windows.Forms.MessageBox]::Show(
-                "서버 연결이 불가하여 로컬 오프라인 리포트 폴더에 저장했습니다.`r`n`r`n• 저장 경로: $($data.SavedPath)`r`n• 추후 파일만 개발 담당자에게 전달해 주세요.",
+                $script:Ui.Form,
+                "서버 연결이 불가하여 로컬 오프라인 리포트 폴더에 저장했습니다.$fbDetail`r`n`r`n• 저장 경로: $($data.SavedPath)`r`n• 추후 파일만 개발 담당자에게 전달해 주세요.",
                 '로컬 리포트 저장 완료',
                 'OK',
                 'Information'
@@ -1177,8 +1191,10 @@ function Initialize-MainGuiShell {
 
     $form.Add_FormClosing({
         param($sender, $e)
-        if ($script:AsyncState.IsBusy) {
+        $wasBusy = [bool]$script:AsyncState.IsBusy
+        if ($wasBusy) {
             $ans = [System.Windows.Forms.MessageBox]::Show(
+                $script:Ui.Form,
                 "현재 '$($script:AsyncState.TaskName)' 작업이 진행 중입니다.`r`n강제 종료하면 프린터 설정이 불완전할 수 있습니다. 정말 종료하시겠습니까?",
                 '작업 중 종료 확인',
                 [System.Windows.Forms.MessageBoxButtons]::YesNo,
@@ -1189,7 +1205,9 @@ function Initialize-MainGuiShell {
                 return
             }
         }
-        Stop-ActiveAsyncRunspace
+        Stop-ActiveAsyncRunspace -ForceAbort:$wasBusy
+        # [보안] 종료 시 사내 백업 서버 SMB 세션을 즉시 끊어 교체 PC에 관리자 접근이 남지 않도록 차단
+        try { Disconnect-AllHostSessions -HostName $global:AsanCtx.ServerIP } catch {}
     })
 
     $script:Ui.Form            = $form

@@ -1,4 +1,4 @@
-# 아산병원 프린터/드라이버 통합 마이그레이션 도구 (`v1.0.0-beta.2`)
+# 아산병원 프린터/드라이버 통합 마이그레이션 도구 (`v1.0.0-beta.3`)
 
 서울아산병원 **Windows 10 → Windows 11 PC 교체 현장**에서 기존 PC의 프린터 큐, 포트, 서드파티 드라이버, 특수/바코드 장비 세부 설정, WIA 스캐너 드라이버를 무손실 백업·복원하고 병원 표준 인쇄 정책을 자동화하는 **단일 실행 파일(`Asan_Printer_Manager.bat`) WinForms GUI 도구**입니다.
 
@@ -104,11 +104,13 @@ Windows 11 24H2 이후 **Windows 보호 인쇄 모드(WPP)**가 켜져 있으면
   3. 트레이 `Barcode Print Agent` 재실행 → 자동 등록된 `SLK-TE201(7.2×327.5)` 삭제 → **수동 등록(`8.0 × 8.5`)** 추가.
 
 ### ③ 검사/투약/약제 바코드 (`Zebra ZD410 / ZD411 / ZT410 / ZT411`)
-* **TCP/IP 연결 (`ZT411` 등):** 일반 네트워크 프린터처럼 TCP/IP 포트·ZPL 드라이버·인쇄 기본 설정(`.dat`/`.reg`)이 자동 백업·복원됩니다. *(단, PCL6 자동 전환 및 일괄 테스트 인쇄만 안전을 위해 제외)*
-* **USB 직결 (`ZD410/411` 등):** 복원 시 추출 드라이버를 선등록한 뒤 **`pnputil` 소프트웨어 자동 USB 재인식**을 수행해 `지정되지 않음` 상태에서 자동 승격을 시도하며, USB 직결 양방향 지원 `ON(유지)`을 보존합니다. *(자동 재인식 후에도 미인식 시 도우미의 **`[USB 재인식]`** 버튼 또는 USB 케이블 1회 재연결)*
+* **약제팀 `ZT411` (`ZDesigner ZT411-203dpi ZPL`):**
+  * TCP/IP(`Standard TCP/IP` / `Generic Network Card`, SNMP OFF) 및 USB 직결 모두 지원하며, 백업된 포트·ZPL 드라이버·`.dat`/`.reg` 설정을 자동 복원합니다. *(PCL6 전환 및 일괄 테스트 인쇄만 안전 제외)*
+  * **수동 재설치/용지 설정 필요 시:** `zd51177412-certified.exe` 실행(`C:\ZD5-1-17-7412` 생성) 후 뜨는 **마법사 창에서는 절대 설정하지 말고 `[나가기]`로 종료** → USB 자동 설치 또는 TCP/IP `디스크 있음`에서 `C:\ZD5-1-17-7412\ZBRN\ZBRN.inf` 선택 → 용지값은 직접 입력하지 말고 **인쇄 기본 설정 → `[가져오기/내보내기 설정]` → `[가져오기...]` → `ZebraDriver 설정.drs`** 불러오기!
+* **USB 직결 (`ZD410/411` 등):** 복원 시 해당 제조사 추출 드라이버를 선등록한 뒤 **`pnputil` 소프트웨어 자동 USB 재인식**을 수행해 `지정되지 않음` 상태에서 자동 승격을 시도하며, USB 직결 양방향 지원 `ON(유지)`을 보존합니다. *(자동 재인식 후에도 미인식 시 도우미의 **`[USB 재인식]`** 버튼 또는 USB 케이블 1회 재연결)*
 * **현장 확인:**
-  1. 프린터 속성 → 드라이버 설정 → **`[상태확인: 사용안함]`** 및 용지설정(`.drx`) 유지 확인.
-  2. 용지/상단 여백 확인: **검사바코드(`5.5×3.0 / 2.6mm`)** · **투약바코드(`5.5×6.0 / 1.0mm`)** · **약제 ZT411 용지/농도 설정**.
+  1. 프린터 속성 → 드라이버 설정 → **`[상태확인: 사용안함]`** 및 용지설정(`ZD410`: `.drx`, `ZT411`: `ZebraDriver 설정.drs`) 유지 확인.
+  2. 용지/상단 여백 확인: **검사바코드(`5.5×3.0 / 2.6mm`)** · **투약바코드(`5.5×6.0 / 1.0mm`)** · **약제 ZT411(`ZebraDriver 설정.drs`)**.
   3. AMIS 3.0 `Barcode Print Agent`(또는 TCP/IP AMIS 출력) 확인.
 
 ### ④ 팔찌바코드 (`BIXOLON SLP-TX220`)
@@ -131,37 +133,42 @@ Windows 11 24H2 이후 **Windows 보호 인쇄 모드(WPP)**가 켜져 있으면
 
 ```text
 asan-printer-manager/
-├── VERSION                       # 단일 버전 기준 파일 (예: 1.0.0-beta.1)
+├── VERSION                       # 단일 버전 기준 파일 (예: 1.0.0-beta.3)
 ├── CHANGELOG.md                  # 버전별 변경 이력
 ├── README.md                     # 사용자 및 운영 매뉴얼 (본 문서)
+├── secrets.local.example.json    # 로컬 병원 공용 암호 템플릿 (secrets.local.json으로 복사 사용, Git 비추적)
 ├── src/
-│   ├── 00_bootstrap.bat          # Zero-USB-Write 런처 + Base64 UAC + WOW64 처리
+│   ├── 00_bootstrap.bat          # Zero-USB-Write 런처 + Base64 UAC + WOW64 + 종료 시 %TEMP% 자가 정리
 │   ├── 01_core.ps1               # $global:AsanCtx, NativeApi(C# 5.0), 진단/백업/복원/특수장비 코어
 │   ├── 02_gui_shell_tab1.ps1     # WinForms 셸, Runspace 실행기, WPP 배너, 탭 1 백업
 │   ├── 03_gui_tab2.ps1           # 탭 2 복원, 지연 검증, 인라인 인증/SID 및 특수장비 도우미
 │   └── 04_gui_tab3_tab4_main.ps1 # 탭 3 검증/테스트, 탭 4 서버 관리, 메인 진입점 + exit 99
 ├── scripts/
-│   ├── build_single_bat.ps1      # src/ 병합 -> dist/Asan_Printer_Manager.bat (UTF-8 No BOM + CRLF)
-│   ├── verify_static.ps1         # 6대 자동 정적 검증 (인코딩/마커/PS 5.1 AST/제약/C# 5.0/Runspace)
-│   └── smoke_test_local.ps1      # 비파괴 로컬 스모크 테스트 (부트스트랩·코어·실제 WinForms GUI)
+│   ├── build_single_bat.ps1      # src/ + secrets.local.json 병합 -> dist/Asan_Printer_Manager.bat (UTF-8 No BOM + CRLF)
+│   ├── verify_static.ps1         # 6대 자동 정적 검증 (인코딩/src↔dist동기화/마커/PS 5.1 AST/제약/C# 5.0/Runspace)
+│   └── smoke_test_local.ps1      # 비파괴 로컬 스모크 테스트 (부트스트랩·코어/단위테스트·실제 WinForms GUI)
 ├── dist/
-│   └── Asan_Printer_Manager.bat  # 현장 배포용 최종 단일 실행 파일
+│   └── Asan_Printer_Manager.bat  # 로컬 빌드 산출물 (.gitignore 처리 — 사내 경로/USB로 직접 배포)
 └── docs/
     ├── antigravity_ide_v16_0.md  # 초기 마스터 개발 인수인계서 (설계 원본)
-    ├── E2E_TEST_CHECKLIST_v16.md # 현장 E2E 통합 테스트 체크리스트 (TC-01 ~ TC-21)
+    ├── E2E_TEST_CHECKLIST_v16.md # 현장 E2E 통합 테스트 체크리스트 (TC-01 ~ TC-22)
     └── v16_0_*.md                # 초기 모듈 소스 보관본
 ```
 
+### 최초 1회 로컬 비밀 설정 (안 A — Git 평문 암호 분리)
+1. 프로젝트 루트의 `secrets.local.example.json`을 `secrets.local.json`으로 복사합니다.
+2. `secrets.local.json`에 병원 공용 암호 3종을 기입합니다. *(Git에서 `.gitignore`로 자동 제외됩니다.)*
+
 ### 소스 수정 후 재빌드 및 검증 명령 (Windows PowerShell 5.1)
-`scripts/` 폴더에서 아래 3개 명령을 순서대로 실행합니다.
+프로젝트 루트에서 아래 3개 명령을 순서대로 실행합니다.
 
 ```powershell
-# 1. 단일 .bat 무손실 빌드
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_single_bat.ps1
+# 1. 단일 .bat 무손실 빌드 (secrets.local.json 자동 주입)
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_single_bat.ps1
 
 # 2. 6대 자동 정적 검증 (ALL 6/6 CHECKS PASSED 확인)
-powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_static.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_static.ps1
 
 # 3. 비파괴 로컬 스모크 테스트 (ALL 3/3 TESTS PASSED 확인)
-powershell -NoProfile -ExecutionPolicy Bypass -File .\smoke_test_local.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\smoke_test_local.ps1
 ```

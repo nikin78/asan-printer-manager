@@ -12,7 +12,9 @@
       [6] 전체 함수 교차참조, 비동기 $work 블록 코어 전용 검증, 실제 자식 Runspace 스냅샷 주입 테스트
 #>
 param(
-    [string]$BatFile = (Join-Path (Split-Path -Parent $PSScriptRoot) 'dist\Asan_Printer_Manager.bat')
+    [string]$BatFile = (Join-Path (Split-Path -Parent $PSScriptRoot) 'dist\Asan_Printer_Manager.bat'),
+    [string]$SecretsFile = (Join-Path (Split-Path -Parent $PSScriptRoot) 'secrets.local.json'),
+    [switch]$AllowPlaceholder
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,7 +22,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 $projRoot    = Split-Path -Parent $PSScriptRoot
 $versionFile = Join-Path $projRoot 'VERSION'
-$expectedVer = '1.0.0-beta.1'
+$expectedVer = '1.0.0-beta.3'
 if (Test-Path -LiteralPath $versionFile) {
     $expectedVer = ([IO.File]::ReadAllText($versionFile, [Text.Encoding]::UTF8)).Trim()
 }
@@ -88,10 +90,82 @@ if ($utf8Valid -and $null -ne $batText) {
     $corruptHits = ([regex]::Matches($batText, '\*\*STAGED\*\*|\*\*POWERSHELL_PAYLOAD\*\*|(?m)^```')).Count
 }
 
-$c1Pass = ($utf8Valid -and (-not $hasBom) -and ($loneLf -eq 0) -and ($loneCr -eq 0) -and ($embeddedBom -eq 0) -and ($corruptHits -eq 0))
-Add-CheckResult -Id 'CHK-1' -Title '인코딩(UTF-8 No BOM) · 순수 CRLF · 변조 점검' -Passed $c1Pass -Detail (
-    "ValidUTF8=$utf8Valid, HasBOM=$hasBom, LoneLF=$loneLf, LoneCR=$loneCr, EmbeddedBOM=$embeddedBom, MarkdownCorrupt=$corruptHits, Size=$($batBytes.Length) bytes"
-)
+$srcEncIssues = [System.Collections.Generic.List[string]]::new()
+$srcDirPath   = Join-Path $projRoot 'src'
+$scrDirPath   = Join-Path $projRoot 'scripts'
+foreach ($chkItem in @(
+    @{ Path = (Join-Path $srcDirPath '00_bootstrap.bat');          NeedBom = $false },
+    @{ Path = (Join-Path $srcDirPath '01_core.ps1');               NeedBom = $true },
+    @{ Path = (Join-Path $srcDirPath '02_gui_shell_tab1.ps1');     NeedBom = $true },
+    @{ Path = (Join-Path $srcDirPath '03_gui_tab2.ps1');           NeedBom = $true },
+    @{ Path = (Join-Path $srcDirPath '04_gui_tab3_tab4_main.ps1'); NeedBom = $true },
+    @{ Path = (Join-Path $scrDirPath 'build_single_bat.ps1');      NeedBom = $true },
+    @{ Path = (Join-Path $scrDirPath 'verify_static.ps1');         NeedBom = $true },
+    @{ Path = (Join-Path $scrDirPath 'smoke_test_local.ps1');      NeedBom = $true }
+)) {
+    if (-not (Test-Path -LiteralPath $chkItem.Path)) {
+        $srcEncIssues.Add("누락: $([IO.Path]::GetFileName($chkItem.Path))")
+        continue
+    }
+    $fb = [IO.File]::ReadAllBytes($chkItem.Path)
+    $fbBom = ($fb.Length -ge 3 -and $fb[0] -eq 0xEF -and $fb[1] -eq 0xBB -and $fb[2] -eq 0xBF)
+    if ($chkItem.NeedBom -and -not $fbBom) { $srcEncIssues.Add("BOM 누락: $([IO.Path]::GetFileName($chkItem.Path))") }
+    if (-not $chkItem.NeedBom -and $fbBom) { $srcEncIssues.Add("불허 BOM 존재: $([IO.Path]::GetFileName($chkItem.Path))") }
+    $fLf = 0; $fCr = 0
+    for ($bi = 0; $bi -lt $fb.Length; $bi++) {
+        if ($fb[$bi] -eq 0x0A -and ($bi -eq 0 -or $fb[$bi - 1] -ne 0x0D)) { $fLf++ }
+        if ($fb[$bi] -eq 0x0D -and ($bi -eq ($fb.Length - 1) -or $fb[$bi + 1] -ne 0x0A)) { $fCr++ }
+    }
+    if ($fLf -gt 0 -or $fCr -gt 0) {
+        $srcEncIssues.Add("CRLF 위반($([IO.Path]::GetFileName($chkItem.Path)): LoneLF=$fLf, LoneCR=$fCr)")
+    }
+}
+
+# src/ <-> dist/ 동기화 확인 (빌드 누락된 구형 dist 방지)
+$distSyncOk = $true
+$distSyncDetail = 'Synced'
+try {
+    $modOrder = @('00_bootstrap.bat','01_core.ps1','02_gui_shell_tab1.ps1','03_gui_tab2.ps1','04_gui_tab3_tab4_main.ps1')
+    $sbExp = New-Object System.Text.StringBuilder
+    foreach ($mn in $modOrder) {
+        $mr = [IO.File]::ReadAllText((Join-Path $srcDirPath $mn), $utf8Strict)
+        if ($mr.Length -gt 0 -and $mr[0] -eq [char]0xFEFF) { $mr = $mr.Substring(1) }
+        $mnorm = ([regex]::Replace($mr, "`r`n|`r|`n", "`r`n")).TrimEnd("`r", "`n")
+        [void]$sbExp.Append($mnorm)
+        [void]$sbExp.Append("`r`n")
+    }
+    $expMerged = $sbExp.ToString()
+    if (Test-Path -LiteralPath $SecretsFile) {
+        $sr = [IO.File]::ReadAllText($SecretsFile, $utf8Strict)
+        if ($sr.Length -gt 0 -and $sr[0] -eq [char]0xFEFF) { $sr = $sr.Substring(1) }
+        $so = $sr | ConvertFrom-Json
+        $spws = @($so.DefaultPasswords | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { "'" + (([string]$_).Replace("'", "''")) + "'" })
+        if ($spws.Count -gt 0) {
+            $expMerged = $expMerged.Replace("@('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')", '@(' + ($spws -join ', ') + ')')
+        }
+        if ($so.PSObject.Properties.Name -contains 'DefaultUser' -and -not [string]::IsNullOrWhiteSpace([string]$so.DefaultUser)) {
+            $su = ([string]$so.DefaultUser).Replace("'", "''")
+            $expMerged = [regex]::Replace($expMerged, "(?m)^(\s*DefaultUser\s*=\s*)'[^']*'", "`$1'$su'")
+        }
+    }
+    $expBytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($expMerged)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $hAct = [BitConverter]::ToString($sha.ComputeHash($batBytes))
+    $hExp = [BitConverter]::ToString($sha.ComputeHash($expBytes))
+    $sha.Dispose()
+    if ($hAct -ne $hExp) {
+        $distSyncOk = $false
+        $distSyncDetail = 'OutOfSync(src 수정 후 build_single_bat.ps1 미실행)'
+    }
+} catch {
+    $distSyncOk = $false
+    $distSyncDetail = "SyncCheckErr($($_.Exception.Message))"
+}
+
+$c1Pass = ($utf8Valid -and (-not $hasBom) -and ($loneLf -eq 0) -and ($loneCr -eq 0) -and ($embeddedBom -eq 0) -and ($corruptHits -eq 0) -and ($srcEncIssues.Count -eq 0) -and $distSyncOk)
+$c1Detail = "ValidUTF8=$utf8Valid, HasBOM=$hasBom, LoneLF=$loneLf, LoneCR=$loneCr, EmbeddedBOM=$embeddedBom, MarkdownCorrupt=$corruptHits, SrcEncIssues=$($srcEncIssues.Count), DistSync=$distSyncDetail, Size=$($batBytes.Length) bytes"
+if ($srcEncIssues.Count -gt 0) { $c1Detail += "`r`nSrcIssues: " + ($srcEncIssues -join '; ') }
+Add-CheckResult -Id 'CHK-1' -Title '인코딩(dist/src/scripts) · 순수 CRLF · src↔dist 동기화 점검' -Passed $c1Pass -Detail $c1Detail
 
 if (-not $utf8Valid) {
     throw 'UTF-8 디코딩 실패로 후속 검증을 중단합니다.'
@@ -232,16 +306,13 @@ try {
         }
     }
 
-    # 4-6. Rule 10: 고정 상수 무결성 확인
+    # 4-6. Rule 10: 고정 상수 무결성 + 안 A(비밀 분리 주입) 점검
     foreach ($constNeedle in @(
         '172.25.152.232',
         '10.71.1.5',
         '백업 작업',
         '백업폴더',
         '_PRTBAK',
-        '[REDACTED_LEGACY_SECRET]',
-        '[REDACTED_LEGACY_SECRET].',
-        '[REDACTED_LEGACY_SECRET]',
         'C:\_AsanPrtOffline',
         '$global:AsanCtx',
         '스캔유틸|ScannerFileUtility|ScanUtility'
@@ -249,6 +320,13 @@ try {
         if ($payloadText.IndexOf($constNeedle, [StringComparison]::Ordinal) -lt 0) {
             $ruleViolations.Add("Rule10 위반: 필수 고정 상수 누락 ('$constNeedle')")
         }
+    }
+    $srcCoreRaw = [IO.File]::ReadAllText((Join-Path $srcDirPath '01_core.ps1'), $utf8Strict)
+    if ($srcCoreRaw.IndexOf("@('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')", [StringComparison]::Ordinal) -lt 0) {
+        $ruleViolations.Add('안 A 위반: src/01_core.ps1에 비밀 주입 플레이스홀더가 없습니다 (하드코딩 암호 금지).')
+    }
+    if (-not $AllowPlaceholder -and $payloadText.IndexOf("@('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')", [StringComparison]::Ordinal) -ge 0) {
+        $ruleViolations.Add('빌드 오류: dist/.bat에 미치환 암호 플레이스홀더가 남아 있습니다 (secrets.local.json 주입 필요).')
     }
 
     # 4-7. Rule 20: WinForms Anchor=Right 하드코딩 금지 + New-RightFlowStrip / Sync-AllUiButtonStates 확인

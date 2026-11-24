@@ -4,6 +4,10 @@
 _AsanPrtOffline/
 AsanPrinterMgr/
 
+# Local hospital credentials & built distribution binaries (never commit live passwords)
+secrets.local.json
+dist/*.bat
+
 # OS & editor files
 Thumbs.db
 desktop.ini
