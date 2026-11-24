@@ -31,6 +31,7 @@ fltmc >nul 2>&1
 if not errorlevel 1 goto RUN_STAGED_NOW
 
 rem Encode ORIGINAL_SELF as URL-safe Base64 ([A-Za-z0-9_-], safe across CMD metacharacters & UAC)
+set "ASAN_PARENT_CLEANUP="
 "%PS_EXE%" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $b64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($env:ORIGINAL_SELF)).Replace('+','-').Replace('/','_').TrimEnd('='); $q=[char]34; $cmdLine=$q+$q+$env:STAGED_SELF+$q+' __STAGED__ '+$b64+$q; Start-Process -FilePath $env:CMD_EXE -Verb RunAs -ArgumentList @('/d','/c',$cmdLine) | Out-Null"
 if errorlevel 1 (
     if exist "%STAGED_SELF%" del /f /q "%STAGED_SELF%" >nul 2>&1
@@ -41,6 +42,7 @@ exit /b 0
 :RUN_STAGED_NOW
 set "ASAN_ORIGINAL_SELF_B64="
 set "ASAN_ORIGINAL_SELF=%ORIGINAL_SELF%"
+set "ASAN_PARENT_CLEANUP=1"
 call "%STAGED_SELF%" __STAGED__
 set "RUN_RC=%ERRORLEVEL%"
 if exist "%STAGED_SELF%" del /f /q "%STAGED_SELF%" >nul 2>&1
@@ -69,8 +71,8 @@ set "RC=%ERRORLEVEL%"
 if exist "%PSTEMP%" del /f /q "%PSTEMP%" >nul 2>&1
 if "%RC%"=="99" (
     if exist "%START_LOG%" del /f /q "%START_LOG%" >nul 2>&1
-    if /i "%SELF_NAME:~0,15%"=="AsanMgr_Staged_" (
-        start "" /b cmd.exe /d /c "ping -n 2 127.0.0.1 >nul & del /f /q ""%SELF%"" >nul 2>&1"
+    if not defined ASAN_PARENT_CLEANUP if /i "%SELF_NAME:~0,15%"=="AsanMgr_Staged_" (
+        start "" /b "%CMD_EXE%" /d /c "ping -n 2 127.0.0.1 >nul & del /f /q "%%SELF%%" >nul 2>&1"
     )
     exit /b 0
 )
@@ -78,8 +80,8 @@ if "%RC%"=="99" (
 rem Non-99 exit means unexpected error or PS 5.1 ParserError -> Always show GUI MessageBox + Log
 "%PS_EXE%" -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Windows.Forms; $msg='Script terminated unexpectedly (ExitCode='+$env:RC+').'; if(Test-Path -LiteralPath $env:START_LOG){ $txt=[IO.File]::ReadAllText($env:START_LOG,[Text.Encoding]::UTF8); if($txt.Length -gt 1200){ $txt=$txt.Substring(0,1200)+'...' }; if(-not [string]::IsNullOrWhiteSpace($txt)){ $msg=$msg+[Environment]::NewLine+[Environment]::NewLine+$txt } }; [System.Windows.Forms.MessageBox]::Show($msg,'Asan Printer Manager - Startup Error',[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null"
 if exist "%START_LOG%" del /f /q "%START_LOG%" >nul 2>&1
-if /i "%SELF_NAME:~0,15%"=="AsanMgr_Staged_" (
-    start "" /b cmd.exe /d /c "ping -n 2 127.0.0.1 >nul & del /f /q ""%SELF%"" >nul 2>&1"
+if not defined ASAN_PARENT_CLEANUP if /i "%SELF_NAME:~0,15%"=="AsanMgr_Staged_" (
+    start "" /b "%CMD_EXE%" /d /c "ping -n 2 127.0.0.1 >nul & del /f /q "%%SELF%%" >nul 2>&1"
 )
 exit /b 1
 
@@ -95,20 +97,20 @@ exit /b 1
 
 :ERR_NOADMIN
 echo [ERROR] Administrator privileges are required.
-if /i "%SELF_NAME:~0,15%"=="AsanMgr_Staged_" (
-    start "" /b cmd.exe /d /c "ping -n 2 127.0.0.1 >nul & del /f /q ""%SELF%"" >nul 2>&1"
-)
 pause
+if not defined ASAN_PARENT_CLEANUP if /i "%SELF_NAME:~0,15%"=="AsanMgr_Staged_" (
+    start "" /b "%CMD_EXE%" /d /c "ping -n 2 127.0.0.1 >nul & del /f /q "%%SELF%%" >nul 2>&1"
+)
 exit /b 1
 
 :ERR_EXTRACT
 echo [ERROR] Failed to extract PowerShell payload. Save this file as UTF-8 without BOM.
 if exist "%START_LOG%" type "%START_LOG%"
 if exist "%START_LOG%" del /f /q "%START_LOG%" >nul 2>&1
-if /i "%SELF_NAME:~0,15%"=="AsanMgr_Staged_" (
-    start "" /b cmd.exe /d /c "ping -n 2 127.0.0.1 >nul & del /f /q ""%SELF%"" >nul 2>&1"
-)
 pause
+if not defined ASAN_PARENT_CLEANUP if /i "%SELF_NAME:~0,15%"=="AsanMgr_Staged_" (
+    start "" /b "%CMD_EXE%" /d /c "ping -n 2 127.0.0.1 >nul & del /f /q "%%SELF%%" >nul 2>&1"
+)
 exit /b 1
 
 ##__POWERSHELL_PAYLOAD__

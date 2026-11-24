@@ -119,7 +119,7 @@ if ($null -ne $pwLiteral) {
     }
     $mergedText = $mergedText.Replace($placeholderExpr, $pwLiteral)
     if ($userOverride) {
-        $safeUser = $userOverride.Replace("'", "''")
+        $safeUser = $userOverride.Replace("'", "''").Replace('$', '$$')
         $mergedText = [regex]::Replace($mergedText, "(?m)^(\s*DefaultUser\s*=\s*)'[^']*'", "`$1'$safeUser'")
     }
 }

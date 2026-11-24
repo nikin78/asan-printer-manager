@@ -440,6 +440,8 @@ function Get-SafeFileName {
 function Get-BackupFolderId {
     param([string]$PcIp)
     $safeHost = Get-SafeFileName -Text $env:COMPUTERNAME
+    # '_' 접두어는 시스템 폴더(_REPORTS, _TMP 등) 예약어이므로 호스트명이 '_'로 시작하면 'PC' 접두어 부여
+    if ($safeHost.StartsWith('_')) { $safeHost = 'PC' + $safeHost }
     $safeIp   = Get-SafeFileName -Text $PcIp
     return "$safeHost($safeIp)"
 }
@@ -624,6 +626,7 @@ function Get-ActiveNetworkInfo {
     $ip          = 'NO_IP'
     $gw          = $null
     $adapterName = ''
+    $bestIfIdx   = -1
 
     $excludeAliasRegex = '(?i)Loopback|Teredo|isatap|Bluetooth|TAP-|VPN'
     $excludeDescRegex  = '(?i)Loopback|Bluetooth|TAP-Windows|Kernel Debug'
@@ -675,11 +678,12 @@ function Get-ActiveNetworkInfo {
         elseif ($isPhys) { $tier = 3 }
 
         $candidates.Add([pscustomobject]@{
-            Tier        = $tier
-            Metric      = $metric
-            IPAddress   = $usableIp
-            Gateway     = $gwIp
-            AdapterName = $alias
+            Tier           = $tier
+            Metric         = $metric
+            IPAddress      = $usableIp
+            Gateway        = $gwIp
+            AdapterName    = $alias
+            InterfaceIndex = $ifIdx
         })
     }
 
@@ -688,13 +692,15 @@ function Get-ActiveNetworkInfo {
         $ip          = $best.IPAddress
         $gw          = $best.Gateway
         $adapterName = $best.AdapterName
+        $bestIfIdx   = [int]$best.InterfaceIndex
     }
 
     return [pscustomobject]@{
-        IPAddress   = $ip
-        Gateway     = $gw
-        AdapterName = $adapterName
-        HasValidIP  = (Test-IsUsableIPv4 -IpText $ip)
+        IPAddress      = $ip
+        Gateway        = $gw
+        AdapterName    = $adapterName
+        InterfaceIndex = $bestIfIdx
+        HasValidIP     = (Test-IsUsableIPv4 -IpText $ip)
     }
 }
 
@@ -712,6 +718,11 @@ function Disconnect-AllHostSessions {
     param([string]$HostName)
     if ([string]::IsNullOrWhiteSpace($HostName)) { return }
     [void][AsanWin32.NativeApi]::DisconnectShare("\\$HostName\IPC$")
+    if ($HostName -ieq $global:AsanCtx.ServerIP) {
+        foreach ($candShare in @($global:AsanCtx.CandidateShares)) {
+            [void][AsanWin32.NativeApi]::DisconnectShare([string]$candShare)
+        }
+    }
     try {
         $conns = @(Get-SmbConnection -ErrorAction SilentlyContinue | Where-Object { $_.ServerName -ieq $HostName })
         foreach ($c in $conns) {
@@ -785,10 +796,12 @@ function Test-AsanNetworkAndServer {
     $message   = '사내망 미연결 — 고정 IP 및 DNS(10.71.1.5)를 먼저 설정하세요.'
 
     if ($netInfo.HasValidIP) {
-        try {
-            $dnsServers = @(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { $_.ServerAddresses })
-            if ($dnsServers -contains $global:AsanCtx.InternalDnsIP) { $dnsConf = $true }
-        } catch {}
+        if ($netInfo.InterfaceIndex -gt 0) {
+            try {
+                $dnsServers = @(Get-DnsClientServerAddress -InterfaceIndex $netInfo.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { $_.ServerAddresses })
+                if ($dnsServers -contains $global:AsanCtx.InternalDnsIP) { $dnsConf = $true }
+            } catch {}
+        }
 
         $dnsOk     = (Test-TcpPortFast -HostIp $global:AsanCtx.InternalDnsIP -Port 53 -TimeoutMs 1200) -or (Test-PingFast -HostIp $global:AsanCtx.InternalDnsIP -TimeoutMs 1000)
         $serverTcp = Test-TcpPortFast -HostIp $global:AsanCtx.ServerIP -Port 445 -TimeoutMs 2000
@@ -995,9 +1008,9 @@ function Get-DeviceManagerLptPorts {
 function Get-BrokenBarcodeUsbDevices {
     param([switch]$IncludeHealthyBarcode)
 
-    # 검증된 바코드 프린터 VID만 허용 (Zebra=0A5F, BIXOLON=1504; 범용 Netchip 0525 및 Win10 Sewoo 제외)
+    # 검증된 바코드 프린터 VID/모델만 허용 (Zebra=0A5F, BIXOLON=1504; 범용 Netchip 0525 및 Win10 Sewoo 제외)
     $vidRegex     = '(?i)VID_(0A5F|1504)'
-    $nameRegex    = '(?i)Zebra|ZDesigner|ZD410|ZD411|ZT410|ZT411|BIXOLON|SLP-TX|TX220'
+    $nameRegex    = '(?i)Zebra|ZDesigner|ZD410|ZD411|ZT410|ZT411|BIXOLON|SLP-TX|TX220|TX-220'
     $excludeRegex = '(?i)Sewoo|SLK-TE|LK-TE'
 
     $found = [System.Collections.Generic.List[object]]::new()
@@ -1013,13 +1026,21 @@ function Get-BrokenBarcodeUsbDevices {
             $errCode = 0
             if ($null -ne $dev.ConfigManagerErrorCode) { $errCode = [int]$dev.ConfigManagerErrorCode }
 
-            if ($devName -match $excludeRegex) { continue }
-            $isBarcodeUsb = ($devId -match $vidRegex) -or ($devName -match $nameRegex)
+            if (($devName -match $excludeRegex) -or ($devId -match $excludeRegex)) { continue }
+            $isUsbPrint   = ($devId -match '^(?i)USBPRINT\\')
+            $isBarcodeUsb = ($devId -match $vidRegex) -or ($devId -match $nameRegex) -or ($devName -match $nameRegex) -or ($isUsbPrint -and ($devId -match '(?i)ZTC'))
             if (-not $isBarcodeUsb) { continue }
 
             # 정상 동작 중인 USB Printing Support(PNPClass=USB, ErrorCode=0, Status=OK)는 절대 건드리지 않음
+            # 반면 USBPRINT\ 자식 노드가 Printer/PrintQueue가 아니면 '지정되지 않음' 미결합 상태로 판정
             $isUnboundClass = [string]::IsNullOrWhiteSpace($pnpCls) -or ($pnpCls -match '(?i)^(Unknown|Other|OtherDevices)$')
-            $isProblem      = ($errCode -ne 0) -or ($stat -ine 'OK') -or $isUnboundClass
+            if ($isUsbPrint -and ($pnpCls -notmatch '(?i)^(Printer|PrintQueue)$')) {
+                $isUnboundClass = $true
+            }
+            $isProblem = ($errCode -ne 0) -or ($stat -ine 'OK') -or $isUnboundClass
+
+            $sortRank = 2
+            if ($isUsbPrint) { $sortRank = 1 }
 
             if ($IncludeHealthyBarcode -or $isProblem) {
                 $found.Add([pscustomobject]@{
@@ -1029,11 +1050,12 @@ function Get-BrokenBarcodeUsbDevices {
                     Status    = $stat
                     ErrorCode = $errCode
                     IsProblem = $isProblem
+                    SortRank  = $sortRank
                 })
             }
         }
     } catch {}
-    return @($found.ToArray())
+    return @($found.ToArray() | Sort-Object SortRank, DeviceID)
 }
 
 function Invoke-UsbBarcodeAutoReenumerate {
@@ -1049,7 +1071,7 @@ function Invoke-UsbBarcodeAutoReenumerate {
 
     $removedIds = [System.Collections.Generic.List[string]]::new()
     if ($candidates.Count -gt 0) {
-        Write-ProgressSafe -OnProgress $OnProgress -Percent 52 -Message "미인식 USB 바코드 장치 $($candidates.Count)개 소프트웨어 재인식(제거 후 하드웨어 재검색) 시도 중..."
+        Write-ProgressSafe -OnProgress $OnProgress -Percent 52 -Message "USB 바코드 장치 $($candidates.Count)개 소프트웨어 재인식(제거 후 하드웨어 재검색) 시도 중..."
         foreach ($c in $candidates) {
             $rRem = Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/remove-device', $c.DeviceID)
             if ($rRem.ExitCode -eq 0) {
@@ -1070,7 +1092,7 @@ function Invoke-UsbBarcodeAutoReenumerate {
             if ($addedNow.Count -gt 0) { break }
             if ($sec -ge 3) {
                 $stillNow = @(Get-BrokenBarcodeUsbDevices)
-                if ($beforeProb -gt 0 -and $stillNow.Count -lt $beforeProb) { break }
+                if (($beforeProb -gt 0 -and $stillNow.Count -lt $beforeProb) -or ($beforeProb -eq 0 -and $curPorts.Count -gt 0 -and $stillNow.Count -eq 0)) { break }
             }
         }
     }
@@ -1087,6 +1109,8 @@ function Invoke-UsbBarcodeAutoReenumerate {
             $summary = "USB 바코드 소프트웨어 재인식 성공 (대상 $($candidates.Count)개 처리, 신규 USB 포트 생성: $($newPorts -join ', '))"
         } elseif ($promotedOk) {
             $summary = "USB 바코드 소프트웨어 재인식 완료 (대상 $($candidates.Count)개 처리, 이상 장치 해제 확인 / 현재 USB 포트: $($afterPorts -join ', '))"
+        } elseif (-not $needsReplug -and $afterPorts.Count -gt 0 -and $stillBroken.Count -eq 0) {
+            $summary = "USB 바코드 소프트웨어 재인식 완료 (대상 $($candidates.Count)개 재검색, 현재 USB 포트: $($afterPorts -join ', ') / 이상 장치 없음)"
         } else {
             $summary = "USB 바코드 $($candidates.Count)개 소프트웨어 재인식을 시도했으나 신규 USB 포트가 생성되지 않았습니다 — USB 케이블을 1회 뽑았다 다시 연결하세요."
         }
@@ -1197,6 +1221,28 @@ function Connect-SharedHostSmart {
         $qDef = Get-QualifiedRemoteUser -HostName $HostName -UserName $global:AsanCtx.DefaultUser
         foreach ($pw in @(Get-ConfiguredDefaultPasswords)) {
             $attempts.Add([pscustomobject]@{ User = $qDef; Pass = $pw; IsCustom = $false })
+        }
+    }
+
+    if ($attempts.Count -eq 0) {
+        return [pscustomobject]@{
+            Success    = $false
+            Status     = 'AuthOrSidConflict'
+            Win32Error = 1326
+            Reason     = '기본 공용 암호가 구성되지 않았습니다(secrets.local.json 확인) — 하단 인증 패널에서 직접 계정을 입력하세요.'
+            UsedUser   = $null
+            UsedPass   = $null
+        }
+    }
+
+    if ($attempts.Count -eq 0) {
+        return [pscustomobject]@{
+            Success    = $false
+            Status     = 'AuthOrSidConflict'
+            Win32Error = 1326
+            Reason     = '기본 공용 암호가 구성되지 않았습니다(secrets.local.json 확인) — 하단 인증 패널에서 직접 계정을 입력하세요.'
+            UsedUser   = $null
+            UsedPass   = $null
         }
     }
 
@@ -1475,58 +1521,66 @@ function Resolve-WsdPrinterInfo {
             'HKLM:\SYSTEM\CurrentControlSet\Enum\SWD\PRINTENUM',
             'HKLM:\SYSTEM\CurrentControlSet\Enum\UMB\UMB'
         )
-        foreach ($root in $enumRoots) {
-            if (($foundIp -and $foundModel) -or -not (Test-Path -LiteralPath $root)) { break }
-            foreach ($sub in @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue)) {
-                $subProps     = Get-ItemProperty -LiteralPath $sub.PSPath -ErrorAction SilentlyContinue
-                $devParamPath = Join-Path $sub.PSPath 'Device Parameters'
-                $dpProps      = $null
-                if (Test-Path -LiteralPath $devParamPath) {
-                    $dpProps = Get-ItemProperty -LiteralPath $devParamPath -ErrorAction SilentlyContinue
-                }
-
-                $blob = ''
-                if ($subProps) { $blob += (($subProps.PSObject.Properties | ForEach-Object { [string]$_.Value }) -join ' ') + ' ' }
-                if ($dpProps)  { $blob += (($dpProps.PSObject.Properties | ForEach-Object { [string]$_.Value }) -join ' ') }
-
-                $hit = ($PrinterName.Length -ge 3 -and $blob.IndexOf($PrinterName, [StringComparison]::OrdinalIgnoreCase) -ge 0)
-                if (-not $hit) {
-                    foreach ($mk in $matchKeys) {
-                        if ($blob.IndexOf($mk, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true; break }
+        # 레지스트리 보조 스캔도 1패스(UUID/GUID 우선) -> 2패스(프린터명 부분 일치 폴백)
+        for ($regPass = 1; $regPass -le 2; $regPass++) {
+            if ($foundIp -and $foundModel) { break }
+            foreach ($root in $enumRoots) {
+                if (($foundIp -and $foundModel) -or -not (Test-Path -LiteralPath $root)) { break }
+                foreach ($sub in @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue)) {
+                    $subProps     = Get-ItemProperty -LiteralPath $sub.PSPath -ErrorAction SilentlyContinue
+                    $devParamPath = Join-Path $sub.PSPath 'Device Parameters'
+                    $dpProps      = $null
+                    if (Test-Path -LiteralPath $devParamPath) {
+                        $dpProps = Get-ItemProperty -LiteralPath $devParamPath -ErrorAction SilentlyContinue
                     }
-                }
-                if (-not $hit) { continue }
 
-                if (-not $foundIp) {
-                    foreach ($obj in @($dpProps, $subProps)) {
-                        if (-not $obj -or $foundIp) { continue }
-                        foreach ($prop in $obj.PSObject.Properties) {
-                            $pn = [string]$prop.Name
-                            if ($pn -match $ipKeyDenyRegex) { continue }
-                            $pv = [string]$prop.Value
-                            if ($pn -match $ipKeyAllowRegex) {
-                                $cand = Extract-FirstUsableIPv4 -Text $pv
-                                if ($cand) { $foundIp = $cand; break }
-                            } elseif ($pv -match 'https?://') {
-                                $cand = Extract-FirstUsableIPv4 -Text $pv -UrlOnly
-                                if ($cand) { $foundIp = $cand; break }
+                    $blob = ([string]$sub.PSChildName) + ' '
+                    if ($subProps) { $blob += (($subProps.PSObject.Properties | ForEach-Object { [string]$_.Value }) -join ' ') + ' ' }
+                    if ($dpProps)  { $blob += (($dpProps.PSObject.Properties | ForEach-Object { [string]$_.Value }) -join ' ') }
+
+                    $hit = $false
+                    if ($regPass -eq 1) {
+                        foreach ($mk in $matchKeys) {
+                            if ($blob.IndexOf($mk, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true; break }
+                        }
+                    } else {
+                        if ($PrinterName.Length -ge 3 -and $blob.IndexOf($PrinterName, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                            $hit = $true
+                        }
+                    }
+                    if (-not $hit) { continue }
+
+                    if (-not $foundIp) {
+                        foreach ($obj in @($dpProps, $subProps)) {
+                            if (-not $obj -or $foundIp) { continue }
+                            foreach ($prop in $obj.PSObject.Properties) {
+                                $pn = [string]$prop.Name
+                                if ($pn -match $ipKeyDenyRegex) { continue }
+                                $pv = [string]$prop.Value
+                                if ($pn -match $ipKeyAllowRegex) {
+                                    $cand = Extract-FirstUsableIPv4 -Text $pv
+                                    if ($cand) { $foundIp = $cand; break }
+                                } elseif ($pv -match 'https?://') {
+                                    $cand = Extract-FirstUsableIPv4 -Text $pv -UrlOnly
+                                    if ($cand) { $foundIp = $cand; break }
+                                }
                             }
                         }
                     }
-                }
 
-                if (-not $foundModel -and $subProps) {
-                    foreach ($propName in @('FriendlyName', 'DeviceDesc')) {
-                        $cand = Clean-DeviceString -Raw ([string]$subProps.$propName)
-                        if ($cand) { $foundModel = $cand; break }
+                    if (-not $foundModel -and $subProps) {
+                        foreach ($propName in @('FriendlyName', 'DeviceDesc')) {
+                            $cand = Clean-DeviceString -Raw ([string]$subProps.$propName)
+                            if ($cand) { $foundModel = $cand; break }
+                        }
+                        if (-not $foundModel -and $subProps.HardwareID) {
+                            $hwStr = (@($subProps.HardwareID) -join ' ')
+                            $hm = [regex]::Match($hwStr, '(?i)(?:Samsung|Kyocera|HP|Canon|Epson|Brother|Ricoh|Sindoh|Xerox|Konica)[^\\,;]+')
+                            if ($hm.Success) { $foundModel = ($hm.Value -replace '_', ' ').Trim() }
+                        }
                     }
-                    if (-not $foundModel -and $subProps.HardwareID) {
-                        $hwStr = (@($subProps.HardwareID) -join ' ')
-                        $hm = [regex]::Match($hwStr, '(?i)(?:Samsung|Kyocera|HP|Canon|Epson|Brother|Ricoh|Sindoh|Xerox|Konica)[^\\,;]+')
-                        if ($hm.Success) { $foundModel = ($hm.Value -replace '_', ' ').Trim() }
-                    }
+                    if ($foundIp -and $foundModel) { break }
                 }
-                if ($foundIp -and $foundModel) { break }
             }
         }
     }
@@ -1931,7 +1985,7 @@ function Get-DetectedVendors {
     if ($Text -match '(?i)Fuji|Xerox|제록스')                           { $list.Add('XEROX') }
     if ($Text -match '(?i)Sindoh|신도리코')                             { $list.Add('SINDOH') }
     if ($Text -match '(?i)Zebra|ZDesigner|ZD410|ZD411|ZT410|ZT411|ZBRN') { $list.Add('ZEBRA') }
-    if ($Text -match '(?i)Bixolon|빅솔론|SLP-TX')                       { $list.Add('BIXOLON') }
+    if ($Text -match '(?i)Bixolon|빅솔론|SLP-TX|TX220|TX-220')           { $list.Add('BIXOLON') }
     if ($Text -match '(?i)Sewoo|세우|SLK-TE|LK-TE')                     { $list.Add('SEWOO') }
     if ($Text -match '(?i)SISS|HODOO|SIP-30|IDCOS')                     { $list.Add('SISS') }
     return @($list.ToArray())
@@ -2115,7 +2169,11 @@ function Build-InfIndexCache {
         $text = Get-InfTextSafe -InfPath $inf.FullName
         if ([string]::IsNullOrWhiteSpace($text)) { continue }
         $dispNames = @(Get-InfDisplayNames -InfText $text)
-        $vendors   = @(Get-DetectedVendors -Text ($dispNames -join ' '))
+        $vendorHintText = ($dispNames -join ' ') + ' ' + $inf.Name
+        # 모델명 문자열에 제조사 브랜드가 생략된 INF를 위해 Provider/Manufacturer 헤더 보조 확인
+        $hdrMatches = [regex]::Matches($text, '(?im)^\s*Provider\s*=\s*(.+)$')
+        foreach ($hm in $hdrMatches) { $vendorHintText += ' ' + $hm.Groups[1].Value }
+        $vendors = @(Get-DetectedVendors -Text $vendorHintText)
         $cache.Add([pscustomobject]@{
             Path         = $inf.FullName
             FileName     = $inf.Name
@@ -2542,20 +2600,22 @@ function Export-PreciseThirdPartyDrivers {
     }
 
     if ($unmatchedThirdParty.Count -gt 0) {
-        $scopedKeywords = [System.Collections.Generic.List[string]]::new()
+        # 문자열 단순 포함 대신 표준 벤더 분류(Get-DetectedVendors)로 매칭 (ZDesigner->ZEBRA, ECOSYS->KYOCERA 등 정확 매칭, SEWOO 제외)
+        $scopedVendors = [System.Collections.Generic.List[string]]::new()
         foreach ($ud in $unmatchedThirdParty) {
-            foreach ($vendor in @('Samsung','Kyocera','HP','Hewlett-Packard','Canon','Epson','Brother','Ricoh','Konica','Minolta','Fuji','Xerox','Sindoh','Zebra','ZDesigner','ZT410','ZT411','ZBRN','Bixolon','Sewoo','SISS','HODOO','SIP-30')) {
-                if ($ud -match "(?i)$vendor" -and -not $scopedKeywords.Contains($vendor)) {
-                    $scopedKeywords.Add($vendor)
-                }
+            foreach ($v in @(Get-DetectedVendors -Text $ud)) {
+                if ($v -eq 'SEWOO') { continue }
+                if (-not $scopedVendors.Contains($v)) { $scopedVendors.Add($v) }
             }
         }
         foreach ($b in $classBlocks) {
             $pub  = [string]$b['PublishedName']
             $meta = "$($b['ProviderName']) $($b['OriginalName'])"
             if ([string]::IsNullOrWhiteSpace($pub)) { continue }
-            foreach ($kw in $scopedKeywords) {
-                if ($meta.IndexOf($kw, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            $blkVendors = @(Get-DetectedVendors -Text $meta)
+            if ($blkVendors -contains 'SEWOO') { continue }
+            foreach ($sv in $scopedVendors) {
+                if ($blkVendors -contains $sv) {
                     if (-not $toExport.Contains($pub)) { $toExport.Add($pub) }
                     break
                 }
@@ -2876,10 +2936,48 @@ function Invoke-PrinterBackupEngine {
                 throw "안전 가드 차단: robocopy /MIR 대상이 _PRTBAK 직계 하위 폴더가 아닙니다 ($targetFull)."
             }
 
-            Write-ProgressSafe -OnProgress $OnProgress -Percent 88 -Message "[5/5] 백업 서버 업로드 중: _PRTBAK\$folderId ..."
-            if (-not (Test-Path -LiteralPath $targetFull)) { New-Item -ItemType Directory -Path $targetFull -Force | Out-Null }
-            $rc = (Invoke-NativeCommand -FilePath 'robocopy.exe' -Arguments @($localTemp, $targetFull, '/MIR', '/R:2', '/W:1')).ExitCode
-            if ($rc -ge 8) { throw "서버 업로드 중 robocopy 오류 발생 (ExitCode=$rc)" }
+            Write-ProgressSafe -OnProgress $OnProgress -Percent 88 -Message "[5/5] 백업 서버 원자적 업로드 중: _PRTBAK\$folderId ..."
+            # 원자적 스테이징 업로드(_TMP_<folderId>_<PID>): 네트워크 끊김 시 기존 정상 백업 손상 방지
+            $stageDirName = "_TMP_${folderId}_$PID"
+            $stageFull    = [IO.Path]::GetFullPath((Join-Path $baseFull $stageDirName)).TrimEnd('\')
+            $oldFull      = [IO.Path]::GetFullPath((Join-Path $baseFull "_OLD_${folderId}_$PID")).TrimEnd('\')
+            if ([IO.Path]::GetDirectoryName($stageFull).TrimEnd('\') -ine $baseFull) {
+                throw "안전 가드 차단: 스테이징 경로가 _PRTBAK 직계 하위가 아닙니다 ($stageFull)."
+            }
+            try {
+                if (Test-Path -LiteralPath $stageFull) { Remove-Item -LiteralPath $stageFull -Recurse -Force -ErrorAction SilentlyContinue }
+                New-Item -ItemType Directory -Path $stageFull -Force | Out-Null
+                $rc = (Invoke-NativeCommand -FilePath 'robocopy.exe' -Arguments @($localTemp, $stageFull, '/E', '/R:2', '/W:1')).ExitCode
+                if ($rc -ge 8) { throw "서버 스테이징 업로드 중 robocopy 오류 발생 (ExitCode=$rc)" }
+
+                $swapped = $false
+                if (Test-Path -LiteralPath $targetFull) {
+                    try {
+                        if (Test-Path -LiteralPath $oldFull) { Remove-Item -LiteralPath $oldFull -Recurse -Force -ErrorAction SilentlyContinue }
+                        [IO.Directory]::Move($targetFull, $oldFull)
+                        try {
+                            [IO.Directory]::Move($stageFull, $targetFull)
+                            $swapped = $true
+                        } catch {
+                            try { if (-not (Test-Path -LiteralPath $targetFull) -and (Test-Path -LiteralPath $oldFull)) { [IO.Directory]::Move($oldFull, $targetFull) } } catch {}
+                            throw
+                        }
+                    } catch {
+                        # 대상 폴더가 타 PC 탐색기 등에 잠겨 Move 불가 시 폴백으로 직접 /MIR 동기화
+                        $rcMir = (Invoke-NativeCommand -FilePath 'robocopy.exe' -Arguments @($localTemp, $targetFull, '/MIR', '/R:2', '/W:1')).ExitCode
+                        if ($rcMir -ge 8) { throw "서버 덮어쓰기 업로드 중 robocopy 오류 발생 (ExitCode=$rcMir)" }
+                        $swapped = $true
+                    }
+                } else {
+                    [IO.Directory]::Move($stageFull, $targetFull)
+                    $swapped = $true
+                }
+                if (-not $swapped) { throw '서버 백업 폴더 원자적 전환 실패' }
+            }
+            finally {
+                if (Test-Path -LiteralPath $oldFull)   { Remove-Item -LiteralPath $oldFull   -Recurse -Force -ErrorAction SilentlyContinue }
+                if (Test-Path -LiteralPath $stageFull) { Remove-Item -LiteralPath $stageFull -Recurse -Force -ErrorAction SilentlyContinue }
+            }
 
             Write-ProgressSafe -OnProgress $OnProgress -Percent 100 -Message "서버 백업 완료: $targetFull"
             return [pscustomobject]@{
@@ -3489,7 +3587,7 @@ function Invoke-PrinterRestoreEngine {
                         $restoreLog.Add([pscustomobject]@{ Level = 'Info'; Target = $cName; Message = '사용자가 복원 제외(체크 해제)하여 사후 정제 삭제됨' })
                         continue
                     }
-                    if ($rowRef.PortKind -eq 'WSD' -and -not [string]::IsNullOrWhiteSpace([string]$rowRef.WsdTargetIp)) {
+                    if ($rowRef.Selected -and $rowRef.PortKind -eq 'WSD' -and -not [string]::IsNullOrWhiteSpace([string]$rowRef.WsdTargetIp)) {
                         Remove-Printer -InputObject $curPrt -ErrorAction SilentlyContinue
                         continue
                     }
@@ -3584,24 +3682,37 @@ function Invoke-PrinterRestoreEngine {
                 if (-not $spec.IsSpecial -and $finalDrvName -match $global:AsanCtx.MicrosoftInboxGenericRegex) {
                     $drvRes = Resolve-BestDriverForPrinter -PrinterName $pName -WantedDriverName $row.DriverName -ModelHint $row.WsdModelName -DriverIndexCache $driverIndexCache -ExcludeFromPcl6:$spec.ExcludeFromPcl6 -ForceUpgradeGeneric
                     if ($drvRes.Success -and $drvRes.DriverName -ne $finalDrvName) {
-                        Set-Printer -InputObject $existing -DriverName $drvRes.DriverName -ErrorAction SilentlyContinue
-                        $finalDrvName = $drvRes.DriverName
-                        $restoreLog.Add([pscustomobject]@{ Level = 'Info'; Target = $pName; Message = "MS 범용 드라이버 교체: $($existing.DriverName) -> $finalDrvName ($($drvRes.Source))" })
-                        if ($drvRes.ProtocolNotice) { $restoreLog.Add([pscustomobject]@{ Level = 'Warning'; Target = $pName; Message = $drvRes.ProtocolNotice }) }
+                        try {
+                            Set-Printer -InputObject $existing -DriverName $drvRes.DriverName -ErrorAction Stop
+                            $oldDrvName   = $finalDrvName
+                            $finalDrvName = $drvRes.DriverName
+                            $restoreLog.Add([pscustomobject]@{ Level = 'Info'; Target = $pName; Message = "MS 범용 드라이버 교체: $oldDrvName -> $finalDrvName ($($drvRes.Source))" })
+                            if ($drvRes.ProtocolNotice) { $restoreLog.Add([pscustomobject]@{ Level = 'Warning'; Target = $pName; Message = $drvRes.ProtocolNotice }) }
+                        } catch {
+                            $restoreLog.Add([pscustomobject]@{ Level = 'Warning'; Target = $pName; Message = "MS 범용 드라이버 교체 실패 ($($_.Exception.Message)) — 기존 '$finalDrvName' 유지됨" })
+                        }
                     }
                 }
                 if ($finalDrvName -match '(?i)Samsung Universal Print Driver 3') {
                     if (-not $samFallbackList.Contains($pName)) { $samFallbackList.Add($pName) }
                 }
                 $existingPort = [string]$existing.PortName
-                if ($row.PortKind -eq 'USB' -or $existingPort -match '(?i)^USB\d+') {
+                $isSharedConnection = (-not [string]::IsNullOrWhiteSpace([string]$row.ConnectionName)) -or $pName.StartsWith('\\') -or ($row.PortKind -eq 'SHARED_UNC')
+                if ((-not $isSharedConnection) -and ($row.PortKind -eq 'USB' -or $existingPort -match '(?i)^USB\d+')) {
                     $curPortExists = @(Get-PrinterPort -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq $existingPort }) | Select-Object -First 1
                     if (-not $curPortExists) {
                         $uRes = Ensure-RestoredPortSafe -PortObj $null -FallbackName $row.PortName -OverrideKind 'USB'
                         if ($uRes.Success) {
-                            Set-Printer -InputObject $existing -PortName $uRes.PortName -ErrorAction SilentlyContinue
-                            $existingPort = [string]$uRes.PortName
-                            $restoreLog.Add([pscustomobject]@{ Level = 'Info'; Target = $pName; Message = $uRes.Reason })
+                            try {
+                                Set-Printer -InputObject $existing -PortName $uRes.PortName -ErrorAction Stop
+                                $existingPort = [string]$uRes.PortName
+                                $restoreLog.Add([pscustomobject]@{ Level = 'Info'; Target = $pName; Message = $uRes.Reason })
+                            } catch {
+                                $usbSetErr = "USB 포트($($uRes.PortName)) 변경 적용 실패: $($_.Exception.Message)"
+                                $restoreLog.Add([pscustomobject]@{ Level = 'Warning'; Target = $pName; Message = $usbSetErr })
+                                $failures.Add([pscustomobject]@{ PrinterName = $pName; PortName = $existingPort; DriverName = $finalDrvName; Reason = $usbSetErr; HostName = $null })
+                                continue
+                            }
                         } else {
                             $usbFailMsg = "USB 포트 미감지로 실제 출력 불가 ($($uRes.Reason))"
                             $restoreLog.Add([pscustomobject]@{ Level = 'Warning'; Target = $pName; Message = $usbFailMsg })
@@ -3656,16 +3767,17 @@ function Invoke-PrinterRestoreEngine {
 
             # Case B: 공유 프린터(Point-and-Print)
             if (-not [string]::IsNullOrWhiteSpace([string]$row.ConnectionName)) {
-                $conn = [string]$row.ConnectionName
-                $hm   = [regex]::Match($conn, '^\\\\([^\\]+)\\')
+                $conn     = [string]$row.ConnectionName
+                $connHost = $null
+                $hm       = [regex]::Match($conn, '^\\\\([^\\]+)\\')
                 if ($hm.Success) {
-                    $h    = $hm.Groups[1].Value
-                    $auth = Connect-SharedHostSmart -HostName $h
+                    $connHost = $hm.Groups[1].Value
+                    $auth     = Connect-SharedHostSmart -HostName $connHost
                     if (-not $auth.Success) {
-                        $failures.Add([pscustomobject]@{ PrinterName = $pName; PortName = $conn; DriverName = $row.DriverName; Reason = $auth.Reason; HostName = $h })
-                        if ($auth.Status -eq 'AuthOrSidConflict' -and -not $seenAuth.ContainsKey($h.ToLowerInvariant())) {
-                            $seenAuth[$h.ToLowerInvariant()] = $true
-                            $authHosts.Add([pscustomobject]@{ HostName = $h; Reason = $auth.Reason })
+                        $failures.Add([pscustomobject]@{ PrinterName = $pName; PortName = $conn; DriverName = $row.DriverName; Reason = $auth.Reason; HostName = $connHost })
+                        if ($auth.Status -eq 'AuthOrSidConflict' -and -not $seenAuth.ContainsKey($connHost.ToLowerInvariant())) {
+                            $seenAuth[$connHost.ToLowerInvariant()] = $true
+                            $authHosts.Add([pscustomobject]@{ HostName = $connHost; Reason = $auth.Reason })
                         }
                         continue
                     }
@@ -3674,7 +3786,7 @@ function Invoke-PrinterRestoreEngine {
                     Add-Printer -ConnectionName $conn -ErrorAction Stop
                     $restoreLog.Add([pscustomobject]@{ Level = 'Success'; Target = $pName; Message = "공유 프린터 연결 완료 ($conn)" })
                 } catch {
-                    $failures.Add([pscustomobject]@{ PrinterName = $pName; PortName = $conn; DriverName = $row.DriverName; Reason = "공유 연결 실패: $($_.Exception.Message)"; HostName = $null })
+                    $failures.Add([pscustomobject]@{ PrinterName = $pName; PortName = $conn; DriverName = $row.DriverName; Reason = "공유 연결 실패: $($_.Exception.Message)"; HostName = $connHost })
                 }
                 continue
             }
@@ -3763,7 +3875,7 @@ function Invoke-PrinterRestoreEngine {
         if (-not $SkipPrintBrm -and (Test-Path -LiteralPath $expScanDir)) {
             foreach ($sInf in @(Get-ChildItem -LiteralPath $expScanDir -Filter '*.inf' -File -Recurse -ErrorAction SilentlyContinue)) {
                 $rcS = (Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/add-driver', $sInf.FullName, '/install')).ExitCode
-                if ($rcS -eq 0 -or $rcS -eq 259) { $restoredScanCnt++ }
+                if ($rcS -eq 0 -or $rcS -eq 259 -or $rcS -eq 3010) { $restoredScanCnt++ }
             }
             if ($restoredScanCnt -gt 0) {
                 $restoreLog.Add([pscustomobject]@{ Level = 'Success'; Target = 'WIA 스캐너'; Message = "백업된 제조사 공식 스캐너 드라이버 ${restoredScanCnt}개 설치 완료" })
@@ -3809,7 +3921,10 @@ function Invoke-PrinterRestoreEngine {
 # [특수 프린터 전용 핸들러] 원본 최우선 추출 + ZT411 PDF 규격 + SIP-30M 중복 큐 정리
 # ============================================================================
 function Find-LocalSpecialInstaller {
-    param([string]$SpecialType)
+    param(
+        [string]$SpecialType,
+        [switch]$SkipRemoteProbe
+    )
 
     $baseRoots = @(
         'C:\Users\admin\드라이버(win10_x64)',
@@ -3827,19 +3942,19 @@ function Find-LocalSpecialInstaller {
                 }
             }
         }
-        if (Test-Path -LiteralPath 'C:\ZD5-1-17-7412') {
-            $ztSearchDirs.Add('C:\ZD5-1-17-7412')
-        }
-        # 사내 드라이버 서버(\\172.23.2.130) 빠른 포트 체크 후 ZT411 공식 배포 폴더 탐색
-        if (Test-TcpPortFast -HostIp '172.23.2.130' -Port 445 -TimeoutMs 600) {
-            $srvZtDir = '\\172.23.2.130\driver\기종별드라이버(PC,PRT)\PRT\ZT411 (약국용 신형 라벨 프린터)'
-            if (Test-Path -LiteralPath $srvZtDir) { $ztSearchDirs.Add($srvZtDir) }
+        # 사내 드라이버 서버(\\172.23.2.130)는 백그라운드 Runspace에서만 탐색 (-SkipRemoteProbe 시 UI 스레드 차단 방지)
+        if (-not $SkipRemoteProbe) {
+            if (Test-TcpPortFast -HostIp '172.23.2.130' -Port 445 -TimeoutMs 600) {
+                $srvZtDir = '\\172.23.2.130\driver\기종별드라이버(PC,PRT)\PRT\ZT411 (약국용 신형 라벨 프린터)'
+                if (Test-Path -LiteralPath $srvZtDir) { $ztSearchDirs.Add($srvZtDir) }
+            }
         }
 
         $ztFolder  = $null
         $ztExePath = $null
         $ztDrsPath = $null
         $ztInfPath = $null
+        # C:\ZD5-1-17-7412는 압축 해제 결과(ZBRN.inf) 확인 전용 (내부 PrnInst.exe 마법사 오인식 방지!)
         if (Test-Path -LiteralPath 'C:\ZD5-1-17-7412\ZBRN\ZBRN.inf') {
             $ztInfPath = 'C:\ZD5-1-17-7412\ZBRN\ZBRN.inf'
         }
@@ -3847,9 +3962,13 @@ function Find-LocalSpecialInstaller {
         foreach ($sd in $ztSearchDirs) {
             if (-not $ztFolder) { $ztFolder = $sd }
             if (-not $ztExePath) {
-                $exeHit = @(Get-ChildItem -LiteralPath $sd -Filter '*.exe' -File -Recurse -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -match '(?i)(zd51177412|zd5|certified|zebra|setup|inst)' } |
-                    Sort-Object FullName) | Select-Object -First 1
+                $allExes = @(Get-ChildItem -LiteralPath $sd -Filter '*.exe' -File -Recurse -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -notmatch '(?i)PrnInst' } |
+                    Sort-Object FullName)
+                $exeHit = $allExes | Where-Object { $_.Name -match '(?i)(zd51177412|certified|zd5)' } | Select-Object -First 1
+                if (-not $exeHit) {
+                    $exeHit = $allExes | Where-Object { $_.Name -match '(?i)(zebra|setup|driver)' } | Select-Object -First 1
+                }
                 if ($exeHit) { $ztExePath = $exeHit.FullName; $ztFolder = $exeHit.DirectoryName }
             }
             if (-not $ztDrsPath) {
@@ -3860,6 +3979,9 @@ function Find-LocalSpecialInstaller {
                 $infHit = @(Get-ChildItem -LiteralPath $sd -Filter 'ZBRN.inf' -File -Recurse -ErrorAction SilentlyContinue | Sort-Object FullName) | Select-Object -First 1
                 if ($infHit) { $ztInfPath = $infHit.FullName }
             }
+        }
+        if (-not $ztFolder -and (Test-Path -LiteralPath 'C:\ZD5-1-17-7412')) {
+            $ztFolder = 'C:\ZD5-1-17-7412'
         }
 
         return [pscustomobject]@{
@@ -3915,9 +4037,13 @@ function Find-LocalSpecialInstaller {
 }
 
 function Get-SpecialPrinterAssistantInfo {
-    param($SpecialRow)
+    param(
+        $SpecialRow,
+        [switch]$SkipRemoteProbe,
+        [object[]]$PreloadedLpts = $null
+    )
 
-    $inst = Find-LocalSpecialInstaller -SpecialType $SpecialRow.SpecialType
+    $inst = Find-LocalSpecialInstaller -SpecialType $SpecialRow.SpecialType -SkipRemoteProbe:$SkipRemoteProbe
     switch ($SpecialRow.SpecialType) {
         'SIP30M_IDCARD' {
             $ipHint = '백업 IP'
@@ -3991,7 +4117,7 @@ function Get-SpecialPrinterAssistantInfo {
             return [pscustomobject]@{ Type = 'BIXOLON_TX220'; TargetIp = $null; Installer = $inst; HasStep2 = $false; Checklist = $chk }
         }
         'EPSON_TMT88_LPT' {
-            $lptsNow   = @(Get-DeviceManagerLptPorts)
+            $lptsNow   = if ($null -ne $PreloadedLpts) { @($PreloadedLpts) } else { @(Get-DeviceManagerLptPorts) }
             $lpt1Now   = $lptsNow | Where-Object { $_.PortName -ieq 'LPT1' } | Select-Object -First 1
             $otherLpts = @($lptsNow | Where-Object { $_.PortName -ine 'LPT1' })
             $lptStatLine = '현재 PC 장치관리자 LPT1 상태: 미감지 (패럴렐 케이블 연결 및 PCIe LPT 포트 확인 필요)'
@@ -4184,7 +4310,7 @@ function Get-ServerBackupEntries {
     if ([string]::IsNullOrWhiteSpace($PrtBakDir) -or -not (Test-Path -LiteralPath $PrtBakDir)) { return @() }
 
     $expectedId = Get-BackupFolderId -PcIp $PcIp
-    $safeHost   = Get-SafeFileName -Text $env:COMPUTERNAME
+    $safeHost   = $expectedId -replace '\([^()]*\)$', ''
     $safeIp     = Get-SafeFileName -Text $PcIp
 
     $list = [System.Collections.Generic.List[object]]::new()

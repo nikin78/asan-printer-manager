@@ -26,6 +26,9 @@ $expectedVer = '1.0.0-beta.3'
 if (Test-Path -LiteralPath $versionFile) {
     $expectedVer = ([IO.File]::ReadAllText($versionFile, [Text.Encoding]::UTF8)).Trim()
 }
+if (-not [string]::IsNullOrWhiteSpace($env:ASAN_SECRETS_FILE) -and $SecretsFile -eq (Join-Path $projRoot 'secrets.local.json')) {
+    $SecretsFile = $env:ASAN_SECRETS_FILE
+}
 
 $results = [System.Collections.Generic.List[object]]::new()
 function Add-CheckResult {
@@ -135,7 +138,7 @@ try {
         [void]$sbExp.Append("`r`n")
     }
     $expMerged = $sbExp.ToString()
-    if (Test-Path -LiteralPath $SecretsFile) {
+    if ((-not $AllowPlaceholder) -and (Test-Path -LiteralPath $SecretsFile)) {
         $sr = [IO.File]::ReadAllText($SecretsFile, $utf8Strict)
         if ($sr.Length -gt 0 -and $sr[0] -eq [char]0xFEFF) { $sr = $sr.Substring(1) }
         $so = $sr | ConvertFrom-Json
@@ -144,7 +147,7 @@ try {
             $expMerged = $expMerged.Replace("@('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')", '@(' + ($spws -join ', ') + ')')
         }
         if ($so.PSObject.Properties.Name -contains 'DefaultUser' -and -not [string]::IsNullOrWhiteSpace([string]$so.DefaultUser)) {
-            $su = ([string]$so.DefaultUser).Replace("'", "''")
+            $su = ([string]$so.DefaultUser).Replace("'", "''").Replace('$', '$$')
             $expMerged = [regex]::Replace($expMerged, "(?m)^(\s*DefaultUser\s*=\s*)'[^']*'", "`$1'$su'")
         }
     }
@@ -188,6 +191,7 @@ if ($bootPart -notmatch 'PROCESSOR_ARCHITEW6432' -or $bootPart -notmatch 'Sysnat
 if ($bootPart -notmatch 'ToBase64String' -or $bootPart -notmatch 'ORIGINAL_SELF') { $bootIssues.Add('URL-Safe Base64 ORIGINAL_SELF 전달 로직 누락') }
 if ($bootPart -notmatch '-STA') { $bootIssues.Add('부트스트랩 -STA 실행 옵션 누락') }
 if ($bootPart -notmatch '"%RC%"=="99"') { $bootIssues.Add('정상 종료 코드 99 검사 누락') }
+if ($bootPart -match '""%SELF%""') { $bootIssues.Add('00_bootstrap.bat 깨진 ""%SELF%"" 인용 부호 감지 ("%%SELF%%" 사용 필수)') }
 if ($batText.TrimEnd("`r", "`n") -notmatch '(?m)^exit 99$') { $bootIssues.Add('페이로드 말미 exit 99 누락') }
 
 $tmpPs1 = Join-Path $env:TEMP ("AsanVerifyStatic_{0}.ps1" -f $PID)
@@ -282,8 +286,8 @@ try {
             }
         }
 
-        # 4-4. Rule 14: Remove-Printer / Set-Printer / Rename-Printer 반드시 -InputObject 사용 (-Name 금지)
-        if ($cName -in @('Remove-Printer', 'Set-Printer', 'Rename-Printer')) {
+        # 4-4. Rule 14: Remove-Printer / Set-Printer / Rename-Printer / Remove-PrinterDriver 반드시 -InputObject 사용 (-Name 금지)
+        if ($cName -in @('Remove-Printer', 'Set-Printer', 'Rename-Printer', 'Remove-PrinterDriver')) {
             $paramNames = @($ca.CommandElements | Where-Object { $_ -is [System.Management.Automation.Language.CommandParameterAst] } | ForEach-Object { $_.ParameterName })
             if ($paramNames -contains 'Name') {
                 $ruleViolations.Add("Rule14 위반: $cName 에서 -Name 사용 (Line $($ca.Extent.StartLineNumber))")
@@ -343,6 +347,12 @@ try {
     # 4-8. Rule 16: 원자적 Spooler 중지 + [uint32] 0xFFFFF7FF 마스킹 확인
     if ($payloadText -notmatch '0xFFFFF7FF') {
         $ruleViolations.Add('Rule16 위반: Attributes [uint32] 비트 마스킹(0xFFFFF7FF) 누락')
+    }
+
+    # 4-9. GUI 다이얼로그 오너 누락 방지: Show-AsanMessageBox 외부의 직접 MessageBox::Show 호출 금지
+    $directMsgHits = @([regex]::Matches($payloadText, '\[System\.Windows\.Forms\.MessageBox\]::Show\('))
+    if ($directMsgHits.Count -gt 2) {
+        $ruleViolations.Add("UI 규칙 위반: Show-AsanMessageBox 외부에서 직접 MessageBox::Show 호출 감지 (총 $($directMsgHits.Count)건, 허용 2건)")
     }
 
     $c4Pass = ($ruleViolations.Count -eq 0)

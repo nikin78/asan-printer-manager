@@ -21,16 +21,22 @@ $script:Tab3Ui = @{
 }
 
 $script:Tab4Ui = @{
-    TxtSearch     = $null
-    BtnRefreshSrv = $null
-    BtnCleanOld5  = $null
-    LblSrvSummary = $null
-    DgvServer     = $null
-    TxtPreview    = $null
-    BtnLoadToTab2 = $null
-    BtnOpenFolder = $null
-    BtnDeleteOne  = $null
-    PreviewCache  = @{}
+    TxtSearch       = $null
+    BtnRefreshSrv   = $null
+    BtnCleanOld5    = $null
+    LblSrvSummary   = $null
+    DgvServer       = $null
+    TxtPreview      = $null
+    BtnLoadToTab2   = $null
+    BtnOpenFolder   = $null
+    BtnDeleteOne    = $null
+    PreviewCache    = @{}
+    PreviewGen      = 0
+    PreviewPs       = $null
+    PreviewRs       = $null
+    PreviewAsync    = $null
+    PreviewTimer    = $null
+    PreviewCacheKey = $null
 }
 
 # ============================================================================
@@ -160,12 +166,7 @@ function Invoke-Tab3BulkNormalTestPrint {
     $skipped = @($all | Where-Object { (-not $_.IsVirtual) -and $_.IsSpecial })
 
     if ($targets.Count -eq 0) {
-        [System.Windows.Forms.MessageBox]::Show(
-            '테스트 인쇄할 일반 프린터가 없습니다. (바코드·진료카드 특수 프린터는 안전을 위해 전체 인쇄에서 자동 제외됩니다.)',
-            '인쇄 대상 없음',
-            'OK',
-            'Information'
-        ) | Out-Null
+        [void](Show-AsanMessageBox -Text '테스트 인쇄할 일반 프린터가 없습니다. (바코드·진료카드 특수 프린터는 안전을 위해 전체 인쇄에서 자동 제외됩니다.)' -Caption '인쇄 대상 없음' -Buttons 'OK' -Icon 'Information')
         return
     }
 
@@ -184,7 +185,7 @@ function Invoke-Tab3BulkNormalTestPrint {
     $lines.Add("")
     $lines.Add("계속하시겠습니까?")
 
-    $ans = [System.Windows.Forms.MessageBox]::Show(($lines -join "`r`n"), '일반 프린터 전체 테스트 인쇄', 'YesNo', 'Question')
+    $ans = Show-AsanMessageBox -Text ($lines -join "`r`n") -Caption '일반 프린터 전체 테스트 인쇄' -Buttons 'YesNo' -Icon 'Question'
     if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) { return }
 
     $sent = 0
@@ -194,7 +195,7 @@ function Invoke-Tab3BulkNormalTestPrint {
             Add-UiLog -Message "테스트 페이지 전송: $($t.PrinterName)" -Level 'INFO'
         }
     }
-    [System.Windows.Forms.MessageBox]::Show("일반 프린터 ${sent}대에 테스트 페이지 전송을 요청했습니다.", '테스트 인쇄 요청 완료', 'OK', 'Information') | Out-Null
+    [void](Show-AsanMessageBox -Text "일반 프린터 ${sent}대에 테스트 페이지 전송을 요청했습니다." -Caption '테스트 인쇄 요청 완료' -Buttons 'OK' -Icon 'Information')
 }
 
 function Initialize-Tab3VerifyUi {
@@ -222,12 +223,12 @@ function Initialize-Tab3VerifyUi {
         $done = {
             param($ok, $data, $err, $cbState)
             if (-not $ok) {
-                [System.Windows.Forms.MessageBox]::Show("일괄 수정 오류: $err", '오류', 'OK', 'Error') | Out-Null
+                [void](Show-AsanMessageBox -Text "일괄 수정 오류: $err" -Caption '오류' -Buttons 'OK' -Icon 'Error')
                 return
             }
             $script:Tab3Ui.InstalledList = @($data)
             Render-Tab3VerifyGrid
-            [System.Windows.Forms.MessageBox]::Show('모든 TCP/IP SNMP 해제 및 일반 프린터 양방향 지원 해제를 완료했습니다.', '일괄 수정 완료', 'OK', 'Information') | Out-Null
+            [void](Show-AsanMessageBox -Text '모든 TCP/IP SNMP 해제 및 일반 프린터 양방향 지원 해제를 완료했습니다.' -Caption '일괄 수정 완료' -Buttons 'OK' -Icon 'Information')
         }
         Invoke-AsanAsyncTask -TaskName 'SNMP/양방향 아산 표준 일괄 적용' -WorkScript $work -OnComplete $done -Indeterminate
     })
@@ -235,12 +236,7 @@ function Initialize-Tab3VerifyUi {
     $btnReset = New-StyledButton -Text '클라이언트 스풀러 초기화' -Width 176 -Height 28 -BackColor ([System.Drawing.Color]::FromArgb(185, 28, 28)) -RegisterBusy
     $btnReset.Location = New-Object System.Drawing.Point(310, 4)
     $btnReset.Add_Click({
-        $ans = [System.Windows.Forms.MessageBox]::Show(
-            "현재 PC의 Print Spooler를 중지하고 대기열 잔여물(spool\PRINTERS)을 모두 비운 뒤 재시작합니다.`r`n계속하시겠습니까?",
-            '스풀러 초기화 확인',
-            'YesNo',
-            'Warning'
-        )
+        $ans = Show-AsanMessageBox -Text "현재 PC의 Print Spooler를 중지하고 대기열 잔여물(spool\PRINTERS)을 모두 비운 뒤 재시작합니다.`r`n계속하시겠습니까?" -Caption '스풀러 초기화 확인' -Buttons 'YesNo' -Icon 'Warning'
         if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) { return }
         $work = {
             param($arg)
@@ -253,12 +249,12 @@ function Initialize-Tab3VerifyUi {
         $done = {
             param($ok, $data, $err, $cbState)
             if (-not $ok -or -not $data) {
-                [System.Windows.Forms.MessageBox]::Show("스풀러 초기화 오류: $err", '오류', 'OK', 'Error') | Out-Null
+                [void](Show-AsanMessageBox -Text "스풀러 초기화 오류: $err" -Caption '오류' -Buttons 'OK' -Icon 'Error')
                 return
             }
             $script:Tab3Ui.InstalledList = @($data.Printers)
             Render-Tab3VerifyGrid
-            [System.Windows.Forms.MessageBox]::Show($data.Result.Reason, '스풀러 초기화 완료', 'OK', 'Information') | Out-Null
+            [void](Show-AsanMessageBox -Text $data.Result.Reason -Caption '스풀러 초기화 완료' -Buttons 'OK' -Icon 'Information')
         }
         Invoke-AsanAsyncTask -TaskName '클라이언트 스풀러 초기화' -WorkScript $work -OnComplete $done -Indeterminate
     })
@@ -313,22 +309,16 @@ function Initialize-Tab3VerifyUi {
     $btnBulk.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
     $btnBulk.Add_Click({ Invoke-Tab3BulkNormalTestPrint })
 
-    $btnSingle = New-StyledButton -Text '선택 테스트 인쇄' -Width 130 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(37, 99, 235))
+    $btnSingle = New-StyledButton -Text '선택 테스트 인쇄' -Width 130 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(37, 99, 235)) -RegisterBusy
     $btnSingle.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
     $btnSingle.Add_Click({
         $sel = Get-Tab3SelectedPrinterItem
         if (-not $sel) {
-            [System.Windows.Forms.MessageBox]::Show($script:Ui.Form, '테스트 인쇄할 프린터 행을 선택하세요.', '선택 없음', 'OK', 'Warning') | Out-Null
+            [void](Show-AsanMessageBox -Text '테스트 인쇄할 프린터 행을 선택하세요.' -Caption '선택 없음' -Buttons 'OK' -Icon 'Warning')
             return
         }
         if ($sel.IsSpecial) {
-            $warn = [System.Windows.Forms.MessageBox]::Show(
-                $script:Ui.Form,
-                "선택한 '$($sel.PrinterName)' 은(는) [$($sel.Category)] 특수 장비입니다.`r`nWindows 테스트 페이지를 보내면 공카드·팔찌·라벨이 낭비되거나 걸릴 수 있으며, 일반적으로 AMIS에서 테스트합니다.`r`n`r`n그래도 테스트 페이지를 전송하시겠습니까?",
-                '특수 장비 테스트 인쇄 주의',
-                'YesNo',
-                'Warning'
-            )
+            $warn = Show-AsanMessageBox -Text "선택한 '$($sel.PrinterName)' 은(는) [$($sel.Category)] 특수 장비입니다.`r`nWindows 테스트 페이지를 보내면 공카드·팔찌·라벨이 낭비되거나 걸릴 수 있으며, 일반적으로 AMIS에서 테스트합니다.`r`n`r`n그래도 테스트 페이지를 전송하시겠습니까?" -Caption '특수 장비 테스트 인쇄 주의' -Buttons 'YesNo' -Icon 'Warning'
             if ($warn -ne [System.Windows.Forms.DialogResult]::Yes) { return }
         }
         if (Send-PrinterTestPageSafe -PrinterName $sel.PrinterName) {
@@ -336,7 +326,7 @@ function Initialize-Tab3VerifyUi {
         }
     })
 
-    $btnProps = New-StyledButton -Text '프린터 속성' -Width 105 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105))
+    $btnProps = New-StyledButton -Text '프린터 속성' -Width 105 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105)) -RegisterBusy
     $btnProps.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
     $btnProps.Add_Click({
         $sel = Get-Tab3SelectedPrinterItem
@@ -345,7 +335,7 @@ function Initialize-Tab3VerifyUi {
         try { Start-Process -FilePath 'rundll32.exe' -ArgumentList $arg } catch {}
     })
 
-    $btnPrefs = New-StyledButton -Text '인쇄 기본 설정' -Width 118 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105))
+    $btnPrefs = New-StyledButton -Text '인쇄 기본 설정' -Width 118 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105)) -RegisterBusy
     $btnPrefs.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
     $btnPrefs.Add_Click({
         $sel = Get-Tab3SelectedPrinterItem
@@ -363,7 +353,7 @@ function Initialize-Tab3VerifyUi {
             Add-UiLog -Message "기본 프린터 지정 완료: $($sel.PrinterName)" -Level 'INFO'
             Invoke-Tab3RefreshAsync
         } else {
-            [System.Windows.Forms.MessageBox]::Show("기본 프린터 지정에 실패했습니다: $($sel.PrinterName)", '지정 실패', 'OK', 'Warning') | Out-Null
+            [void](Show-AsanMessageBox -Text "기본 프린터 지정에 실패했습니다: $($sel.PrinterName)" -Caption '지정 실패' -Buttons 'OK' -Icon 'Warning')
         }
     })
 
@@ -464,7 +454,23 @@ function Get-Tab4SelectedBackupEntry {
     return $dgv.SelectedRows[0].Tag
 }
 
-# [H3 Fix] 탭 4 활성 시에만 SMB 조회 + PreviewCache로 중복 네트워크 읽기 차단
+# [H3 Fix + 비동기 경량 로더] 탭 4 활성 시에만 SMB 조회 + PreviewCache + UI 스레드 멈춤 차단
+function Stop-Tab4PreviewAsync {
+    if ($script:Tab4Ui.PreviewTimer) {
+        try { $script:Tab4Ui.PreviewTimer.Stop() } catch {}
+    }
+    if ($script:Tab4Ui.PreviewPs) {
+        try { [void]$script:Tab4Ui.PreviewPs.BeginStop($null, $null) } catch {}
+        $script:Tab4Ui.PreviewPs = $null
+    }
+    if ($script:Tab4Ui.PreviewRs) {
+        try { $script:Tab4Ui.PreviewRs.CloseAsync() } catch {}
+        $script:Tab4Ui.PreviewRs = $null
+    }
+    $script:Tab4Ui.PreviewAsync    = $null
+    $script:Tab4Ui.PreviewCacheKey = $null
+}
+
 function Update-Tab4PreviewBox {
     $txt = $script:Tab4Ui.TxtPreview
     if (-not $txt -or $txt.IsDisposed) { return }
@@ -472,35 +478,63 @@ function Update-Tab4PreviewBox {
 
     $sel = Get-Tab4SelectedBackupEntry
     if (-not $sel) {
+        Stop-Tab4PreviewAsync
         $txt.Text = '목록에서 백업 폴더를 선택하면 백업 리포트(Migration_Report.txt) 미리보기가 표시됩니다.'
         return
     }
 
     $cacheKey = ([string]$sel.FullPath).ToLowerInvariant()
     if ($script:Tab4Ui.PreviewCache.ContainsKey($cacheKey)) {
+        Stop-Tab4PreviewAsync
         $txt.Text = $script:Tab4Ui.PreviewCache[$cacheKey]
         return
     }
 
-    $previewText = ''
+    # 경량 비동기 Runspace로 SMB 파일 읽기 수행 (UI 스레드 프리징 완전 제거, 메인 IsBusy 잠금 없음)
+    Stop-Tab4PreviewAsync
+    $script:Tab4Ui.PreviewGen++
+    $genNow = [int]$script:Tab4Ui.PreviewGen
+    $txt.Text = "리포트 미리보기 불러오는 중... ($($sel.Name))"
+
     try {
-        $repFile = Join-Path $sel.FullPath 'Migration_Report.txt'
-        if (Test-Path -LiteralPath $repFile) {
-            $previewText = Get-Content -LiteralPath $repFile -Raw -Encoding UTF8 -ErrorAction Stop
-        } else {
-            $meta = Read-BackupSourceMetadata -SourcePath $sel.FullPath
-            if ($meta -and $meta.Data) {
-                $d      = $meta.Data
-                $pNames = @($d.Printers | ForEach-Object { "  - $($_.Name) [$($_.PortName)]" }) -join "`r`n"
-                $previewText = "원본 PC: $($d.SourceComputer) ($($d.SourceIP)) | 일시: $($d.ExportedAt)`r`n프린터 목록:`r`n$pNames"
-            } else {
-                $previewText = "선택한 폴더($($sel.Name))에 Migration_Report.txt 또는 PrinterBackup.json이 없습니다."
+        $rs = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+        $rs.ApartmentState = [System.Threading.ApartmentState]::MTA
+        $rs.Open()
+        $ps = [System.Management.Automation.PowerShell]::Create()
+        $ps.Runspace = $rs
+
+        $previewScript = {
+            param([string]$FolderPath, [string]$FolderName, [int]$Gen)
+            $outText = ''
+            try {
+                $repFile = Join-Path $FolderPath 'Migration_Report.txt'
+                if (Test-Path -LiteralPath $repFile) {
+                    $outText = [IO.File]::ReadAllText($repFile, [Text.Encoding]::UTF8)
+                } else {
+                    $jsonFile = Join-Path $FolderPath 'PrinterBackup.json'
+                    if (Test-Path -LiteralPath $jsonFile) {
+                        $d = [IO.File]::ReadAllText($jsonFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
+                        $pNames = @($d.Printers | Where-Object { $null -ne $_ } | ForEach-Object { "  - $($_.Name) [$($_.PortName)]" }) -join "`r`n"
+                        $outText = "원본 PC: $($d.SourceComputer) ($($d.SourceIP)) | 일시: $($d.ExportedAt)`r`n프린터 목록:`r`n$pNames"
+                    } else {
+                        $outText = "선택한 폴더($FolderName)에 Migration_Report.txt 또는 PrinterBackup.json이 없습니다."
+                    }
+                }
+            } catch {
+                $outText = "미리보기 읽기 실패: $($_.Exception.Message)"
             }
+            return [pscustomobject]@{ Gen = $Gen; Text = $outText }
         }
-        $script:Tab4Ui.PreviewCache[$cacheKey] = $previewText
-        $txt.Text = $previewText
+
+        [void]$ps.AddScript($previewScript).AddArgument([string]$sel.FullPath).AddArgument([string]$sel.Name).AddArgument($genNow)
+        $script:Tab4Ui.PreviewRs       = $rs
+        $script:Tab4Ui.PreviewPs       = $ps
+        $script:Tab4Ui.PreviewCacheKey = $cacheKey
+        $script:Tab4Ui.PreviewAsync    = $ps.BeginInvoke()
+        if ($script:Tab4Ui.PreviewTimer) { $script:Tab4Ui.PreviewTimer.Start() }
     }
     catch {
+        Stop-Tab4PreviewAsync
         $txt.Text = "미리보기 읽기 실패: $($_.Exception.Message)"
     }
 }
@@ -508,7 +542,7 @@ function Update-Tab4PreviewBox {
 function Initialize-Tab4ServerUi {
     $parent = $script:Ui.TabServer
 
-    # [1] 상단 검색 및 5일 정리 툴바 ([C2] 2행 Dock + RightFlowStrip)
+    # [1] 상단 검색 및 5일 정리 툴바 ([C2] 2행 Dock + FlowLayoutPanel + RightFlowStrip)
     $pnlTop = New-Object System.Windows.Forms.Panel
     $pnlTop.Dock   = [System.Windows.Forms.DockStyle]::Top
     $pnlTop.Height = 64
@@ -518,23 +552,26 @@ function Initialize-Tab4ServerUi {
     $pnlTopRow1.Height    = 36
     $pnlTopRow1.BackColor = [System.Drawing.Color]::Transparent
 
-    $pnlTopLeft = New-Object System.Windows.Forms.Panel
-    $pnlTopLeft.Dock      = [System.Windows.Forms.DockStyle]::Fill
-    $pnlTopLeft.BackColor = [System.Drawing.Color]::Transparent
+    $pnlTopLeft = New-Object System.Windows.Forms.FlowLayoutPanel
+    $pnlTopLeft.Dock          = [System.Windows.Forms.DockStyle]::Fill
+    $pnlTopLeft.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+    $pnlTopLeft.WrapContents  = $false
+    $pnlTopLeft.BackColor     = [System.Drawing.Color]::Transparent
+    $pnlTopLeft.Padding       = New-Object System.Windows.Forms.Padding(0, 3, 0, 0)
 
     $lblSearch = New-Object System.Windows.Forms.Label
     $lblSearch.Text     = '폴더 검색:'
     $lblSearch.Font     = $script:FontBold
     $lblSearch.AutoSize = $true
-    $lblSearch.Location = New-Object System.Drawing.Point(2, 9)
+    $lblSearch.Margin   = New-Object System.Windows.Forms.Padding(0, 6, 6, 0)
 
     $txtSearch = New-Object System.Windows.Forms.TextBox
-    $txtSearch.Location = New-Object System.Drawing.Point(74, 5)
-    $txtSearch.Size     = New-Object System.Drawing.Size(240, 24)
+    $txtSearch.Size   = New-Object System.Drawing.Size(220, 24)
+    $txtSearch.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 0)
     $txtSearch.Add_TextChanged({ Render-Tab4ServerGrid })
 
     $btnRefSrv = New-StyledButton -Text '서버 목록 새로고침' -Width 138 -Height 28 -BackColor ([System.Drawing.Color]::FromArgb(51, 65, 85)) -RegisterBusy
-    $btnRefSrv.Location = New-Object System.Drawing.Point(326, 4)
+    $btnRefSrv.Margin = New-Object System.Windows.Forms.Padding(0, 1, 0, 0)
     $btnRefSrv.Add_Click({ Invoke-EnvironmentRefreshAsync })
 
     $pnlTopLeft.Controls.AddRange(@($lblSearch, $txtSearch, $btnRefSrv))
@@ -552,12 +589,7 @@ function Initialize-Tab4ServerUi {
         $moreTxt = ''
         if ($oldList.Count -gt 10) { $moreTxt = "`r`n  ... 외 $($oldList.Count - 10)개" }
 
-        $ans = [System.Windows.Forms.MessageBox]::Show(
-            "5일 이상 경과된 서버 백업 폴더 $($oldList.Count)개를 일괄 삭제합니다:`r`n$previewNames$moreTxt`r`n`r`n삭제된 백업은 복구할 수 없습니다. 진행하시겠습니까?",
-            '5일 경과 백업 일괄 정리 확인',
-            'YesNo',
-            'Warning'
-        )
+        $ans = Show-AsanMessageBox -Text "5일 이상 경과된 서버 백업 폴더 $($oldList.Count)개를 일괄 삭제합니다:`r`n$previewNames$moreTxt`r`n`r`n삭제된 백업은 복구할 수 없습니다. 진행하시겠습니까?" -Caption '5일 경과 백업 일괄 정리 확인' -Buttons 'YesNo' -Icon 'Warning'
         if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) { return }
 
         $tParams = @{ PrtBakDir = [string]$net.PrtBakDir; PcIp = [string]$net.IPAddress }
@@ -572,7 +604,7 @@ function Initialize-Tab4ServerUi {
         $done = {
             param($ok, $data, $err, $cbState)
             if (-not $ok -or -not $data) {
-                [System.Windows.Forms.MessageBox]::Show("정리 중 오류 발생: $err", '정리 실패', 'OK', 'Error') | Out-Null
+                [void](Show-AsanMessageBox -Text "정리 중 오류 발생: $err" -Caption '정리 실패' -Buttons 'OK' -Icon 'Error')
                 return
             }
             $script:Tab4Ui.PreviewCache.Clear()
@@ -580,7 +612,7 @@ function Initialize-Tab4ServerUi {
             Update-Tab2ServerDropdown
             Render-Tab4ServerGrid
             Update-Tab4PreviewBox
-            [System.Windows.Forms.MessageBox]::Show("5일 이상 경과된 백업 폴더 $($data.Removed.Count)개를 정리했습니다.", '일괄 정리 완료', 'OK', 'Information') | Out-Null
+            [void](Show-AsanMessageBox -Text "5일 이상 경과된 백업 폴더 $($data.Removed.Count)개를 정리했습니다." -Caption '일괄 정리 완료' -Buttons 'OK' -Icon 'Information')
         }
         Invoke-AsanAsyncTask -TaskName '5일 경과 서버 백업 정리' -WorkScript $work -Params $tParams -OnComplete $done -Indeterminate
     })
@@ -655,7 +687,7 @@ function Initialize-Tab4ServerUi {
     $btnLoadTab2.Add_Click({
         $sel = Get-Tab4SelectedBackupEntry
         if (-not $sel) {
-            [System.Windows.Forms.MessageBox]::Show('복원 탭으로 불러올 백업 폴더를 선택하세요.', '선택 없음', 'OK', 'Warning') | Out-Null
+            [void](Show-AsanMessageBox -Text '복원 탭으로 불러올 백업 폴더를 선택하세요.' -Caption '선택 없음' -Buttons 'OK' -Icon 'Warning')
             return
         }
         $script:Ui.TabMain.SelectedIndex = 1
@@ -682,12 +714,7 @@ function Initialize-Tab4ServerUi {
         $net = $script:AppState.NetworkInfo
         if (-not $sel -or -not $net -or [string]::IsNullOrWhiteSpace([string]$net.PrtBakDir)) { return }
 
-        $ans = [System.Windows.Forms.MessageBox]::Show(
-            "선택한 백업 폴더를 서버에서 영구 삭제하시겠습니까?`r`n- 대상: $($sel.Name)",
-            '선택 백업 삭제 확인',
-            'YesNo',
-            'Warning'
-        )
+        $ans = Show-AsanMessageBox -Text "선택한 백업 폴더를 서버에서 영구 삭제하시겠습니까?`r`n- 대상: $($sel.Name)" -Caption '선택 백업 삭제 확인' -Buttons 'YesNo' -Icon 'Warning'
         if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) { return }
 
         $tParams = @{ TargetDir = [string]$sel.FullPath; PrtBakDir = [string]$net.PrtBakDir; PcIp = [string]$net.IPAddress }
@@ -710,7 +737,7 @@ function Initialize-Tab4ServerUi {
         $done = {
             param($ok, $data, $err, $cbState)
             if (-not $ok) {
-                [System.Windows.Forms.MessageBox]::Show("삭제 실패: $err", '삭제 오류', 'OK', 'Error') | Out-Null
+                [void](Show-AsanMessageBox -Text "삭제 실패: $err" -Caption '삭제 오류' -Buttons 'OK' -Icon 'Error')
                 return
             }
             $script:Tab4Ui.PreviewCache.Clear()
@@ -732,6 +759,40 @@ function Initialize-Tab4ServerUi {
     $parent.Controls.Add($pnlBot)
     $parent.Controls.Add($pnlTop)
     $dgv.BringToFront()
+
+    $prevTimer = New-Object System.Windows.Forms.Timer
+    $prevTimer.Interval = 120
+    $prevTimer.Add_Tick({
+        try {
+            if ($script:Tab4Ui.PreviewAsync -and $script:Tab4Ui.PreviewAsync.IsCompleted) {
+                $script:Tab4Ui.PreviewTimer.Stop()
+                $psRef   = $script:Tab4Ui.PreviewPs
+                $rsRef   = $script:Tab4Ui.PreviewRs
+                $arRef   = $script:Tab4Ui.PreviewAsync
+                $cKeyRef = $script:Tab4Ui.PreviewCacheKey
+                $script:Tab4Ui.PreviewPs       = $null
+                $script:Tab4Ui.PreviewRs       = $null
+                $script:Tab4Ui.PreviewAsync    = $null
+                $script:Tab4Ui.PreviewCacheKey = $null
+                try {
+                    $out = @($psRef.EndInvoke($arRef)) | Select-Object -Last 1
+                    if ($out -and [int]$out.Gen -eq [int]$script:Tab4Ui.PreviewGen) {
+                        if ($cKeyRef) { $script:Tab4Ui.PreviewCache[$cKeyRef] = [string]$out.Text }
+                        if ($script:Tab4Ui.TxtPreview -and -not $script:Tab4Ui.TxtPreview.IsDisposed) {
+                            $script:Tab4Ui.TxtPreview.Text = [string]$out.Text
+                        }
+                    }
+                } catch {}
+                finally {
+                    if ($psRef) { try { $psRef.Dispose() } catch {} }
+                    if ($rsRef) { try { $rsRef.Close(); $rsRef.Dispose() } catch {} }
+                }
+            }
+        } catch {
+            try { $script:Tab4Ui.PreviewTimer.Stop() } catch {}
+        }
+    })
+    $script:Tab4Ui.PreviewTimer = $prevTimer
 
     $script:Tab4Ui.TxtSearch     = $txtSearch
     $script:Tab4Ui.BtnRefreshSrv = $btnRefSrv
@@ -797,8 +858,14 @@ function Start-AsanPrinterManagerApp {
 
     # 정상 파싱 및 GUI 구성 완료 시 배경 CMD 창 숨김
     Hide-ConsoleWindowSafe
-    [void]$script:Ui.Form.ShowDialog()
-    $script:Ui.Form.Dispose()
+    try {
+        [void]$script:Ui.Form.ShowDialog()
+    } finally {
+        Stop-Tab4PreviewAsync
+        if ($script:Tab4Ui.PreviewTimer) { try { $script:Tab4Ui.PreviewTimer.Dispose() } catch {} }
+        if ($script:AsyncState.PollTimer) { try { $script:AsyncState.PollTimer.Dispose() } catch {} }
+        if ($script:Ui.Form) { try { $script:Ui.Form.Dispose() } catch {} }
+    }
 }
 
 # 앱 실행 및 부트스트랩 정상 종료 마커(99) 반환

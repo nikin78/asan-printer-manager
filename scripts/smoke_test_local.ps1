@@ -282,13 +282,30 @@ if (`$parsedInfNames -notcontains 'Kyocera ECOSYS PA5000x KX' -or `$parsedInfNam
     throw ("다국어 INF 파싱 오류: " + (`$parsedInfNames -join ' | '))
 }
 
-# 2-D. @(`$null) 고스트 행 차단 검증
+# 2-D. @(`$null) 고스트 행 차단 + '_' 접두어 호스트명 방어 + ZT411 PrnInst 제외 검증
 `$nullPrtDef = Test-BackupDataDeferred -BackupData ([pscustomobject]@{ Printers = `$null; Ports = `$null })
 if (`$nullPrtDef.Printers.Count -ne 0) { throw "Printers=`$null 고스트 행 생성 오류: `$(`$nullPrtDef.Printers.Count)" }
+`$oldComp = `$env:COMPUTERNAME
+try {
+    `$env:COMPUTERNAME = '_TESTPC'
+    `$fidTest = Get-BackupFolderId -PcIp '172.25.1.9'
+    if (`$fidTest.StartsWith('_')) { throw "호스트명 '_' 접두어 미방어: `$fidTest" }
+} finally {
+    `$env:COMPUTERNAME = `$oldComp
+}
+`$ztLocalInst = Find-LocalSpecialInstaller -SpecialType 'ZEBRA_ZT411' -SkipRemoteProbe
+if (`$ztLocalInst.ExePath -and `$ztLocalInst.ExePath -match '(?i)PrnInst') {
+    throw "ZT411 설치기에서 금지된 PrnInst.exe 오인식: `$(`$ztLocalInst.ExePath)"
+}
 
-# 2-E. USB 바코드 자동 재인식 함수 안전 실행 확인 (정상 일반 USB 프린터 미건드림)
-`$usbRes = Invoke-UsbBarcodeAutoReenumerate -WaitSeconds 2
-if (`$null -eq `$usbRes -or [string]::IsNullOrWhiteSpace(`$usbRes.Summary)) { throw 'USB 재인식 반환값 오류' }
+# 2-E. USB 바코드 장치 판별 읽기 전용 단위 검증 (100% 비파괴 — pnputil 미호출)
+`$brokenUsbDevs = @(Get-BrokenBarcodeUsbDevices)
+if (`$null -eq `$brokenUsbDevs) { throw 'Get-BrokenBarcodeUsbDevices 반환값 오류' }
+`$bixVend = @(Get-DetectedVendors -Text 'TX220')
+if (`$bixVend -notcontains 'BIXOLON') { throw 'TX220 벤더 매핑 누락' }
+`$zbrVend = @(Get-DetectedVendors -Text 'ZDesigner ZT411-203dpi ZPL')
+`$zbrPkg  = @(Get-DetectedVendors -Text 'Zebra Technologies zbrn.inf')
+if ((`$zbrVend -notcontains 'ZEBRA') -or (`$zbrPkg -notcontains 'ZEBRA')) { throw 'ZT411 정규 벤더 매칭 오류' }
 
 # 3. 모델 줄기/와일드카드 & 2패스 드라이버 스코어링 검증
 `$stemsSam = Get-ModelStems -Tokens (Get-SignificantTokens 'Samsung SL-M3820ND PCL6')
@@ -344,7 +361,8 @@ Write-Output ("TEST_B_OK|SID=`$sid|WPP=`$(`$wpp.IsEnabled)|NetStatus=`$(`$net.St
 function Test-ContainerLayout {
     param([System.Windows.Forms.Control]`$Container, [string]`$ContextLabel)
     if (-not `$Container -or -not `$Container.Visible) { return }
-    `$cWidth = `$Container.ClientSize.Width
+    `$cWidth  = `$Container.ClientSize.Width
+    `$cHeight = `$Container.ClientSize.Height
     `$visButtons = [System.Collections.Generic.List[System.Windows.Forms.Control]]::new()
     foreach (`$ch in `$Container.Controls) {
         if (-not `$ch.Visible) { continue }
@@ -355,6 +373,19 @@ function Test-ContainerLayout {
             }
             if (`$ch.Left -lt -2) {
                 `$script:LayoutIssues.Add("`$ContextLabel > Button '`$(`$ch.Text)' Left=`$(`$ch.Left) < 0")
+            }
+            if (`$ch.Bottom -gt (`$cHeight + 3)) {
+                `$script:LayoutIssues.Add("`$ContextLabel > Button '`$(`$ch.Text)' Bottom=`$(`$ch.Bottom) > ParentHeight=`$cHeight")
+            }
+        }
+        if (`$ch -is [System.Windows.Forms.DataGridView]) {
+            if (`$ch.Height -lt 80) {
+                `$script:LayoutIssues.Add("`$ContextLabel > DataGridView crushed: Height=`$(`$ch.Height) (< 80)")
+            }
+        }
+        if (`$ch -is [System.Windows.Forms.TextBox] -and `$ch.Multiline) {
+            if (`$ch.Height -lt 40) {
+                `$script:LayoutIssues.Add("`$ContextLabel > Multiline TextBox crushed: Height=`$(`$ch.Height) (< 40)")
             }
         }
         if (`$ch.Controls.Count -gt 0) {

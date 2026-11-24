@@ -85,6 +85,24 @@ function Open-FolderInExplorerSafe {
     } catch {}
 }
 
+function Show-AsanMessageBox {
+    param(
+        [string]$Text,
+        [string]$Caption = '알림',
+        [System.Windows.Forms.MessageBoxButtons]$Buttons = [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]$Icon = [System.Windows.Forms.MessageBoxIcon]::Information,
+        [System.Windows.Forms.IWin32Window]$Owner = $null
+    )
+    $win = $Owner
+    if ($null -eq $win -and $script:Ui -and $script:Ui.Form -and (-not $script:Ui.Form.IsDisposed) -and $script:Ui.Form.Visible) {
+        $win = $script:Ui.Form
+    }
+    if ($null -ne $win) {
+        return [System.Windows.Forms.MessageBox]::Show($win, $Text, $Caption, $Buttons, $Icon)
+    }
+    return [System.Windows.Forms.MessageBox]::Show($Text, $Caption, $Buttons, $Icon)
+}
+
 function New-RightFlowStrip {
     param(
         [int]$TopPadding = 4,
@@ -163,6 +181,22 @@ function New-StyledGrid {
     return $dgv
 }
 
+function Set-FooterLogExpanded {
+    param([bool]$Expanded)
+    $script:Ui.LogExpanded = $Expanded
+    if ($script:Ui.TxtLog -and -not $script:Ui.TxtLog.IsDisposed) {
+        $script:Ui.TxtLog.Visible = $Expanded
+    }
+    if ($script:Ui.PnlFooter -and -not $script:Ui.PnlFooter.IsDisposed) {
+        if ($Expanded) { $script:Ui.PnlFooter.Height = 108 }
+        else { $script:Ui.PnlFooter.Height = 36 }
+    }
+    if ($script:Ui.BtnToggleLog -and -not $script:Ui.BtnToggleLog.IsDisposed) {
+        if ($Expanded) { $script:Ui.BtnToggleLog.Text = '로그 접기 ▼' }
+        else { $script:Ui.BtnToggleLog.Text = '로그 펼치기 ▲' }
+    }
+}
+
 function Add-UiLog {
     param(
         [string]$Message,
@@ -207,12 +241,14 @@ function Sync-AllUiButtonStates {
             if ($r.Cells[0].Value -eq $true) { $selCnt++ }
         }
         $hasSip2 = ($null -ne $script:Tab2Ui.CurrentSpecInfo -and [bool]$script:Tab2Ui.CurrentSpecInfo.Info.HasStep2)
+        $hasSpec = ($null -ne $script:Tab2Ui.CurrentSpecInfo)
 
         if ($script:Tab2Ui.BtnLoadServer)   { $script:Tab2Ui.BtnLoadServer.Enabled   = ((-not $busy) -and $hasServer) }
         if ($script:Tab2Ui.BtnRunDeferred)  { $script:Tab2Ui.BtnRunDeferred.Enabled  = ((-not $busy) -and $hasLoaded) }
         if ($script:Tab2Ui.BtnStartRestore) { $script:Tab2Ui.BtnStartRestore.Enabled = ((-not $busy) -and $hasLoaded -and ($selCnt -gt 0)) }
         if ($script:Tab2Ui.BtnRetryFailed)  { $script:Tab2Ui.BtnRetryFailed.Enabled  = ((-not $busy) -and $hasLoaded -and $hasFail) }
         if ($script:Tab2Ui.BtnSpecStep2)    { $script:Tab2Ui.BtnSpecStep2.Enabled    = ((-not $busy) -and $hasSip2) }
+        if ($script:Tab2Ui.BtnSpecProps)    { $script:Tab2Ui.BtnSpecProps.Enabled    = ((-not $busy) -and $hasSpec) }
     }
 
     # 탭 4: 5일 경과 수 및 행 선택 상태 반영
@@ -297,7 +333,9 @@ function Stop-ActiveAsyncRunspace {
         $script:AsyncState.PowerShell = $null
     }
     if ($script:AsyncState.Runspace) {
-        if (-not $ForceAbort) {
+        if ($ForceAbort) {
+            try { $script:AsyncState.Runspace.CloseAsync() } catch {}
+        } else {
             try { $script:AsyncState.Runspace.Close() } catch {}
             try { $script:AsyncState.Runspace.Dispose() } catch {}
         }
@@ -342,12 +380,7 @@ function Invoke-AsanAsyncTask {
     )
 
     if ($script:AsyncState.IsBusy) {
-        [System.Windows.Forms.MessageBox]::Show(
-            "현재 '$($script:AsyncState.TaskName)' 작업이 진행 중입니다. 완료 후 다시 시도하세요.",
-            '작업 진행 중',
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Information
-        ) | Out-Null
+        [void](Show-AsanMessageBox -Text "현재 '$($script:AsyncState.TaskName)' 작업이 진행 중입니다. 완료 후 다시 시도하세요." -Caption '작업 진행 중' -Buttons 'OK' -Icon 'Information')
         return
     }
 
@@ -360,11 +393,13 @@ function Invoke-AsanAsyncTask {
     try {
         $iss = New-AsanChildInitialSessionState
         $rs  = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($iss)
+        $script:AsyncState.Runspace = $rs
         $rs.ApartmentState = [System.Threading.ApartmentState]::MTA
         $rs.ThreadOptions  = [System.Management.Automation.Runspaces.PSThreadOptions]::ReuseThread
         $rs.Open()
 
         $ps = [System.Management.Automation.PowerShell]::Create()
+        $script:AsyncState.PowerShell = $ps
         $ps.Runspace = $rs
 
         $wrapperCode = {
@@ -397,8 +432,6 @@ function Invoke-AsanAsyncTask {
         $asyncRes = $ps.BeginInvoke()
 
         $script:AsyncState.TaskName      = $TaskName
-        $script:AsyncState.Runspace      = $rs
-        $script:AsyncState.PowerShell    = $ps
         $script:AsyncState.AsyncResult   = $asyncRes
         $script:AsyncState.OnComplete    = $OnComplete
         $script:AsyncState.CallbackState = $CallbackState
@@ -409,12 +442,7 @@ function Invoke-AsanAsyncTask {
         Stop-ActiveAsyncRunspace
         Set-UiBusyState -IsBusy $false -StatusText '작업 시작 실패'
         Add-UiLog -Message "비동기 작업 기동 오류: $($_.Exception.Message)" -Level 'ERROR'
-        [System.Windows.Forms.MessageBox]::Show(
-            "작업을 시작할 수 없습니다:`r`n$($_.Exception.Message)",
-            '실행 오류',
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            [System.Windows.Forms.MessageBoxIcon]::Error
-        ) | Out-Null
+        [void](Show-AsanMessageBox -Text "작업을 시작할 수 없습니다:`r`n$($_.Exception.Message)" -Caption '실행 오류' -Buttons 'OK' -Icon 'Error')
     }
 }
 
@@ -465,7 +493,7 @@ function Show-WppRemediationDialog {
                 Start-Process -FilePath $w.SettingsUri
             }
         } catch {
-            [System.Windows.Forms.MessageBox]::Show("설정 창을 열지 못했습니다: $($_.Exception.Message)", '열기 실패', 'OK', 'Warning') | Out-Null
+            [void](Show-AsanMessageBox -Text "설정 창을 열지 못했습니다: $($_.Exception.Message)" -Caption '열기 실패' -Buttons 'OK' -Icon 'Warning' -Owner ($sender.FindForm()))
         }
     })
 
@@ -513,7 +541,7 @@ function Show-BugReportDialog {
     )
 
     if ($script:AsyncState.IsBusy) {
-        [System.Windows.Forms.MessageBox]::Show('현재 진행 중인 작업이 완료된 뒤 리포트를 전송해 주세요.', '작업 진행 중', 'OK', 'Information') | Out-Null
+        [void](Show-AsanMessageBox -Text '현재 진행 중인 작업이 완료된 뒤 리포트를 전송해 주세요.' -Caption '작업 진행 중' -Buttons 'OK' -Icon 'Information')
         return
     }
 
@@ -535,20 +563,28 @@ function Show-BugReportDialog {
     $lblGuide.ForeColor = [System.Drawing.Color]::FromArgb(51, 65, 85)
     $lblGuide.Font      = $script:FontSmall
 
-    $pnlFields = New-Object System.Windows.Forms.Panel
-    $pnlFields.Dock   = [System.Windows.Forms.DockStyle]::Top
-    $pnlFields.Height = 76
+    # DPI 125~150% 라벨-입력창 겹침 방지 TableLayoutPanel
+    $pnlFields = New-Object System.Windows.Forms.TableLayoutPanel
+    $pnlFields.Dock        = [System.Windows.Forms.DockStyle]::Top
+    $pnlFields.AutoSize    = $true
+    $pnlFields.ColumnCount = 2
+    $pnlFields.RowCount    = 2
+    $pnlFields.Padding     = New-Object System.Windows.Forms.Padding(0, 4, 0, 4)
+    [void]$pnlFields.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::AutoSize)))
+    [void]$pnlFields.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
 
     $lblCat = New-Object System.Windows.Forms.Label
-    $lblCat.Text     = '증상 분류:'
-    $lblCat.Font     = $script:FontBold
-    $lblCat.AutoSize = $true
-    $lblCat.Location = New-Object System.Drawing.Point(0, 10)
+    $lblCat.Text      = '증상 분류:'
+    $lblCat.Font      = $script:FontBold
+    $lblCat.AutoSize  = $true
+    $lblCat.Anchor    = [System.Windows.Forms.AnchorStyles]::Left
+    $lblCat.Margin    = New-Object System.Windows.Forms.Padding(0, 6, 10, 6)
 
     $cmbCat = New-Object System.Windows.Forms.ComboBox
     $cmbCat.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $cmbCat.Location      = New-Object System.Drawing.Point(84, 6)
-    $cmbCat.Size          = New-Object System.Drawing.Size(220, 24)
+    $cmbCat.Width         = 240
+    $cmbCat.Anchor        = [System.Windows.Forms.AnchorStyles]::Left
+    $cmbCat.Margin        = New-Object System.Windows.Forms.Padding(0, 3, 0, 4)
     foreach ($cat in @('복원/드라이버 오류', '백업 오류', 'WSD/포트 전환', '공유 인증/SID 충돌', '특수/바코드 프린터', 'UI/프로그램 버그', '기타')) {
         [void]$cmbCat.Items.Add($cat)
     }
@@ -557,15 +593,16 @@ function Show-BugReportDialog {
     $cmbCat.SelectedIndex = $catIdx
 
     $lblPrt = New-Object System.Windows.Forms.Label
-    $lblPrt.Text     = '대상 프린터:'
-    $lblPrt.Font     = $script:FontBold
-    $lblPrt.AutoSize = $true
-    $lblPrt.Location = New-Object System.Drawing.Point(0, 44)
+    $lblPrt.Text      = '대상 프린터:'
+    $lblPrt.Font      = $script:FontBold
+    $lblPrt.AutoSize  = $true
+    $lblPrt.Anchor    = [System.Windows.Forms.AnchorStyles]::Left
+    $lblPrt.Margin    = New-Object System.Windows.Forms.Padding(0, 6, 10, 6)
 
     $cmbPrt = New-Object System.Windows.Forms.ComboBox
     $cmbPrt.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDown
-    $cmbPrt.Location      = New-Object System.Drawing.Point(84, 40)
-    $cmbPrt.Size          = New-Object System.Drawing.Size(426, 24)
+    $cmbPrt.Dock          = [System.Windows.Forms.DockStyle]::Fill
+    $cmbPrt.Margin        = New-Object System.Windows.Forms.Padding(0, 3, 0, 4)
     $prtSeen = @{}
     [void]$cmbPrt.Items.Add('(전체/미지정)')
     $prtSeen['(전체/미지정)'] = $true
@@ -584,7 +621,10 @@ function Show-BugReportDialog {
         $cmbPrt.SelectedIndex = 0
     }
 
-    $pnlFields.Controls.AddRange(@($lblCat, $cmbCat, $lblPrt, $cmbPrt))
+    $pnlFields.Controls.Add($lblCat, 0, 0)
+    $pnlFields.Controls.Add($cmbCat, 1, 0)
+    $pnlFields.Controls.Add($lblPrt, 0, 1)
+    $pnlFields.Controls.Add($cmbPrt, 1, 1)
 
     $pnlBot = New-Object System.Windows.Forms.Panel
     $pnlBot.Dock    = [System.Windows.Forms.DockStyle]::Bottom
@@ -706,17 +746,12 @@ function Show-BugReportDialog {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data) {
             Add-UiLog -Message "버그 리포트 전송 실패: $err" -Level 'ERROR'
-            [System.Windows.Forms.MessageBox]::Show("버그 리포트 전송 중 오류가 발생했습니다:`r`n$err", '전송 오류', 'OK', 'Error') | Out-Null
+            [void](Show-AsanMessageBox -Text "버그 리포트 전송 중 오류가 발생했습니다:`r`n$err" -Caption '전송 오류' -Buttons 'OK' -Icon 'Error')
             return
         }
         if ($data.SavedToServer) {
             Add-UiLog -Message "서버 리포트함 전송 완료: $($data.SavedPath)" -Level 'INFO'
-            [System.Windows.Forms.MessageBox]::Show(
-                "오류/버그 리포트가 사내 서버 리포트함으로 전송되었습니다.`r`n`r`n• 리포트 ID: $($data.ReportId)`r`n• 저장 경로: $($data.SavedPath)",
-                '리포트 전송 완료',
-                'OK',
-                'Information'
-            ) | Out-Null
+            [void](Show-AsanMessageBox -Text "오류/버그 리포트가 사내 서버 리포트함으로 전송되었습니다.`r`n`r`n• 리포트 ID: $($data.ReportId)`r`n• 저장 경로: $($data.SavedPath)" -Caption '리포트 전송 완료' -Buttons 'OK' -Icon 'Information')
         } else {
             $fbDetail = ''
             if (-not [string]::IsNullOrWhiteSpace([string]$data.FallbackNote)) {
@@ -724,13 +759,7 @@ function Show-BugReportDialog {
                 Add-UiLog -Message "서버 리포트 전송 실패 사유: $($data.FallbackNote)" -Level 'WARN'
             }
             Add-UiLog -Message "오프라인/로컬 리포트 저장 완료: $($data.SavedPath)" -Level 'WARN'
-            [System.Windows.Forms.MessageBox]::Show(
-                $script:Ui.Form,
-                "서버 연결이 불가하여 로컬 오프라인 리포트 폴더에 저장했습니다.$fbDetail`r`n`r`n• 저장 경로: $($data.SavedPath)`r`n• 추후 파일만 개발 담당자에게 전달해 주세요.",
-                '로컬 리포트 저장 완료',
-                'OK',
-                'Information'
-            ) | Out-Null
+            [void](Show-AsanMessageBox -Text "서버 연결이 불가하여 로컬 오프라인 리포트 폴더에 저장했습니다.$fbDetail`r`n`r`n• 저장 경로: $($data.SavedPath)`r`n• 추후 파일만 개발 담당자에게 전달해 주세요." -Caption '로컬 리포트 저장 완료' -Buttons 'OK' -Icon 'Information')
         }
     }
 
@@ -859,9 +888,9 @@ function Initialize-MainGuiShell {
     # ---------------- [1] 최상단 고정 상태 바 (3행 Dock 구조) ----------------
     $pnlHeader = New-Object System.Windows.Forms.Panel
     $pnlHeader.Dock      = [System.Windows.Forms.DockStyle]::Top
-    $pnlHeader.Height    = 88
+    $pnlHeader.Height    = 82
     $pnlHeader.BackColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
-    $pnlHeader.Padding   = New-Object System.Windows.Forms.Padding(12, 6, 12, 6)
+    $pnlHeader.Padding   = New-Object System.Windows.Forms.Padding(12, 4, 12, 4)
 
     # Row 1: 좌 타이틀 / 우 새로고침 + 네트워크 배지
     $pnlHdrRow1 = New-Object System.Windows.Forms.Panel
@@ -1014,18 +1043,18 @@ function Initialize-MainGuiShell {
     # ---------------- [3] 하단 진행률 바 + 접이식 실시간 로그 (Dock 구조) ----------------
     $pnlFooter = New-Object System.Windows.Forms.Panel
     $pnlFooter.Dock      = [System.Windows.Forms.DockStyle]::Bottom
-    $pnlFooter.Height    = 146
+    $pnlFooter.Height    = 108
     $pnlFooter.BackColor = [System.Drawing.Color]::FromArgb(226, 232, 240)
-    $pnlFooter.Padding   = New-Object System.Windows.Forms.Padding(10, 4, 10, 8)
+    $pnlFooter.Padding   = New-Object System.Windows.Forms.Padding(10, 4, 10, 6)
 
     $pnlFootTop = New-Object System.Windows.Forms.Panel
     $pnlFootTop.Dock      = [System.Windows.Forms.DockStyle]::Top
-    $pnlFootTop.Height    = 30
+    $pnlFootTop.Height    = 28
     $pnlFootTop.BackColor = [System.Drawing.Color]::Transparent
 
     $prgBar = New-Object System.Windows.Forms.ProgressBar
-    $prgBar.Location = New-Object System.Drawing.Point(0, 5)
-    $prgBar.Size     = New-Object System.Drawing.Size(210, 19)
+    $prgBar.Location = New-Object System.Drawing.Point(0, 4)
+    $prgBar.Size     = New-Object System.Drawing.Size(210, 18)
     $prgBar.Minimum  = 0
     $prgBar.Maximum  = 100
 
@@ -1034,30 +1063,20 @@ function Initialize-MainGuiShell {
     $lblProgressText.ForeColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
     $lblProgressText.Font      = $script:FontBold
     $lblProgressText.AutoSize  = $true
-    $lblProgressText.Location  = New-Object System.Drawing.Point(220, 7)
+    $lblProgressText.Location  = New-Object System.Drawing.Point(220, 6)
 
     $pnlFootLeft = New-Object System.Windows.Forms.Panel
     $pnlFootLeft.Dock      = [System.Windows.Forms.DockStyle]::Fill
     $pnlFootLeft.BackColor = [System.Drawing.Color]::Transparent
     $pnlFootLeft.Controls.AddRange(@($prgBar, $lblProgressText))
 
-    $flpFootRight = New-RightFlowStrip -TopPadding 3 -RightPadding 0
+    $flpFootRight = New-RightFlowStrip -TopPadding 2 -RightPadding 0
 
     $btnToggleLog = New-StyledButton -Text '로그 접기 ▼' -Width 92 -Height 22 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105))
     $btnToggleLog.Font   = $script:FontSmall
     $btnToggleLog.Margin = New-Object System.Windows.Forms.Padding(6, 0, 0, 0)
     $btnToggleLog.Add_Click({
-        if ($script:Ui.LogExpanded) {
-            $script:Ui.LogExpanded       = $false
-            $script:Ui.TxtLog.Visible    = $false
-            $script:Ui.PnlFooter.Height  = 38
-            $script:Ui.BtnToggleLog.Text = '로그 펼치기 ▲'
-        } else {
-            $script:Ui.LogExpanded       = $true
-            $script:Ui.TxtLog.Visible    = $true
-            $script:Ui.PnlFooter.Height  = 146
-            $script:Ui.BtnToggleLog.Text = '로그 접기 ▼'
-        }
+        Set-FooterLogExpanded -Expanded (-not $script:Ui.LogExpanded)
     })
 
     $btnClearLog = New-StyledButton -Text '로그 지우기' -Width 86 -Height 22 -BackColor ([System.Drawing.Color]::FromArgb(100, 116, 139))
@@ -1096,7 +1115,7 @@ function Initialize-MainGuiShell {
 
     foreach ($tp in @($tabBackup, $tabRestore, $tabVerify, $tabServer)) {
         $tp.BackColor = [System.Drawing.Color]::FromArgb(248, 250, 252)
-        $tp.Padding   = New-Object System.Windows.Forms.Padding(10)
+        $tp.Padding   = New-Object System.Windows.Forms.Padding(8)
         $tp.Font      = $script:FontBase
         $tabMain.TabPages.Add($tp)
     }
@@ -1193,19 +1212,17 @@ function Initialize-MainGuiShell {
         param($sender, $e)
         $wasBusy = [bool]$script:AsyncState.IsBusy
         if ($wasBusy) {
-            $ans = [System.Windows.Forms.MessageBox]::Show(
-                $script:Ui.Form,
-                "현재 '$($script:AsyncState.TaskName)' 작업이 진행 중입니다.`r`n강제 종료하면 프린터 설정이 불완전할 수 있습니다. 정말 종료하시겠습니까?",
-                '작업 중 종료 확인',
-                [System.Windows.Forms.MessageBoxButtons]::YesNo,
-                [System.Windows.Forms.MessageBoxIcon]::Warning
-            )
+            $ans = Show-AsanMessageBox -Text "현재 '$($script:AsyncState.TaskName)' 작업이 진행 중입니다.`r`n강제 종료하면 프린터 설정이 불완전할 수 있습니다. 정말 종료하시겠습니까?" -Caption '작업 중 종료 확인' -Buttons 'YesNo' -Icon 'Warning'
             if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) {
                 $e.Cancel = $true
                 return
             }
         }
         Stop-ActiveAsyncRunspace -ForceAbort:$wasBusy
+        if ($script:AsyncState.PollTimer) {
+            try { $script:AsyncState.PollTimer.Dispose() } catch {}
+            $script:AsyncState.PollTimer = $null
+        }
         # [보안] 종료 시 사내 백업 서버 SMB 세션을 즉시 끊어 교체 PC에 관리자 접근이 남지 않도록 차단
         try { Disconnect-AllHostSessions -HostName $global:AsanCtx.ServerIP } catch {}
     })
@@ -1535,7 +1552,7 @@ function Invoke-Tab1ScanAsync {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data) {
             Add-UiLog -Message "프린터 사전 진단 실패: $err" -Level 'ERROR'
-            [System.Windows.Forms.MessageBox]::Show("프린터 진단 중 오류가 발생했습니다:`r`n$err", '진단 오류', 'OK', 'Error') | Out-Null
+            [void](Show-AsanMessageBox -Text "프린터 진단 중 오류가 발생했습니다:`r`n$err" -Caption '진단 오류' -Buttons 'OK' -Icon 'Error')
             return
         }
         $script:AppState.DiagnosedPrinters = @($data.Printers)
@@ -1578,36 +1595,21 @@ function Start-Tab1BackupExecution {
 
     if (-not $OfflineZipMode) {
         if (-not $net -or $net.Status -ne 'Online' -or [string]::IsNullOrWhiteSpace([string]$prtBakDir)) {
-            [System.Windows.Forms.MessageBox]::Show(
-                "백업 서버에 연결되어 있지 않습니다.`r`n네트워크를 설정한 뒤 새로고침(F5)하거나 [오프라인 ZIP 백업]을 사용하세요.",
-                '서버 미연결',
-                [System.Windows.Forms.MessageBoxButtons]::OK,
-                [System.Windows.Forms.MessageBoxIcon]::Warning
-            ) | Out-Null
+            [void](Show-AsanMessageBox -Text "백업 서버에 연결되어 있지 않습니다.`r`n네트워크를 설정한 뒤 새로고침(F5)하거나 [오프라인 ZIP 백업]을 사용하세요." -Caption '서버 미연결' -Buttons 'OK' -Icon 'Warning')
             return
         }
 
         if (-not $SkipOverwritePrompt) {
+            # UI 스레드 SMB I/O 차단: 동기화된 $script:AppState.ServerBackups 캐시 기준으로 기존 백업 확인
             $folderId         = Get-BackupFolderId -PcIp $pcIp
             $existingEntry    = @($script:AppState.ServerBackups | Where-Object { $_.Name -ieq $folderId }) | Select-Object -First 1
             $existingTimeText = $null
             if ($existingEntry) {
                 $existingTimeText = $existingEntry.LastWriteTime.ToString('yyyy-MM-dd HH:mm')
-            } else {
-                $candDir = Join-Path $prtBakDir $folderId
-                if (Test-Path -LiteralPath $candDir) {
-                    $di = Get-Item -LiteralPath $candDir -Force -ErrorAction SilentlyContinue
-                    if ($di) { $existingTimeText = $di.LastWriteTime.ToString('yyyy-MM-dd HH:mm') }
-                }
             }
 
             if ($existingTimeText) {
-                $ans = [System.Windows.Forms.MessageBox]::Show(
-                    "서버에 동일 PC 백업('$folderId')이 이미 존재합니다.`r`n- 기존 백업 일시: $existingTimeText`r`n`r`n기존 백업을 덮어쓰시겠습니까?",
-                    '기존 백업 덮어쓰기 확인',
-                    [System.Windows.Forms.MessageBoxButtons]::YesNo,
-                    [System.Windows.Forms.MessageBoxIcon]::Question
-                )
+                $ans = Show-AsanMessageBox -Text "서버에 동일 PC 백업('$folderId')이 이미 존재합니다.`r`n- 기존 백업 일시: $existingTimeText`r`n`r`n기존 백업을 덮어쓰시겠습니까?" -Caption '기존 백업 덮어쓰기 확인' -Buttons 'YesNo' -Icon 'Question'
                 if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) {
                     Add-UiLog -Message '사용자가 기존 백업 덮어쓰기를 취소했습니다.' -Level 'INFO'
                     return
@@ -1681,12 +1683,7 @@ function Start-Tab1BackupExecution {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data -or -not $data.BackupResult) {
             Add-UiLog -Message "백업 실패: $err" -Level 'ERROR'
-            $repAns = [System.Windows.Forms.MessageBox]::Show(
-                "백업 작업 중 오류가 발생했습니다:`r`n$err`r`n`r`n이 오류 내용을 서버 리포트함(_PRTBAK\_REPORTS)으로 전송하시겠습니까?",
-                '백업 실패',
-                'YesNo',
-                'Error'
-            )
+            $repAns = Show-AsanMessageBox -Text "백업 작업 중 오류가 발생했습니다:`r`n$err`r`n`r`n이 오류 내용을 서버 리포트함(_PRTBAK\_REPORTS)으로 전송하시겠습니까?" -Caption '백업 실패' -Buttons 'YesNo' -Icon 'Error'
             if ($repAns -eq [System.Windows.Forms.DialogResult]::Yes) {
                 Show-BugReportDialog -DefaultCategory '백업 오류' -ErrorSummary ([string]$err)
             }
@@ -1735,7 +1732,7 @@ function Start-Tab1BackupExecution {
                 "저장 폴더(C:\_AsanPrtOffline)를 탐색기로 여시겠습니까?"
             ) -join "`r`n"
 
-            $openAns = [System.Windows.Forms.MessageBox]::Show($msg, '오프라인 ZIP 백업 완료', 'YesNo', 'Information')
+            $openAns = Show-AsanMessageBox -Text $msg -Caption '오프라인 ZIP 백업 완료' -Buttons 'YesNo' -Icon 'Information'
             if ($openAns -eq [System.Windows.Forms.DialogResult]::Yes) {
                 Open-FolderInExplorerSafe -FolderPath $global:AsanCtx.OfflineLocalRoot
             }
@@ -1749,7 +1746,7 @@ function Start-Tab1BackupExecution {
                 "[백업 시점 특이사항 (새 Win 11 복원 시 자동 재알림)]",
                 $noteSummary
             ) -join "`r`n"
-            [System.Windows.Forms.MessageBox]::Show($msg, '서버 백업 완료', 'OK', 'Information') | Out-Null
+            [void](Show-AsanMessageBox -Text $msg -Caption '서버 백업 완료' -Buttons 'OK' -Icon 'Information')
         }
     }
 

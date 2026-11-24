@@ -42,11 +42,37 @@ $script:Tab2Ui = @{
     LoadedSourcePath   = $null
     LastFailures       = @()
     HelperExpanded     = $false
+    SpecialInfoCache   = @{}
+    LocalLptsCache     = @()
+    SuppressSpecEvent  = $false
+    PnlAuthTop         = $null
+    PnlSpecTop         = $null
 }
 
 # ============================================================================
 # 탭 2 UI 렌더링 및 도우미 패널 제어 헬퍼
 # ============================================================================
+function Update-Tab2HelperHeightSafe {
+    if (-not $script:Tab2Ui.PnlHelper -or $script:Tab2Ui.PnlHelper.IsDisposed -or -not $script:Tab2Ui.HelperExpanded) { return }
+    $topH = 34
+    if ($script:Tab2Ui.TabHelper -and $script:Tab2Ui.TabHelper.SelectedIndex -eq 0 -and $script:Tab2Ui.PnlAuthTop) {
+        $topH = [math]::Max($topH, [int]$script:Tab2Ui.PnlAuthTop.Height)
+    } elseif ($script:Tab2Ui.PnlSpecTop) {
+        $topH = [math]::Max($topH, [int]$script:Tab2Ui.PnlSpecTop.Height)
+    }
+    $extra = [math]::Max(0, $topH - 34)
+    $targetH = [math]::Min(182, (138 + $extra))
+    if ($script:Tab2Ui.PnlHelper.Height -ne $targetH) {
+        $script:Tab2Ui.PnlHelper.Height = $targetH
+    }
+    # 작은 창(960x640)이나 WPP 배너 동시 표시 시 DgvRestore가 찌그러지지 않도록 하단 로그 자동 접기
+    if ($script:Tab2Ui.DgvRestore -and -not $script:Tab2Ui.DgvRestore.IsDisposed) {
+        if ($script:Tab2Ui.DgvRestore.Height -lt 95 -and $script:Ui.LogExpanded) {
+            Set-FooterLogExpanded -Expanded $false
+        }
+    }
+}
+
 function Set-Tab2HelperVisibility {
     param(
         [bool]$Expanded,
@@ -62,6 +88,9 @@ function Set-Tab2HelperVisibility {
     }
     if ($Expanded -and $SelectTabIndex -ge 0 -and $script:Tab2Ui.TabHelper -and $SelectTabIndex -lt $script:Tab2Ui.TabHelper.TabPages.Count) {
         $script:Tab2Ui.TabHelper.SelectedIndex = $SelectTabIndex
+    }
+    if ($Expanded) {
+        Update-Tab2HelperHeightSafe
     }
 }
 
@@ -273,6 +302,7 @@ function Update-Tab2AuthPanel {
 # 특수 프린터 4종 반자동 도우미 패널 갱신
 # ============================================================================
 function Update-Tab2SpecialSelection {
+    if ($script:Tab2Ui.SuppressSpecEvent) { return }
     $cmb  = $script:Tab2Ui.CmbSpecialList
     $rows = @($script:Tab2Ui.SpecialRows)
     if (-not $cmb -or $cmb.SelectedIndex -lt 0 -or $cmb.SelectedIndex -ge $rows.Count) {
@@ -286,7 +316,15 @@ function Update-Tab2SpecialSelection {
     }
 
     $selRow = $rows[$cmb.SelectedIndex]
-    $info   = Get-SpecialPrinterAssistantInfo -SpecialRow $selRow
+    # 백그라운드 Runspace에서 미리 계산된 캐시 우선 사용(UI 스레드 SMB/CIM 멈춤 완전 차단)
+    $cacheKey = "$($selRow.SpecialType)|$($selRow.PrinterName)"
+    $info = $null
+    if ($script:Tab2Ui.SpecialInfoCache -and $script:Tab2Ui.SpecialInfoCache.ContainsKey($cacheKey)) {
+        $info = $script:Tab2Ui.SpecialInfoCache[$cacheKey]
+    } else {
+        $info = Get-SpecialPrinterAssistantInfo -SpecialRow $selRow -SkipRemoteProbe -PreloadedLpts @($script:Tab2Ui.LocalLptsCache)
+        if ($script:Tab2Ui.SpecialInfoCache) { $script:Tab2Ui.SpecialInfoCache[$cacheKey] = $info }
+    }
     $script:Tab2Ui.CurrentSpecInfo = [pscustomobject]@{
         Row  = $selRow
         Info = $info
@@ -320,6 +358,7 @@ function Update-Tab2SpecialPanel {
     $script:Tab2Ui.TpSpecial.Text = " 특수 프린터 도우미 ($($specRows.Count)건) "
 
     $cmb = $script:Tab2Ui.CmbSpecialList
+    $script:Tab2Ui.SuppressSpecEvent = $true
     $cmb.BeginUpdate()
     try {
         $cmb.Items.Clear()
@@ -330,6 +369,7 @@ function Update-Tab2SpecialPanel {
     }
     finally {
         $cmb.EndUpdate()
+        $script:Tab2Ui.SuppressSpecEvent = $false
     }
     Update-Tab2SpecialSelection
 }
@@ -343,8 +383,8 @@ function Load-Tab2BackupSourceAsync {
         [switch]$ForceLiveProbe
     )
 
-    if ([string]::IsNullOrWhiteSpace($SourcePath) -or -not (Test-Path -LiteralPath $SourcePath)) {
-        [System.Windows.Forms.MessageBox]::Show("백업 경로를 찾을 수 없습니다:`r`n$SourcePath", '로드 실패', 'OK', 'Warning') | Out-Null
+    if ([string]::IsNullOrWhiteSpace($SourcePath)) {
+        [void](Show-AsanMessageBox -Text '불러올 백업 경로가 비어 있습니다.' -Caption '로드 실패' -Buttons 'OK' -Icon 'Warning')
         return
     }
 
@@ -354,8 +394,12 @@ function Load-Tab2BackupSourceAsync {
 
     $work = {
         param($arg)
-        Write-ProgressSafe -Percent 15 -Message "백업 메타데이터 읽는 중: $($arg.SourcePath)"
-        $meta = Read-BackupSourceMetadata -SourcePath ([string]$arg.SourcePath)
+        $srcPath = [string]$arg.SourcePath
+        if (-not (Test-Path -LiteralPath $srcPath)) {
+            throw "백업 경로를 찾을 수 없습니다: $srcPath"
+        }
+        Write-ProgressSafe -Percent 15 -Message "백업 메타데이터 읽는 중: $srcPath"
+        $meta = Read-BackupSourceMetadata -SourcePath $srcPath
         if (-not $meta -or -not $meta.Data) {
             throw '선택한 위치에서 유효한 PrinterBackup.json 파일을 찾지 못했습니다.'
         }
@@ -369,12 +413,23 @@ function Load-Tab2BackupSourceAsync {
 
         $deferred  = Test-BackupDataDeferred -BackupData $meta.Data -RunLiveProbe:$shouldProbe
         $localLpts = @(Get-DeviceManagerLptPorts)
+
+        # 특수장비 설치파일/서버(.drs)/LPT 정보를 백그라운드에서 선계산하여 UI 스레드 멈춤 원천 차단
+        $specInfoMap = @{}
+        foreach ($sr in @($deferred.Printers | Where-Object { $_.SpecialType -ne 'STANDARD' })) {
+            $ck = "$($sr.SpecialType)|$($sr.PrinterName)"
+            if (-not $specInfoMap.ContainsKey($ck)) {
+                $specInfoMap[$ck] = Get-SpecialPrinterAssistantInfo -SpecialRow $sr -PreloadedLpts $localLpts
+            }
+        }
+
         Write-ProgressSafe -Percent 100 -Message "백업 로드 완료 (대상 $($deferred.Printers.Count)대)"
 
         return [pscustomobject]@{
             Meta         = $meta
             Deferred     = $deferred
             LocalLpts    = $localLpts
+            SpecInfoMap  = $specInfoMap
             DidLiveProbe = $shouldProbe
         }
     }
@@ -383,7 +438,7 @@ function Load-Tab2BackupSourceAsync {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data) {
             Add-UiLog -Message "백업 로드 실패: $err" -Level 'ERROR'
-            [System.Windows.Forms.MessageBox]::Show("백업을 불러오지 못했습니다:`r`n$err", '불러오기 오류', 'OK', 'Error') | Out-Null
+            [void](Show-AsanMessageBox -Text "백업을 불러오지 못했습니다:`r`n$err" -Caption '불러오기 오류' -Buttons 'OK' -Icon 'Error')
             return
         }
 
@@ -394,6 +449,11 @@ function Load-Tab2BackupSourceAsync {
         $script:AppState.AuthFailedHosts   = @($data.Deferred.AuthFailedHosts)
         $script:Tab2Ui.LoadedSourcePath    = $meta.SourcePath
         $script:Tab2Ui.LastFailures        = @()
+        $script:Tab2Ui.LocalLptsCache      = @($data.LocalLpts)
+        $script:Tab2Ui.SpecialInfoCache    = @{}
+        if ($data.SpecInfoMap) {
+            foreach ($k in $data.SpecInfoMap.Keys) { $script:Tab2Ui.SpecialInfoCache[$k] = $data.SpecInfoMap[$k] }
+        }
 
         $brmTxt = 'PrintBrm 없음'
         if ($meta.HasBrm) { $brmTxt = 'PrintBrm 포함' }
@@ -463,7 +523,7 @@ function Start-Tab2RestoreExecution {
     param([switch]$RetryFailedOnly)
 
     if ([string]::IsNullOrWhiteSpace($script:Tab2Ui.LoadedSourcePath)) {
-        [System.Windows.Forms.MessageBox]::Show('먼저 서버 백업 또는 오프라인 ZIP 파일을 불러오세요.', '백업 미선택', 'OK', 'Warning') | Out-Null
+        [void](Show-AsanMessageBox -Text '먼저 서버 백업 또는 오프라인 ZIP 파일을 불러오세요.' -Caption '백업 미선택' -Buttons 'OK' -Icon 'Warning')
         return
     }
 
@@ -484,7 +544,7 @@ function Start-Tab2RestoreExecution {
     # [H1 Fix] 실패 항목 재시도 시 실패 행만 추려 PrintBrm 전체 덮어쓰기 생략
     if ($RetryFailedOnly) {
         if ($script:Tab2Ui.LastFailures.Count -eq 0) {
-            [System.Windows.Forms.MessageBox]::Show('재시도할 실패 항목이 없습니다.', '재시도 대상 없음', 'OK', 'Information') | Out-Null
+            [void](Show-AsanMessageBox -Text '재시도할 실패 항목이 없습니다.' -Caption '재시도 대상 없음' -Buttons 'OK' -Icon 'Information')
             return
         }
         $failedNames   = @($script:Tab2Ui.LastFailures | ForEach-Object { [string]$_.PrinterName })
@@ -498,7 +558,7 @@ function Start-Tab2RestoreExecution {
 
     $selectedCount = (@($rowsToRestore | Where-Object { $_.Selected })).Count
     if ($selectedCount -eq 0) {
-        [System.Windows.Forms.MessageBox]::Show('복원할 프린터를 1대 이상 선택하세요.', '선택 없음', 'OK', 'Warning') | Out-Null
+        [void](Show-AsanMessageBox -Text '복원할 프린터를 1대 이상 선택하세요.' -Caption '선택 없음' -Buttons 'OK' -Icon 'Warning')
         return
     }
 
@@ -553,12 +613,7 @@ function Start-Tab2RestoreExecution {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data) {
             Add-UiLog -Message "복원 엔진 오류: $err" -Level 'ERROR'
-            $repAns = [System.Windows.Forms.MessageBox]::Show(
-                "복원 중 오류가 발생했습니다:`r`n$err`r`n`r`n이 오류 내용을 서버 리포트함(_PRTBAK\_REPORTS)으로 전송하시겠습니까?",
-                '복원 오류',
-                'YesNo',
-                'Error'
-            )
+            $repAns = Show-AsanMessageBox -Text "복원 중 오류가 발생했습니다:`r`n$err`r`n`r`n이 오류 내용을 서버 리포트함(_PRTBAK\_REPORTS)으로 전송하시겠습니까?" -Caption '복원 오류' -Buttons 'YesNo' -Icon 'Error'
             if ($repAns -eq [System.Windows.Forms.DialogResult]::Yes) {
                 Show-BugReportDialog -DefaultCategory '복원/드라이버 오류' -ErrorSummary ([string]$err)
             }
@@ -648,7 +703,7 @@ function Start-Tab2RestoreExecution {
         if ($failCnt -gt 0) {
             $sumLines.Add("")
             $sumLines.Add("복원 실패 항목을 서버 리포트함(_PRTBAK\_REPORTS)으로 지금 전송하시겠습니까?")
-            $repAns = [System.Windows.Forms.MessageBox]::Show(($sumLines -join "`r`n"), '복원 완료 요약 (일부 실패)', 'YesNo', 'Warning')
+            $repAns = Show-AsanMessageBox -Text ($sumLines -join "`r`n") -Caption '복원 완료 요약 (일부 실패)' -Buttons 'YesNo' -Icon 'Warning'
             if ($repAns -eq [System.Windows.Forms.DialogResult]::Yes) {
                 $firstFailPrt = [string](@($data.Failures)[0].PrinterName)
                 $failSummary  = (@($data.Failures | ForEach-Object { "$($_.PrinterName) ($($_.PortName)): $($_.Reason)" }) -join "`r`n")
@@ -657,7 +712,7 @@ function Start-Tab2RestoreExecution {
         } else {
             $icon = [System.Windows.Forms.MessageBoxIcon]::Information
             if ($samList.Count -gt 0 -or $data.NeedsUsbReplug) { $icon = [System.Windows.Forms.MessageBoxIcon]::Warning }
-            [System.Windows.Forms.MessageBox]::Show(($sumLines -join "`r`n"), '복원 완료 요약', 'OK', $icon) | Out-Null
+            [void](Show-AsanMessageBox -Text ($sumLines -join "`r`n") -Caption '복원 완료 요약' -Buttons 'OK' -Icon $icon)
         }
     }
 
@@ -677,11 +732,11 @@ function Invoke-Tab2HostAuthActionAsync {
     $passVal  = $script:Tab2Ui.TxtAuthPass.Text
 
     if ([string]::IsNullOrWhiteSpace($hostName)) {
-        [System.Windows.Forms.MessageBox]::Show('조치할 공유 메인 PC의 IP 주소를 선택하거나 입력하세요.', '호스트 미입력', 'OK', 'Warning') | Out-Null
+        [void](Show-AsanMessageBox -Text '조치할 공유 메인 PC의 IP 주소를 선택하거나 입력하세요.' -Caption '호스트 미입력' -Buttons 'OK' -Icon 'Warning')
         return
     }
     if (-not $WithSpoolerReset -and [string]::IsNullOrWhiteSpace($userVal)) {
-        [System.Windows.Forms.MessageBox]::Show('사용자 계정(예: admin)을 입력하세요.', '계정 미입력', 'OK', 'Warning') | Out-Null
+        [void](Show-AsanMessageBox -Text '사용자 계정(예: admin)을 입력하세요.' -Caption '계정 미입력' -Buttons 'OK' -Icon 'Warning')
         return
     }
 
@@ -743,12 +798,7 @@ function Invoke-Tab2HostAuthActionAsync {
             Render-Tab2RestoreGrid
             Update-Tab2AuthPanel
 
-            [System.Windows.Forms.MessageBox]::Show(
-                "호스트($targetHost) 인증에 성공했습니다! ($($authRes.Reason))`r`n`r`n이제 [실패 항목만 재시도] 또는 [선택 항목 복원 시작] 버튼을 눌러 복원을 완료하세요.",
-                '공유 호스트 인증 성공',
-                'OK',
-                'Information'
-            ) | Out-Null
+            [void](Show-AsanMessageBox -Text "호스트($targetHost) 인증에 성공했습니다! ($($authRes.Reason))`r`n`r`n이제 [실패 항목만 재시도] 또는 [선택 항목 복원 시작] 버튼을 눌러 복원을 완료하세요." -Caption '공유 호스트 인증 성공' -Buttons 'OK' -Icon 'Information')
         } else {
             $mySid = $script:AppState.LocalSid
             $script:Tab2Ui.TxtAuthInfo.Text = @(
@@ -757,12 +807,7 @@ function Invoke-Tab2HostAuthActionAsync {
                 "• 조치 절차: 1) 메인 PC($targetHost)에서 SID 변경 및 스풀러 초기화 진행",
                 "             2) 완료 후 이 화면의 [스풀러·자격증명 초기화 후 재연결] 버튼 클릭"
             ) -join "`r`n"
-            [System.Windows.Forms.MessageBox]::Show(
-                "호스트($targetHost) 연결이 여전히 거부되었습니다.`r`n$($authRes.Reason)`r`n`r`n비밀번호가 확실히 맞다면 메인 PC와 동일 Windows SID 충돌 상태입니다.`r`n메인 PC SID 작업 후 [스풀러·자격증명 초기화 후 재연결]을 실행하세요.",
-                '인증 실패 / SID 충돌 의심',
-                'OK',
-                'Warning'
-            ) | Out-Null
+            [void](Show-AsanMessageBox -Text "호스트($targetHost) 연결이 여전히 거부되었습니다.`r`n$($authRes.Reason)`r`n`r`n비밀번호가 확실히 맞다면 메인 PC와 동일 Windows SID 충돌 상태입니다.`r`n메인 PC SID 작업 후 [스풀러·자격증명 초기화 후 재연결]을 실행하세요." -Caption '인증 실패 / SID 충돌 의심' -Buttons 'OK' -Icon 'Warning')
         }
     }
 
@@ -862,7 +907,7 @@ function Invoke-Tab2Sip30mStep2Async {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data) {
             Add-UiLog -Message "SIP-30M 2단계 마무리 오류: $err" -Level 'ERROR'
-            [System.Windows.Forms.MessageBox]::Show("SIP-30M 마무리 중 오류가 발생했습니다:`r`n$err", 'SIP-30M 오류', 'OK', 'Error') | Out-Null
+            [void](Show-AsanMessageBox -Text "SIP-30M 마무리 중 오류가 발생했습니다:`r`n$err" -Caption 'SIP-30M 오류' -Buttons 'OK' -Icon 'Error')
             return
         }
         $icon = [System.Windows.Forms.MessageBoxIcon]::Warning
@@ -870,7 +915,7 @@ function Invoke-Tab2Sip30mStep2Async {
             $icon = [System.Windows.Forms.MessageBoxIcon]::Information
             foreach ($cb in $script:Ui.OnRestoreCompleted) { try { & $cb } catch {} }
         }
-        [System.Windows.Forms.MessageBox]::Show($data.Message, 'SIP-30M 2단계 마무리', 'OK', $icon) | Out-Null
+        [void](Show-AsanMessageBox -Text $data.Message -Caption 'SIP-30M 2단계 마무리' -Buttons 'OK' -Icon $icon)
     }
 
     Invoke-AsanAsyncTask -TaskName 'SIP-30M(id카드) 2단계 자동 마무리' -WorkScript $work -Params $tParams -OnComplete $done -Indeterminate
@@ -888,44 +933,52 @@ function Invoke-Tab2UsbReenumAsync {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data) {
             Add-UiLog -Message "USB 바코드 재인식 오류: $err" -Level 'ERROR'
-            [System.Windows.Forms.MessageBox]::Show("USB 재인식 중 오류가 발생했습니다:`r`n$err", 'USB 재인식 오류', 'OK', 'Error') | Out-Null
+            [void](Show-AsanMessageBox -Text "USB 재인식 중 오류가 발생했습니다:`r`n$err" -Caption 'USB 재인식 오류' -Buttons 'OK' -Icon 'Error')
             return
         }
         $icon = [System.Windows.Forms.MessageBoxIcon]::Information
         if ($data.NeedsManualReplug) { $icon = [System.Windows.Forms.MessageBoxIcon]::Warning }
         foreach ($cb in $script:Ui.OnRestoreCompleted) { try { & $cb } catch {} }
-        [System.Windows.Forms.MessageBox]::Show($data.Summary, 'USB 바코드 소프트웨어 재인식', 'OK', $icon) | Out-Null
+        [void](Show-AsanMessageBox -Text $data.Summary -Caption 'USB 바코드 소프트웨어 재인식' -Buttons 'OK' -Icon $icon)
     }
     Invoke-AsanAsyncTask -TaskName 'USB 바코드 소프트웨어 재인식' -WorkScript $work -OnComplete $done -Indeterminate
 }
 
 # ============================================================================
-# [C2 + C4 + H4 Fix] 탭 2 컨트롤 배치 초기화 (Dock + RightFlowStrip 구조화)
+# [C2 + C4 + H4 Fix] 탭 2 컨트롤 배치 초기화 (Dock + FlowLayoutPanel + RightFlowStrip)
 # ============================================================================
 function Initialize-Tab2RestoreUi {
     $parent = $script:Ui.TabRestore
 
-    # ---------------- [1] 상단 백업 소스 선택 바 ----------------
+    # ---------------- [1] 상단 백업 소스 선택 바 (DPI 125~150% 겹침 방지) ----------------
     $pnlSource = New-Object System.Windows.Forms.Panel
     $pnlSource.Dock      = [System.Windows.Forms.DockStyle]::Top
-    $pnlSource.Height    = 64
+    $pnlSource.Height    = 56
     $pnlSource.BackColor = [System.Drawing.Color]::Transparent
+
+    $flpSrcRow = New-Object System.Windows.Forms.FlowLayoutPanel
+    $flpSrcRow.Dock          = [System.Windows.Forms.DockStyle]::Top
+    $flpSrcRow.Height        = 32
+    $flpSrcRow.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+    $flpSrcRow.WrapContents  = $false
+    $flpSrcRow.BackColor     = [System.Drawing.Color]::Transparent
+    $flpSrcRow.Padding       = New-Object System.Windows.Forms.Padding(0, 2, 0, 0)
 
     $lblSrc = New-Object System.Windows.Forms.Label
     $lblSrc.Text     = '서버 백업:'
     $lblSrc.Font     = $script:FontBold
     $lblSrc.AutoSize = $true
-    $lblSrc.Location = New-Object System.Drawing.Point(2, 9)
+    $lblSrc.Margin   = New-Object System.Windows.Forms.Padding(0, 6, 6, 0)
 
     $cmbBackups = New-Object System.Windows.Forms.ComboBox
     $cmbBackups.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $cmbBackups.Location      = New-Object System.Drawing.Point(72, 5)
-    $cmbBackups.Size          = New-Object System.Drawing.Size(320, 24)
+    $cmbBackups.Size          = New-Object System.Drawing.Size(310, 24)
     $cmbBackups.Font          = $script:FontBase
+    $cmbBackups.Margin        = New-Object System.Windows.Forms.Padding(0, 2, 6, 0)
     $script:Ui.BusyControls.Add($cmbBackups)
 
     $btnLoadSrv = New-StyledButton -Text '불러오기' -Width 80 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(37, 99, 235)) -RegisterBusy
-    $btnLoadSrv.Location = New-Object System.Drawing.Point(398, 4)
+    $btnLoadSrv.Margin = New-Object System.Windows.Forms.Padding(0, 1, 6, 0)
     $btnLoadSrv.Add_Click({
         $idx = $script:Tab2Ui.CmbServerBackups.SelectedIndex
         if ($idx -ge 0 -and $idx -lt $script:Tab2Ui.ComboBackupEntries.Count) {
@@ -933,8 +986,8 @@ function Initialize-Tab2RestoreUi {
         }
     })
 
-    $btnOpenZip = New-StyledButton -Text '오프라인 ZIP 불러오기' -Width 160 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(15, 118, 110)) -RegisterBusy
-    $btnOpenZip.Location = New-Object System.Drawing.Point(484, 4)
+    $btnOpenZip = New-StyledButton -Text '오프라인 ZIP 불러오기' -Width 156 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(15, 118, 110)) -RegisterBusy
+    $btnOpenZip.Margin = New-Object System.Windows.Forms.Padding(0, 1, 6, 0)
     $btnOpenZip.Add_Click({
         $ofd = New-Object System.Windows.Forms.OpenFileDialog
         $ofd.Title  = '오프라인 백업 ZIP 파일 선택 (로컬 또는 외장 SSD)'
@@ -948,29 +1001,32 @@ function Initialize-Tab2RestoreUi {
         $ofd.Dispose()
     })
 
-    $btnDeferred = New-StyledButton -Text '지연 검증 실행' -Width 116 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(51, 65, 85)) -RegisterBusy
-    $btnDeferred.Location = New-Object System.Drawing.Point(650, 4)
-    $btnDeferred.Enabled  = $false
+    $btnDeferred = New-StyledButton -Text '지연 검증 실행' -Width 112 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(51, 65, 85)) -RegisterBusy
+    $btnDeferred.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 0, 0)
+    $btnDeferred.Enabled = $false
     $btnDeferred.Add_Click({
         if (-not [string]::IsNullOrWhiteSpace($script:Tab2Ui.LoadedSourcePath)) {
             Load-Tab2BackupSourceAsync -SourcePath $script:Tab2Ui.LoadedSourcePath -ForceLiveProbe
         }
     })
 
+    $flpSrcRow.Controls.AddRange(@($lblSrc, $cmbBackups, $btnLoadSrv, $btnOpenZip, $btnDeferred))
+
     $lblSourceInfo = New-Object System.Windows.Forms.Label
     $lblSourceInfo.Text      = '서버 백업을 선택하거나 [오프라인 ZIP 불러오기]로 복원 대상을 로드하세요.'
     $lblSourceInfo.Font      = $script:FontSmall
     $lblSourceInfo.ForeColor = [System.Drawing.Color]::FromArgb(51, 65, 85)
-    $lblSourceInfo.AutoSize  = $true
-    $lblSourceInfo.Location  = New-Object System.Drawing.Point(2, 40)
+    $lblSourceInfo.Dock      = [System.Windows.Forms.DockStyle]::Fill
+    $lblSourceInfo.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
 
-    $pnlSource.Controls.AddRange(@($lblSrc, $cmbBackups, $btnLoadSrv, $btnOpenZip, $btnDeferred, $lblSourceInfo))
+    $pnlSource.Controls.Add($lblSourceInfo)
+    $pnlSource.Controls.Add($flpSrcRow)
 
     # ---------------- [2] 영속 리포트(BackupNotes + 복원 경고) 배너 ----------------
     $pnlNotes = New-Object System.Windows.Forms.Panel
     $pnlNotes.Dock    = [System.Windows.Forms.DockStyle]::Top
-    $pnlNotes.Height  = 66
-    $pnlNotes.Padding = New-Object System.Windows.Forms.Padding(0, 0, 0, 6)
+    $pnlNotes.Height  = 52
+    $pnlNotes.Padding = New-Object System.Windows.Forms.Padding(0, 0, 0, 4)
 
     $txtNotes = New-Object System.Windows.Forms.TextBox
     $txtNotes.Dock        = [System.Windows.Forms.DockStyle]::Fill
@@ -987,7 +1043,7 @@ function Initialize-Tab2RestoreUi {
     # ---------------- [3] 그리드 선택 툴바 ([C2] RightFlowStrip 적용) ----------------
     $pnlGridBar = New-Object System.Windows.Forms.Panel
     $pnlGridBar.Dock   = [System.Windows.Forms.DockStyle]::Top
-    $pnlGridBar.Height = 32
+    $pnlGridBar.Height = 30
 
     $pnlGridLeft = New-Object System.Windows.Forms.Panel
     $pnlGridLeft.Dock      = [System.Windows.Forms.DockStyle]::Fill
@@ -1091,13 +1147,14 @@ function Initialize-Tab2RestoreUi {
     # ---------------- [5] 하단 접이식 2탭 도우미 패널 ([C2] TopBar + Fill 구조) ----------------
     $pnlHelper = New-Object System.Windows.Forms.Panel
     $pnlHelper.Dock    = [System.Windows.Forms.DockStyle]::Bottom
-    $pnlHelper.Height  = 152
-    $pnlHelper.Padding = New-Object System.Windows.Forms.Padding(0, 6, 0, 0)
+    $pnlHelper.Height  = 138
+    $pnlHelper.Padding = New-Object System.Windows.Forms.Padding(0, 4, 0, 0)
     $pnlHelper.Visible = $false
 
     $tabHelper = New-Object System.Windows.Forms.TabControl
     $tabHelper.Dock = [System.Windows.Forms.DockStyle]::Fill
     $tabHelper.Font = $script:FontBold
+    $tabHelper.Add_SelectedIndexChanged({ Update-Tab2HelperHeightSafe })
 
     # -- [5-A] 공유 인증 / 동일 SID 조치 탭 --
     $tpAuth = New-Object System.Windows.Forms.TabPage(' 공유 인증 / SID 조치 (0건) ')
@@ -1207,7 +1264,7 @@ function Initialize-Tab2RestoreUi {
                 Start-Process -FilePath $cur.Info.Installer.ExePath -WorkingDirectory $cur.Info.Installer.Folder
                 Add-UiLog -Message "특수 장비 설치 프로그램 실행: $($cur.Info.Installer.ExePath)" -Level 'INFO'
             } catch {
-                [System.Windows.Forms.MessageBox]::Show($script:Ui.Form, "설치 파일 실행 실패: $($_.Exception.Message)", '실행 오류', 'OK', 'Error') | Out-Null
+                [void](Show-AsanMessageBox -Text "설치 파일 실행 실패: $($_.Exception.Message)" -Caption '실행 오류' -Buttons 'OK' -Icon 'Error')
             }
         }
     })
@@ -1245,12 +1302,7 @@ function Initialize-Tab2RestoreUi {
         $pName        = [string]$cur.Row.PrinterName
         $installedPrt = @(Get-Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $pName }) | Select-Object -First 1
         if (-not $installedPrt) {
-            [System.Windows.Forms.MessageBox]::Show(
-                "'$pName' 프린터가 아직 이 PC에 설치되어 있지 않습니다.`r`n복원 또는 1단계 전용 설치를 먼저 완료한 뒤 속성을 열어주세요.",
-                '프린터 미설치',
-                'OK',
-                'Information'
-            ) | Out-Null
+            [void](Show-AsanMessageBox -Text "'$pName' 프린터가 아직 이 PC에 설치되어 있지 않습니다.`r`n복원 또는 1단계 전용 설치를 먼저 완료한 뒤 속성을 열어주세요." -Caption '프린터 미설치' -Buttons 'OK' -Icon 'Information')
             return
         }
         $safeArg = 'printui.dll,PrintUIEntry /p /n "' + ($pName -replace '"', '\"') + '"'
@@ -1280,15 +1332,15 @@ function Initialize-Tab2RestoreUi {
     # ---------------- [6] 최하단 복원 실행 액션 바 ----------------
     $pnlAction = New-Object System.Windows.Forms.Panel
     $pnlAction.Dock   = [System.Windows.Forms.DockStyle]::Bottom
-    $pnlAction.Height = 46
+    $pnlAction.Height = 42
 
-    $btnStart = New-StyledButton -Text '선택 항목 복원 시작' -Width 195 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(22, 163, 74)) -RegisterBusy
-    $btnStart.Location = New-Object System.Drawing.Point(0, 8)
+    $btnStart = New-StyledButton -Text '선택 항목 복원 시작' -Width 195 -Height 32 -BackColor ([System.Drawing.Color]::FromArgb(22, 163, 74)) -RegisterBusy
+    $btnStart.Location = New-Object System.Drawing.Point(0, 6)
     $btnStart.Enabled  = $false
     $btnStart.Add_Click({ Start-Tab2RestoreExecution })
 
-    $btnRetry = New-StyledButton -Text '실패 항목만 재시도' -Width 165 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(217, 119, 6)) -RegisterBusy
-    $btnRetry.Location = New-Object System.Drawing.Point(206, 8)
+    $btnRetry = New-StyledButton -Text '실패 항목만 재시도' -Width 165 -Height 32 -BackColor ([System.Drawing.Color]::FromArgb(217, 119, 6)) -RegisterBusy
+    $btnRetry.Location = New-Object System.Drawing.Point(206, 6)
     $btnRetry.Enabled  = $false
     $btnRetry.Add_Click({ Start-Tab2RestoreExecution -RetryFailedOnly })
 
@@ -1297,7 +1349,7 @@ function Initialize-Tab2RestoreUi {
     $lblHint.Font      = $script:FontSmall
     $lblHint.ForeColor = [System.Drawing.Color]::FromArgb(100, 116, 139)
     $lblHint.AutoSize  = $true
-    $lblHint.Location  = New-Object System.Drawing.Point(385, 16)
+    $lblHint.Location  = New-Object System.Drawing.Point(385, 14)
 
     $pnlAction.Controls.AddRange(@($btnStart, $btnRetry, $lblHint))
 
@@ -1326,6 +1378,8 @@ function Initialize-Tab2RestoreUi {
     $script:Tab2Ui.TabHelper        = $tabHelper
     $script:Tab2Ui.TpAuth           = $tpAuth
     $script:Tab2Ui.TpSpecial        = $tpSpec
+    $script:Tab2Ui.PnlAuthTop       = $pnlAuthTop
+    $script:Tab2Ui.PnlSpecTop       = $pnlSpecTop
     $script:Tab2Ui.CmbAuthHost      = $cmbAuthHost
     $script:Tab2Ui.TxtAuthUser      = $txtAuthUser
     $script:Tab2Ui.TxtAuthPass      = $txtAuthPass
@@ -1342,6 +1396,10 @@ function Initialize-Tab2RestoreUi {
     $script:Tab2Ui.BtnStartRestore  = $btnStart
     $script:Tab2Ui.BtnRetryFailed   = $btnRetry
     $script:Tab2Ui.LblRestoreHint   = $lblHint
+
+    $pnlAuthTop.Add_SizeChanged({ Update-Tab2HelperHeightSafe })
+    $pnlSpecTop.Add_SizeChanged({ Update-Tab2HelperHeightSafe })
+    $parent.Add_SizeChanged({ Update-Tab2HelperHeightSafe })
 
     $script:Ui.OnEnvRefreshed.Add({ Update-Tab2ServerDropdown })
 }
