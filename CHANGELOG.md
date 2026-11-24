@@ -8,6 +8,26 @@
 
 ---
 
+## [v1.0.0-beta.2] - 2026-11-24
+
+### 추가 (Added)
+* **버그/오류 리포트함 (`_PRTBAK\_REPORTS`) 기능:**
+  * 상단 헤더에 **`[오류/버그 리포트]`** 버튼 상시 배치 및 백업/복원 실패 시 원클릭 리포트 전송 제안 연동.
+  * 앱 버전·OS·IP·`Machine SID`·WPP·망 상태·설치 프린터/TCP 포트/장치관리자 `LPT`·`USB` 바코드 장치·실시간 로그를 자동 수집하여 `_PRTBAK\_REPORTS\<일시>_<PC>_<IP>\`에 `BugReport_Summary.txt` + `BugReport_Detail.json`으로 저장(오프라인 시 `C:\_AsanPrtOffline\_Reports\` 자동 폴백).
+  * 전송 전 공용 암호 3종 및 입력 비밀번호를 `[REDACTED]`로 자동 마스킹.
+* **USB 바코드 프린터 소프트웨어 자동 재인식 (`Invoke-UsbBarcodeAutoReenumerate`):**
+  * 새 Win 11 PC에서 `ZD410`/`BIXOLON` 등 USB 바코드 장비가 **`지정되지 않음`** 상태로 묶여 있을 때, 복원 중 추출 INF 선등록 후 `pnputil /remove-device` → `/scan-devices`로 물리적 USB 재연결 없이 프린터 승격을 자동 시도하고, 실패 시에만 1회 물리 재연결을 안내.
+  * 탭 2 특수 프린터 도우미에 수동 **`[USB 재인식]`** 원클릭 버튼 추가.
+* **약제팀 `Zebra ZT410/ZT411` TCP/IP 라벨 프린터 반(半)일반 자동 복원:**
+  * `ZEBRA_ZT411` 전용 프로파일 추가 — TCP/IP 연결된 ZT411은 포트·드라이버·인쇄 기본 설정(`.dat`/`.reg`)을 일반 네트워크 프린터처럼 자동 복원(불필요한 수동 도우미 자동 펼침 제외), 단 안전을 위해 PCL6 전환 및 일괄 테스트 인쇄 제외는 유지.
+
+### 개선 및 버그 수정 (Fixed / Changed)
+* `_PRTBAK` 목록 조회(`Get-ServerBackupEntries`) 및 5일 경과 정리(`Remove-OldServerBackups`)에서 `_` 접두어 시스템 폴더(`_REPORTS` 등)와 마커 없는 폴더를 완전 격리.
+* `Import-RewrittenPrinterRegFile`의 `[regex]::Replace` `$` 치환 안전 이스케이프 보강 및 `Complete-Sip30mPostInstall` 따옴표 이스케이프 통일.
+* `PrintBrm -b/-r` 및 `PrintUIEntry /Ss·/Sr` 비정상 종료 시 경고 로그/노트 기록으로 현장 진단 가시성 강화.
+
+---
+
 ## [v1.0.0-beta.1] - 2026-11-24
 
 > 초기 내부 CLI 프로토타입(v1~v15.2)을 WinForms GUI 4탭 구조로 전면 재설계한 첫 공식 베타 배포판입니다. *(내부 설계 기준: v16.0 마스터 명세서)*

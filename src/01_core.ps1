@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 try { [Console]::InputEncoding  = [System.Text.Encoding]::UTF8 } catch {}
 $ErrorActionPreference = 'Stop'
@@ -23,7 +23,7 @@ $prtClass    = '{4d36e979-e325-11ce-bfc1-08002be2092f}'
 $pqClass     = '{1ed2bbf9-11f0-4084-b21f-ad83a8e6dcdc}'
 
 $global:AsanCtx = [hashtable]::Synchronized(@{
-    AppVersion                 = '1.0.0-beta.1'
+    AppVersion                 = '1.0.0-beta.2'
     OriginalScriptPath         = $resolvedOrigPath
     ServerIP                   = $serverIpVal
     InternalDnsIP              = '10.71.1.5'
@@ -825,6 +825,19 @@ function Get-SpecialPrinterProfile {
             SkipAliveFilter    = $false
         }
     }
+    if ($combined -match '(?i)ZT410|ZT411') {
+        return [pscustomobject]@{
+            IsSpecial          = $true
+            Type               = 'ZEBRA_ZT411'
+            Label              = '라벨(ZT410/411)'
+            ExcludeFromPcl6    = $true
+            ExcludeBulkTest    = $true
+            Win11ReinstallOnly = $false
+            NoDriverBackup     = $false
+            IsSubPcShared      = $isShared
+            SkipAliveFilter    = $false
+        }
+    }
     if ($combined -match '(?i)ZDesigner|ZD410|ZD411|Zebra') {
         return [pscustomobject]@{
             IsSpecial          = $true
@@ -914,6 +927,96 @@ function Get-DeviceManagerLptPorts {
         }
     } catch {}
     return @($lpts.ToArray())
+}
+
+function Invoke-UsbBarcodeAutoReenumerate {
+    param(
+        [int]$WaitSeconds = 8,
+        [switch]$ForceAllBarcodeUsb,
+        [scriptblock]$OnProgress = $null
+    )
+
+    $beforePorts = @(Get-PrinterPort -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)^USB\d+' } | ForEach-Object { [string]$_.Name } | Sort-Object)
+    $vidRegex    = '(?i)VID_(0A5F|1504|0525|154F)'
+    $nameRegex   = '(?i)Zebra|ZDesigner|ZD410|ZD411|ZT410|ZT411|BIXOLON|SLP-TX|TX220|Sewoo|SLK-TE|USB Printing Support|USB 인쇄 지원'
+
+    $candidates = [System.Collections.Generic.List[object]]::new()
+    try {
+        $pnpAll = @(Get-CimInstance -ClassName Win32_PnPEntity -ErrorAction SilentlyContinue | Where-Object {
+            ([string]$_.DeviceID) -match '^(?i)(USB\\VID_|USBPRINT\\)'
+        })
+        foreach ($dev in $pnpAll) {
+            $devId   = [string]$dev.DeviceID
+            $devName = [string]$dev.Name
+            $pnpCls  = [string]$dev.PNPClass
+            $stat    = [string]$dev.Status
+            $errCode = 0
+            if ($null -ne $dev.ConfigManagerErrorCode) { $errCode = [int]$dev.ConfigManagerErrorCode }
+
+            $isBarcodeUsb = ($devId -match $vidRegex) -or ($devName -match $nameRegex)
+            if (-not $isBarcodeUsb) { continue }
+
+            $isHealthyPrint = (($pnpCls -match '(?i)^(Printer|PrintQueue)$') -and $errCode -eq 0 -and $stat -ieq 'OK')
+            $isProblemOrUnbound = ($errCode -ne 0) -or ($stat -ine 'OK') -or (-not $isHealthyPrint)
+
+            if ($ForceAllBarcodeUsb -or $isProblemOrUnbound) {
+                $candidates.Add([pscustomobject]@{
+                    DeviceID  = $devId
+                    Name      = $devName
+                    PNPClass  = $pnpCls
+                    Status    = $stat
+                    ErrorCode = $errCode
+                })
+            }
+        }
+    } catch {}
+
+    $removedIds = [System.Collections.Generic.List[string]]::new()
+    if ($candidates.Count -gt 0) {
+        Write-ProgressSafe -OnProgress $OnProgress -Percent 52 -Message "USB 바코드 장치 $($candidates.Count)개 소프트웨어 재인식(제거 후 하드웨어 재검색) 시도 중..."
+        foreach ($c in $candidates) {
+            $rRem = Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/remove-device', $c.DeviceID)
+            if ($rRem.ExitCode -eq 0) {
+                $removedIds.Add($c.DeviceID)
+            } else {
+                $rRst = Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/restart-device', $c.DeviceID)
+                if ($rRst.ExitCode -eq 0) { $removedIds.Add($c.DeviceID) }
+            }
+        }
+        Start-Sleep -Seconds 1
+        [void](Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/scan-devices'))
+
+        $maxWait = [math]::Max(2, $WaitSeconds)
+        for ($sec = 0; $sec -lt $maxWait; $sec++) {
+            Start-Sleep -Seconds 1
+            $curPorts = @(Get-PrinterPort -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)^USB\d+' } | ForEach-Object { [string]$_.Name })
+            $addedNow = @($curPorts | Where-Object { $beforePorts -notcontains $_ })
+            if ($addedNow.Count -gt 0 -or ($curPorts.Count -gt 0 -and $sec -ge 2)) { break }
+        }
+    }
+
+    $afterPorts = @(Get-PrinterPort -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)^USB\d+' } | ForEach-Object { [string]$_.Name } | Sort-Object)
+    $newPorts   = @($afterPorts | Where-Object { $beforePorts -notcontains $_ })
+    $needsReplug = ($candidates.Count -gt 0 -and $afterPorts.Count -eq 0)
+
+    $summary = '재인식이 필요한 미등록 USB 바코드 장치가 감지되지 않았습니다.'
+    if ($candidates.Count -gt 0) {
+        if ($afterPorts.Count -gt 0) {
+            $summary = "USB 바코드 소프트웨어 재인식 완료 (대상 $($candidates.Count)개 처리, 감지된 USB 포트: $($afterPorts -join ', '))"
+        } else {
+            $summary = "USB 바코드 $($candidates.Count)개 소프트웨어 재인식을 시도했으나 USB 프린터 포트가 생성되지 않았습니다 — USB 케이블을 1회 뽑았다 다시 연결하세요."
+        }
+    }
+
+    return [pscustomobject]@{
+        AttemptedCount    = $candidates.Count
+        RemovedIds        = $removedIds.ToArray()
+        BeforeUsbPorts    = $beforePorts
+        AfterUsbPorts     = $afterPorts
+        NewUsbPorts       = $newPorts
+        NeedsManualReplug = $needsReplug
+        Summary           = $summary
+    }
 }
 
 # ============================================================================
@@ -2396,8 +2499,13 @@ function Invoke-PrinterBackupEngine {
         $brmFile = Join-Path $localTemp 'PrinterBackup.printerExport'
         $brmOk   = $false
         if (Test-Path -LiteralPath $global:AsanCtx.PrintBrmExe) {
-            [void](Invoke-NativeCommand -FilePath $global:AsanCtx.PrintBrmExe -Arguments @('-b', '-f', $brmFile))
+            $brmRes = Invoke-NativeCommand -FilePath $global:AsanCtx.PrintBrmExe -Arguments @('-b', '-f', $brmFile)
             if (Test-Path -LiteralPath $brmFile) { $brmOk = $true }
+            elseif ($brmRes.ExitCode -ne 0) {
+                $brmErrShort = ([string]$brmRes.Output -replace '\s+', ' ').Trim()
+                if ($brmErrShort.Length -gt 180) { $brmErrShort = $brmErrShort.Substring(0, 180) + '...' }
+                $backupNotes.Add([pscustomobject]@{ Level = 'Warning'; Target = 'PrintBrm'; Message = "PrintBrm 백업 종료코드=$($brmRes.ExitCode): $brmErrShort" })
+            }
         }
         if (-not $brmOk) {
             $backupNotes.Add([pscustomobject]@{ Level = 'Warning'; Target = 'PrintBrm'; Message = 'PrintBrm.exe 패키지 생성 실패 — 개별 추출 드라이버 및 JSON 기반으로 복원됩니다.' })
@@ -2431,14 +2539,18 @@ function Invoke-PrinterBackupEngine {
             $datRelPath = $null
             $regRelPath = $null
 
-            if ([string]::IsNullOrWhiteSpace([string]$p.ConnectionName) -and $p.SpecialType -in @('ZD410_411', 'BIXOLON_TX220', 'SIP30M_IDCARD', 'OTHER_SPECIAL')) {
+            if ([string]::IsNullOrWhiteSpace([string]$p.ConnectionName) -and $p.SpecialType -in @('ZD410_411', 'ZEBRA_ZT411', 'BIXOLON_TX220', 'SIP30M_IDCARD', 'OTHER_SPECIAL')) {
                 if (-not (Test-Path -LiteralPath $specialDir)) { New-Item -ItemType Directory -Path $specialDir -Force | Out-Null }
                 $safeKey = Get-SafeFileName -Text "$($p.SpecialType)_$($p.PrinterName)"
                 $datFile = Join-Path $specialDir "$safeKey.dat"
                 $regFile = Join-Path $specialDir "$safeKey.reg"
 
-                [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Ss', '/q', '/n', $p.PrinterName, '/a', $datFile, 'd', 'g', 'u'))
-                if (Test-Path -LiteralPath $datFile) { $datRelPath = "SpecialSettings\$safeKey.dat" }
+                $datRes = Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Ss', '/q', '/n', $p.PrinterName, '/a', $datFile, 'd', 'g', 'u')
+                if (Test-Path -LiteralPath $datFile) {
+                    $datRelPath = "SpecialSettings\$safeKey.dat"
+                } elseif ($datRes.ExitCode -ne 0) {
+                    $backupNotes.Add([pscustomobject]@{ Level = 'Warning'; Target = $p.PrinterName; Message = "인쇄 기본 설정(.dat) 덤프 실패 (ExitCode=$($datRes.ExitCode)) — 복원 후 용지/농도 설정을 직접 확인하세요." })
+                }
 
                 $regKey = "HKLM\SYSTEM\CurrentControlSet\Control\Print\Printers\$($p.PrinterName)\PrinterDriverData"
                 $rReg = Invoke-NativeCommand -FilePath 'reg.exe' -Arguments @('export', $regKey, $regFile, '/y')
@@ -2966,9 +3078,10 @@ function Import-RewrittenPrinterRegFile {
     if (-not [string]::IsNullOrWhiteSpace($OriginalPrinterName) -and $OriginalPrinterName -ne $PrinterName) {
         try {
             $regContent = [IO.File]::ReadAllText($RegFullPath, [Text.Encoding]::Unicode)
-            $escapedOld = [regex]::Escape("Control\Print\Printers\$OriginalPrinterName\PrinterDriverData")
-            $newPath    = "Control\Print\Printers\$PrinterName\PrinterDriverData"
-            $rewritten  = [regex]::Replace($regContent, $escapedOld, $newPath, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            $escapedOld  = [regex]::Escape("Control\Print\Printers\$OriginalPrinterName\PrinterDriverData")
+            $newPath     = "Control\Print\Printers\$PrinterName\PrinterDriverData"
+            $safeNewPath = $newPath.Replace('$', '$$')
+            $rewritten   = [regex]::Replace($regContent, $escapedOld, $safeNewPath, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
             if (-not (Test-Path -LiteralPath $global:AsanCtx.WorkBaseDir)) { New-Item -ItemType Directory -Path $global:AsanCtx.WorkBaseDir -Force | Out-Null }
             $tempRewrittenReg = Join-Path $global:AsanCtx.WorkBaseDir "Rewritten_$PID.reg"
             [IO.File]::WriteAllText($tempRewrittenReg, $rewritten, [Text.Encoding]::Unicode)
@@ -3088,6 +3201,7 @@ function Invoke-PrinterRestoreEngine {
     $detectedSpecials  = [System.Collections.Generic.List[object]]::new()
     $samFallbackList   = [System.Collections.Generic.List[string]]::new()
     $pendingRegImports = [System.Collections.Generic.List[object]]::new()
+    $needsUsbReplug    = $false
 
     try {
         if (Test-Path -LiteralPath $localTemp) { Remove-Item -LiteralPath $localTemp -Recurse -Force -ErrorAction SilentlyContinue }
@@ -3154,7 +3268,12 @@ function Invoke-PrinterRestoreEngine {
             Write-ProgressSafe -OnProgress $OnProgress -Percent 36 -Message '[3/6] 실패 항목 정밀 재시도 모드 — PrintBrm 전체 덮어쓰기 생략'
         } elseif (Test-Path -LiteralPath $brmFile) {
             Write-ProgressSafe -OnProgress $OnProgress -Percent 36 -Message '[3/6] PrintBrm 원본 드라이버 및 인쇄 기본 설정 복원 중...'
-            [void](Invoke-NativeCommand -FilePath $global:AsanCtx.PrintBrmExe -Arguments @('-r', '-f', $brmFile, '-o', 'force'))
+            $brmRestoreRes = Invoke-NativeCommand -FilePath $global:AsanCtx.PrintBrmExe -Arguments @('-r', '-f', $brmFile, '-o', 'force')
+            if ($brmRestoreRes.ExitCode -ne 0) {
+                $brmShort = ([string]$brmRestoreRes.Output -replace '\s+', ' ').Trim()
+                if ($brmShort.Length -gt 200) { $brmShort = $brmShort.Substring(0, 200) + '...' }
+                $restoreLog.Add([pscustomobject]@{ Level = 'Warning'; Target = 'PrintBrm'; Message = "PrintBrm 일부 경고/오류 (ExitCode=$($brmRestoreRes.ExitCode)) — 누락 항목은 5단계 정밀 복원으로 자동 보완됩니다. [$brmShort]" })
+            }
         } else {
             Write-ProgressSafe -OnProgress $OnProgress -Percent 36 -Message '[3/6] PrintBrm 없음 — 개별 드라이버 및 JSON 기반으로 복원 진행...'
         }
@@ -3219,11 +3338,35 @@ function Invoke-PrinterRestoreEngine {
             Write-ProgressSafe -OnProgress $OnProgress -Percent 48 -Message '[4/6] 정밀 재시도 모드 — 기존 설치 큐 유지'
         }
 
-        # [5/6] 복원 작업당 1회 INF 인덱스 구축 + 정밀 복원
+        # [5/6] 복원 작업당 1회 INF 인덱스 구축 + USB 바코드 자동 재인식 + 정밀 복원
         Write-ProgressSafe -OnProgress $OnProgress -Percent 58 -Message '[5/6] 드라이버 인덱스 구축 및 누락/WSD 전환/특수장비 복원 중...'
         $expInfs = @()
         if (Test-Path -LiteralPath $expPrtDir) {
             $expInfs = @(Get-ChildItem -LiteralPath $expPrtDir -Filter '*.inf' -File -Recurse -ErrorAction SilentlyContinue)
+        }
+
+        # USB 직결 특수/바코드 프린터가 선택된 경우: 추출 INF 선등록 후 PnP 소프트웨어 재인식('지정되지 않음' 자동 승격)
+        $hasSelectedUsbSpecial = $false
+        foreach ($chkRow in @($SelectedRows | Where-Object { $_.Selected })) {
+            $chkSpec = Get-SpecialPrinterProfile -PrinterName ([string]$chkRow.PrinterName) -DriverName ([string]$chkRow.DriverName) -PortName ([string]$chkRow.PortName)
+            if ($chkSpec.IsSpecial -and (-not $chkSpec.Win11ReinstallOnly) -and (-not $chkSpec.NoDriverBackup) -and ([string]$chkRow.PortKind -eq 'USB' -or [string]$chkRow.PortName -match '(?i)^USB')) {
+                $hasSelectedUsbSpecial = $true
+                break
+            }
+        }
+        if ($hasSelectedUsbSpecial) {
+            foreach ($eInf in $expInfs) {
+                [void](Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/add-driver', $eInf.FullName, '/install'))
+            }
+            $usbReRes = Invoke-UsbBarcodeAutoReenumerate -WaitSeconds 8 -OnProgress $OnProgress
+            if ($usbReRes.AttemptedCount -gt 0) {
+                $uLvl = 'Info'
+                if ($usbReRes.NeedsManualReplug) {
+                    $uLvl = 'Warning'
+                    $needsUsbReplug = $true
+                }
+                $restoreLog.Add([pscustomobject]@{ Level = $uLvl; Target = 'USB 바코드 자동 재인식'; Message = $usbReRes.Summary })
+            }
         }
         $driverIndexCache = @{
             Exported    = (Build-InfIndexCache -InfFiles $expInfs)
@@ -3272,7 +3415,10 @@ function Invoke-PrinterRestoreEngine {
                     if ($row.SpecialDatFile) {
                         $dFull = Join-Path $localTemp $row.SpecialDatFile
                         if (Test-Path -LiteralPath $dFull) {
-                            [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Sr', '/q', '/n', $pName, '/a', $dFull, 'd', 'g', 'u', 'r'))
+                            $srRes = Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Sr', '/q', '/n', $pName, '/a', $dFull, 'd', 'g', 'u', 'r')
+                            if ($srRes.ExitCode -ne 0) {
+                                $restoreLog.Add([pscustomobject]@{ Level = 'Warning'; Target = $pName; Message = "인쇄 기본 설정(.dat) 주입 경고 (ExitCode=$($srRes.ExitCode)) — 속성에서 용지/농도를 확인하세요." })
+                            }
                         }
                     }
                     if ($row.SpecialRegFile) {
@@ -3374,7 +3520,10 @@ function Invoke-PrinterRestoreEngine {
                     if ($row.SpecialDatFile) {
                         $dFull = Join-Path $localTemp $row.SpecialDatFile
                         if (Test-Path -LiteralPath $dFull) {
-                            [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Sr', '/q', '/n', $pName, '/a', $dFull, 'd', 'g', 'u', 'r'))
+                            $srRes = Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Sr', '/q', '/n', $pName, '/a', $dFull, 'd', 'g', 'u', 'r')
+                            if ($srRes.ExitCode -ne 0) {
+                                $restoreLog.Add([pscustomobject]@{ Level = 'Warning'; Target = $pName; Message = "인쇄 기본 설정(.dat) 주입 경고 (ExitCode=$($srRes.ExitCode)) — 속성에서 용지/농도를 확인하세요." })
+                            }
                         }
                     }
                     if ($row.SpecialRegFile) {
@@ -3443,6 +3592,7 @@ function Invoke-PrinterRestoreEngine {
             DetectedSpecials  = $detectedSpecials.ToArray()
             SamFallbackNames  = $samFallbackList.ToArray()
             RestoredScanCount = $restoredScanCnt
+            NeedsUsbReplug    = $needsUsbReplug
         }
     }
     finally {
@@ -3536,23 +3686,37 @@ function Get-SpecialPrinterAssistantInfo {
             ) -join "`r`n"
             return [pscustomobject]@{ Type = 'SEWOO_TE201'; TargetIp = $null; Installer = $inst; HasStep2 = $false; Checklist = $chk }
         }
+        'ZEBRA_ZT411' {
+            $isTcpLabel = ([string]$SpecialRow.PortKind -eq 'TCPIP') -or (-not [string]::IsNullOrWhiteSpace([string]$SpecialRow.HostAddress))
+            $connHint = 'USB 직결 — 장치관리자 [지정되지 않음]에 걸려 있으면 상단 [USB 재인식] 클릭(미인식 시 USB 1회 재연결)'
+            if ($isTcpLabel) {
+                $connHint = "TCP/IP 네트워크 연결($($SpecialRow.PortName)) — 일반 프린터와 동일하게 포트·드라이버·인쇄 기본 설정(.dat/.reg) 자동 복원 완료"
+            }
+            $chk = @(
+                "[Zebra ZT410/ZT411 산업용/약제 라벨 프린터 확인 사항]",
+                "• 연결 방식: $connHint",
+                "1. 안전을 위해 PCL6 자동 전환 및 일괄 테스트 인쇄에서는 제외되며, 기존 ZPL 드라이버와 세부 설정이 그대로 보존됩니다.",
+                "2. 프린터 속성 > 인쇄 기본 설정에서 약제/라벨 용지 크기·감열/열전사·농도 설정 유지 여부를 확인한 뒤 AMIS에서 테스트하세요."
+            ) -join "`r`n"
+            return [pscustomobject]@{ Type = 'ZEBRA_ZT411'; TargetIp = $SpecialRow.HostAddress; Installer = $inst; HasStep2 = $false; Checklist = $chk }
+        }
         'ZD410_411' {
             $drxHint = 'admin\드라이버(win10_x64)\AMIS3.0장비\ZD410(Zebra바코드)\*.drx'
             if ($inst.DrxPath) { $drxHint = $inst.DrxPath }
             $chk = @(
                 "[Zebra ZD-410/411 검사·투약 바코드 확인 사항]",
-                "1. 프린터 속성 -> 드라이버 설정 -> [상태확인: 사용안함] 및 용지설정(.drx) 유지 확인 ($drxHint)",
-                "2. 용지/상단 여백 확인: 검사바코드(5.5x3.0 / 2.6mm) | 투약바코드(5.5x6.0 / 1.0mm)",
-                "3. AMIS 3.0 Barcode Print Agent 실행 -> 적용중 프린터 용지 크기 확인 (필요 시 프린터 자동 등록)"
+                "1. USB 연결 장비가 [지정되지 않음]으로 보이면 상단 [USB 재인식] 버튼을 먼저 실행하세요 (실패 시에만 USB 1회 재연결).",
+                "2. 프린터 속성 -> 드라이버 설정 -> [상태확인: 사용안함] 및 용지설정(.drx) 유지 확인 ($drxHint)",
+                "3. 용지/상단 여백 확인: 검사바코드(5.5x3.0 / 2.6mm) | 투약바코드(5.5x6.0 / 1.0mm) -> AMIS Barcode Print Agent 확인"
             ) -join "`r`n"
             return [pscustomobject]@{ Type = 'ZD410_411'; TargetIp = $null; Installer = $inst; HasStep2 = $false; Checklist = $chk }
         }
         'BIXOLON_TX220' {
             $chk = @(
                 "[BIXOLON SLP-TX220 팔찌 바코드 확인 사항]",
-                "1. 기본 설정 -> Options: Darkness 11~12 (13이상 QR오류), mm, Landscape, Rotate 180, 20x250(성인)/20x150(소아)",
-                "2. Advanced Setup: 감열지(Direct Thermal) / 리본(Thermal Transfer) 구분, Sensor: Black Mark",
-                "3. 설치 후 안 보이면 PC 재부팅 -> AMIS 3.0 Barcode Print Agent 자동 등록 확인"
+                "1. USB 연결 장비가 [지정되지 않음]으로 보이면 상단 [USB 재인식] 버튼을 먼저 실행하세요 (실패 시에만 USB 1회 재연결).",
+                "2. 기본 설정 -> Options: Darkness 11~12 (13이상 QR오류), mm, Landscape, Rotate 180, 20x250(성인)/20x150(소아)",
+                "3. Advanced Setup: 감열지(Direct Thermal) / 리본(Thermal Transfer) 구분, Sensor: Black Mark -> AMIS Barcode Print Agent 확인"
             ) -join "`r`n"
             return [pscustomobject]@{ Type = 'BIXOLON_TX220'; TargetIp = $null; Installer = $inst; HasStep2 = $false; Checklist = $chk }
         }
@@ -3679,7 +3843,8 @@ function Complete-Sip30mPostInstall {
 
     Invoke-AsanStandardPolicyAtomic -PendingRegImports $pendingRegs
 
-    Start-Process -FilePath 'rundll32.exe' -ArgumentList ('printui.dll,PrintUIEntry /e /n "' + $curName + '"')
+    $safeCurName = ($curName -replace '"', '\"')
+    Start-Process -FilePath 'rundll32.exe' -ArgumentList ('printui.dll,PrintUIEntry /e /n "' + $safeCurName + '"')
 
     $detail = '백업된 설정 파일이 없어 기본 설정 창에서 값을 직접 확인하세요.'
     if ($settingsApplied) { $detail = '백업된 4개 탭 인쇄 기본 설정(리본/코팅/농도/MS쓰기)이 자동 주입되었습니다.' }
@@ -3737,6 +3902,11 @@ function Get-ServerBackupEntries {
     $list = [System.Collections.Generic.List[object]]::new()
     $now  = Get-Date
     foreach ($d in @(Get-ChildItem -LiteralPath $PrtBakDir -Directory -Force -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) {
+        if ($d.Name.StartsWith('_')) { continue }
+        $hasJson = Test-Path -LiteralPath (Join-Path $d.FullName 'PrinterBackup.json')
+        $hasBrm  = Test-Path -LiteralPath (Join-Path $d.FullName 'PrinterBackup.printerExport')
+        if (-not ($hasJson -or $hasBrm)) { continue }
+
         $isExact = ($d.Name -ieq $expectedId)
         $isIp    = ($PcIp -ne 'NO_IP' -and $d.Name -like "*($safeIp)*")
         $isName  = ($d.Name -like "$safeHost(*")
@@ -3746,8 +3916,6 @@ function Get-ServerBackupEntries {
         if ($isExact) { $rank = 1 }
         elseif ($isIp) { $rank = 2 }
         elseif ($isName) { $rank = 3 }
-
-        $hasBrm = Test-Path -LiteralPath (Join-Path $d.FullName 'PrinterBackup.printerExport')
 
         $list.Add([pscustomobject]@{
             Name          = $d.Name
@@ -3770,12 +3938,219 @@ function Remove-OldServerBackups {
     if ([string]::IsNullOrWhiteSpace($PrtBakDir) -or -not (Test-Path -LiteralPath $PrtBakDir)) { return @() }
 
     foreach ($d in @(Get-ChildItem -LiteralPath $PrtBakDir -Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt $cutoff })) {
+        if ($d.Name.StartsWith('_')) { continue }
         $hasMarker = (Test-Path -LiteralPath (Join-Path $d.FullName 'PrinterBackup.json')) -or (Test-Path -LiteralPath (Join-Path $d.FullName 'PrinterBackup.printerExport'))
         if (-not $hasMarker) { continue }
         Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue
         if (-not (Test-Path -LiteralPath $d.FullName)) { $removed.Add($d.Name) }
     }
     return @($removed.ToArray())
+}
+
+# ============================================================================
+# [버그/오류 리포트 엔진] 민감정보 자동 마스킹 + _PRTBAK\_REPORTS 전송(오프라인 폴백)
+# ============================================================================
+function Protect-ReportSensitiveText {
+    param(
+        [string]$Text,
+        [string[]]$ExtraSecrets = @()
+    )
+    if ([string]::IsNullOrEmpty($Text)) { return '' }
+    $masked  = $Text
+    $secrets = [System.Collections.Generic.List[string]]::new()
+    foreach ($pw in @($global:AsanCtx.DefaultPasswords)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$pw)) { $secrets.Add([string]$pw) }
+    }
+    foreach ($ex in @($ExtraSecrets)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$ex)) { $secrets.Add([string]$ex) }
+    }
+    foreach ($s in ($secrets | Sort-Object { $_.Length } -Descending | Select-Object -Unique)) {
+        $masked = [regex]::Replace($masked, [regex]::Escape($s), '[REDACTED]')
+    }
+    return $masked
+}
+
+function Send-AsanBugReport {
+    param(
+        [string]$Category = '일반 오류/버그',
+        [string]$UserDescription = '',
+        [string]$TargetPrinter = '(전체/미지정)',
+        [string]$UiLogText = '',
+        [string]$ErrorSummary = '',
+        [string]$PrtBakDir = $null,
+        [string]$PcIp = 'NO_IP',
+        [string]$OsCaption = '',
+        [string]$LocalSid = '',
+        [string]$NetStatus = 'Unknown',
+        [bool]$WppEnabled = $false,
+        [string]$LoadedBackupSource = '',
+        [string[]]$ExtraSecrets = @()
+    )
+
+    $now       = Get-Date
+    $stamp     = $now.ToString('yyyyMMdd_HHmmss')
+    $safeHost  = Get-SafeFileName -Text $env:COMPUTERNAME
+    $safeIp    = Get-SafeFileName -Text $PcIp
+    $reportId  = "${stamp}_${safeHost}_${safeIp}"
+
+    # 현장 환경 스냅샷 수집 (읽기 전용)
+    $instPrts = @()
+    try {
+        $instPrts = @(Get-CimInstance -ClassName Win32_Printer -ErrorAction SilentlyContinue | ForEach-Object {
+            [pscustomobject]@{
+                Name          = [string]$_.Name
+                DriverName    = [string]$_.DriverName
+                PortName      = [string]$_.PortName
+                Default       = [bool]$_.Default
+                WorkOffline   = [bool]$_.WorkOffline
+                PrinterStatus = [int]$_.PrinterStatus
+            }
+        })
+    } catch {}
+
+    $tcpPorts = @()
+    try {
+        $tcpPorts = @(Get-CimInstance -ClassName Win32_TCPIPPrinterPort -ErrorAction SilentlyContinue | ForEach-Object {
+            [pscustomobject]@{
+                Name        = [string]$_.Name
+                HostAddress = [string]$_.HostAddress
+                Protocol    = [int]$_.Protocol
+                PortNumber  = [int]$_.PortNumber
+                SNMPEnabled = [bool]$_.SNMPEnabled
+            }
+        })
+    } catch {}
+
+    $lptPorts = @(Get-DeviceManagerLptPorts)
+    $usbPrintDevs = @()
+    try {
+        $usbPrintDevs = @(Get-CimInstance -ClassName Win32_PnPEntity -ErrorAction SilentlyContinue | Where-Object {
+            ([string]$_.DeviceID) -match '^(?i)(USBPRINT\\|USB\\VID_(0A5F|1504|0525|154F))' -or
+            (([string]$_.DeviceID) -match '^(?i)USB\\' -and $null -ne $_.ConfigManagerErrorCode -and [int]$_.ConfigManagerErrorCode -ne 0)
+        } | ForEach-Object {
+            [pscustomobject]@{
+                DeviceID  = [string]$_.DeviceID
+                Name      = [string]$_.Name
+                PNPClass  = [string]$_.PNPClass
+                Status    = [string]$_.Status
+                ErrorCode = [int]$_.ConfigManagerErrorCode
+            }
+        })
+    } catch {}
+
+    $cleanDesc = Protect-ReportSensitiveText -Text $UserDescription -ExtraSecrets $ExtraSecrets
+    $cleanErr  = Protect-ReportSensitiveText -Text $ErrorSummary    -ExtraSecrets $ExtraSecrets
+    $cleanLog  = Protect-ReportSensitiveText -Text $UiLogText       -ExtraSecrets $ExtraSecrets
+
+    $detailObj = [pscustomobject]@{
+        ReportVersion      = 1
+        ReportId           = $reportId
+        CreatedAt          = $now.ToString('yyyy-MM-dd HH:mm:ss')
+        AppVersion         = $global:AsanCtx.AppVersion
+        Category           = $Category
+        TargetPrinter      = $TargetPrinter
+        UserDescription    = $cleanDesc
+        ErrorSummary       = $cleanErr
+        Environment        = [pscustomobject]@{
+            ComputerName       = $env:COMPUTERNAME
+            UserName           = $env:USERNAME
+            OsCaption          = $OsCaption
+            IPAddress          = $PcIp
+            MachineSID         = $LocalSid
+            NetworkStatus      = $NetStatus
+            WppEnabled         = $WppEnabled
+            LoadedBackupSource = $LoadedBackupSource
+        }
+        InstalledPrinters  = $instPrts
+        TcpIpPorts         = $tcpPorts
+        DeviceManagerLpts  = $lptPorts
+        UsbPrintDevices    = $usbPrintDevs
+        UiLog              = $cleanLog
+    }
+
+    $sumLines = [System.Collections.Generic.List[string]]::new()
+    $sumLines.Add("=========================================================================")
+    $sumLines.Add(" 아산병원 프린터 마이그레이션 도구 오류/버그 리포트 (v$($global:AsanCtx.AppVersion))")
+    $sumLines.Add("=========================================================================")
+    $sumLines.Add(" 리포트 ID     : $reportId")
+    $sumLines.Add(" 접수 일시     : $($detailObj.CreatedAt)")
+    $sumLines.Add(" 증상 분류     : $Category")
+    $sumLines.Add(" 대상 프린터   : $TargetPrinter")
+    $sumLines.Add(" PC / IP       : $($env:COMPUTERNAME) ($PcIp)")
+    $sumLines.Add(" OS / SID      : $OsCaption | $LocalSid")
+    $sumLines.Add(" 망상태 / WPP  : $NetStatus | WPP=$WppEnabled")
+    $sumLines.Add(" 로드된 백업   : $LoadedBackupSource")
+    $sumLines.Add("")
+    $sumLines.Add("[현장 담당자 메모]")
+    if ([string]::IsNullOrWhiteSpace($cleanDesc)) { $sumLines.Add(" (입력 없음)") } else { $sumLines.Add($cleanDesc) }
+    $sumLines.Add("")
+    $sumLines.Add("[직전 오류/실패 요약]")
+    if ([string]::IsNullOrWhiteSpace($cleanErr)) { $sumLines.Add(" (없음)") } else { $sumLines.Add($cleanErr) }
+    $sumLines.Add("")
+    $sumLines.Add("[설치 프린터 현황 ($($instPrts.Count)대)]")
+    foreach ($ip in $instPrts) {
+        $sumLines.Add(" - $($ip.Name) | Port=$($ip.PortName) | Drv=$($ip.DriverName) | Offline=$($ip.WorkOffline)")
+    }
+    $sumLines.Add("")
+    $sumLines.Add("[장치관리자 LPT ($($lptPorts.Count)개) / USB 바코드·이상장치 ($($usbPrintDevs.Count)개)]")
+    foreach ($lp in $lptPorts) {
+        $sumLines.Add(" - [LPT] $($lp.PortName): $($lp.Name) ($($lp.Status))")
+    }
+    foreach ($ud in $usbPrintDevs) {
+        $sumLines.Add(" - [USB] $($ud.Name) | Class=$($ud.PNPClass) | Status=$($ud.Status) | Err=$($ud.ErrorCode) | ID=$($ud.DeviceID)")
+    }
+    $sumLines.Add("")
+    $sumLines.Add("[실시간 로그 전문 (민감정보 마스킹됨)]")
+    $sumLines.Add($cleanLog)
+
+    $summaryText = ($sumLines -join "`r`n")
+    $jsonText    = ($detailObj | ConvertTo-Json -Depth 8)
+    $utf8Bom     = New-Object System.Text.UTF8Encoding($true)
+
+    $savedToServer = $false
+    $targetDir     = $null
+    $fallbackNote  = $null
+
+    if (-not [string]::IsNullOrWhiteSpace($PrtBakDir) -and (Test-Path -LiteralPath $PrtBakDir)) {
+        try {
+            $baseFull   = [IO.Path]::GetFullPath($PrtBakDir).TrimEnd('\')
+            $repRoot    = Join-Path $baseFull '_REPORTS'
+            $repRootFul = [IO.Path]::GetFullPath($repRoot).TrimEnd('\')
+            if ([IO.Path]::GetDirectoryName($repRootFul).TrimEnd('\') -ieq $baseFull) {
+                if (-not (Test-Path -LiteralPath $repRootFul)) {
+                    New-Item -ItemType Directory -Path $repRootFul -Force -ErrorAction Stop | Out-Null
+                }
+                $candDir = Join-Path $repRootFul $reportId
+                New-Item -ItemType Directory -Path $candDir -Force -ErrorAction Stop | Out-Null
+                [IO.File]::WriteAllText((Join-Path $candDir 'BugReport_Summary.txt'), $summaryText, $utf8Bom)
+                [IO.File]::WriteAllText((Join-Path $candDir 'BugReport_Detail.json'), $jsonText, $utf8Bom)
+                $targetDir     = $candDir
+                $savedToServer = $true
+            }
+        } catch {
+            $fallbackNote = $_.Exception.Message
+        }
+    }
+
+    if (-not $savedToServer) {
+        $localRoot = Join-Path $global:AsanCtx.OfflineLocalRoot '_Reports'
+        if (-not (Test-Path -LiteralPath $localRoot)) {
+            New-Item -ItemType Directory -Path $localRoot -Force | Out-Null
+        }
+        $candLocal = Join-Path $localRoot $reportId
+        New-Item -ItemType Directory -Path $candLocal -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $candLocal 'BugReport_Summary.txt'), $summaryText, $utf8Bom)
+        [IO.File]::WriteAllText((Join-Path $candLocal 'BugReport_Detail.json'), $jsonText, $utf8Bom)
+        $targetDir = $candLocal
+    }
+
+    return [pscustomobject]@{
+        Success       = $true
+        ReportId      = $reportId
+        SavedPath     = $targetDir
+        SavedToServer = $savedToServer
+        FallbackNote  = $fallbackNote
+    }
 }
 
 # ============================================================================

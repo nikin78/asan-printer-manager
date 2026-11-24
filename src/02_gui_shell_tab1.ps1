@@ -23,6 +23,7 @@ $script:Ui = @{
     LblPcIp            = $null
     LblSid             = $null
     BtnCopySid         = $null
+    BtnBugReport       = $null
     LblNetBadge        = $null
     LblServerPath      = $null
     BtnRefresh         = $null
@@ -494,6 +495,234 @@ function Show-WppRemediationDialog {
     $dlg.Dispose()
 }
 
+# ============================================================================
+# [버그/오류 리포트 팝업] DialogResult 기반 클로저 안전 + _PRTBAK\_REPORTS 전송
+# ============================================================================
+function Show-BugReportDialog {
+    param(
+        [string]$DefaultCategory = '복원/드라이버 오류',
+        [string]$DefaultPrinter = '',
+        [string]$ErrorSummary = ''
+    )
+
+    if ($script:AsyncState.IsBusy) {
+        [System.Windows.Forms.MessageBox]::Show('현재 진행 중인 작업이 완료된 뒤 리포트를 전송해 주세요.', '작업 진행 중', 'OK', 'Information') | Out-Null
+        return
+    }
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text            = '오류 / 버그 리포트 전송 (_PRTBAK\_REPORTS)'
+    $dlg.Size            = New-Object System.Drawing.Size(560, 420)
+    $dlg.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterParent
+    $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dlg.MaximizeBox     = $false
+    $dlg.MinimizeBox     = $false
+    $dlg.BackColor       = [System.Drawing.Color]::White
+    $dlg.Font            = $script:FontBase
+    $dlg.Padding         = New-Object System.Windows.Forms.Padding(14)
+
+    $lblGuide = New-Object System.Windows.Forms.Label
+    $lblGuide.Text      = '현장 오류 상황·PC 환경·프린터/포트/LPT/USB 상태·실시간 로그를 서버 리포트함(_PRTBAK\_REPORTS)으로 자동 수집·전송합니다. (비밀번호 자동 마스킹 / 오프라인 시 로컬 저장)'
+    $lblGuide.Dock      = [System.Windows.Forms.DockStyle]::Top
+    $lblGuide.Height    = 40
+    $lblGuide.ForeColor = [System.Drawing.Color]::FromArgb(51, 65, 85)
+    $lblGuide.Font      = $script:FontSmall
+
+    $pnlFields = New-Object System.Windows.Forms.Panel
+    $pnlFields.Dock   = [System.Windows.Forms.DockStyle]::Top
+    $pnlFields.Height = 76
+
+    $lblCat = New-Object System.Windows.Forms.Label
+    $lblCat.Text     = '증상 분류:'
+    $lblCat.Font     = $script:FontBold
+    $lblCat.AutoSize = $true
+    $lblCat.Location = New-Object System.Drawing.Point(0, 10)
+
+    $cmbCat = New-Object System.Windows.Forms.ComboBox
+    $cmbCat.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $cmbCat.Location      = New-Object System.Drawing.Point(84, 6)
+    $cmbCat.Size          = New-Object System.Drawing.Size(220, 24)
+    foreach ($cat in @('복원/드라이버 오류', '백업 오류', 'WSD/포트 전환', '공유 인증/SID 충돌', '특수/바코드 프린터', 'UI/프로그램 버그', '기타')) {
+        [void]$cmbCat.Items.Add($cat)
+    }
+    $catIdx = $cmbCat.Items.IndexOf($DefaultCategory)
+    if ($catIdx -lt 0) { $catIdx = 0 }
+    $cmbCat.SelectedIndex = $catIdx
+
+    $lblPrt = New-Object System.Windows.Forms.Label
+    $lblPrt.Text     = '대상 프린터:'
+    $lblPrt.Font     = $script:FontBold
+    $lblPrt.AutoSize = $true
+    $lblPrt.Location = New-Object System.Drawing.Point(0, 44)
+
+    $cmbPrt = New-Object System.Windows.Forms.ComboBox
+    $cmbPrt.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDown
+    $cmbPrt.Location      = New-Object System.Drawing.Point(84, 40)
+    $cmbPrt.Size          = New-Object System.Drawing.Size(426, 24)
+    $prtSeen = @{}
+    [void]$cmbPrt.Items.Add('(전체/미지정)')
+    $prtSeen['(전체/미지정)'] = $true
+    foreach ($srcList in @($script:AppState.RestoreRows, $script:AppState.DiagnosedPrinters)) {
+        foreach ($item in @($srcList)) {
+            $pn = [string]$item.PrinterName
+            if (-not [string]::IsNullOrWhiteSpace($pn) -and -not $prtSeen.ContainsKey($pn)) {
+                $prtSeen[$pn] = $true
+                [void]$cmbPrt.Items.Add($pn)
+            }
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($DefaultPrinter)) {
+        $cmbPrt.Text = $DefaultPrinter
+    } else {
+        $cmbPrt.SelectedIndex = 0
+    }
+
+    $pnlFields.Controls.AddRange(@($lblCat, $cmbCat, $lblPrt, $cmbPrt))
+
+    $pnlBot = New-Object System.Windows.Forms.Panel
+    $pnlBot.Dock    = [System.Windows.Forms.DockStyle]::Bottom
+    $pnlBot.Height  = 46
+    $pnlBot.Padding = New-Object System.Windows.Forms.Padding(0, 10, 0, 0)
+
+    $flpRight = New-RightFlowStrip -TopPadding 0 -RightPadding 0
+    $btnCan = New-StyledButton -Text '취소' -Width 92 -Height 32 -BackColor ([System.Drawing.Color]::FromArgb(100, 116, 139))
+    $btnCan.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $btnCan.Margin       = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
+
+    $btnSend = New-StyledButton -Text '리포트 전송' -Width 126 -Height 32 -BackColor ([System.Drawing.Color]::FromArgb(234, 88, 12))
+    $btnSend.DialogResult = [System.Windows.Forms.DialogResult]::OK
+
+    $flpRight.Controls.Add($btnCan)
+    $flpRight.Controls.Add($btnSend)
+    $pnlBot.Controls.Add($flpRight)
+
+    $pnlMemo = New-Object System.Windows.Forms.Panel
+    $pnlMemo.Dock    = [System.Windows.Forms.DockStyle]::Fill
+    $pnlMemo.Padding = New-Object System.Windows.Forms.Padding(0, 6, 0, 0)
+
+    $lblMemo = New-Object System.Windows.Forms.Label
+    $lblMemo.Text   = '현장 상황 메모 (예: 어떤 프린터/단계에서 무슨 오류가 났는지 간단히 기입):'
+    $lblMemo.Font   = $script:FontBold
+    $lblMemo.Dock   = [System.Windows.Forms.DockStyle]::Top
+    $lblMemo.Height = 22
+
+    $txtMemo = New-Object System.Windows.Forms.TextBox
+    $txtMemo.Dock        = [System.Windows.Forms.DockStyle]::Fill
+    $txtMemo.Multiline   = $true
+    $txtMemo.ScrollBars  = [System.Windows.Forms.ScrollBars]::Vertical
+    $txtMemo.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $txtMemo.Font        = $script:FontBase
+    if (-not [string]::IsNullOrWhiteSpace($ErrorSummary)) {
+        $txtMemo.Text = "[자동 첨부 오류 요약]`r`n$ErrorSummary`r`n`r`n[현장 추가 메모]`r`n"
+        $txtMemo.SelectionStart = $txtMemo.TextLength
+    }
+
+    $pnlMemo.Controls.Add($txtMemo)
+    $pnlMemo.Controls.Add($lblMemo)
+    $txtMemo.BringToFront()
+
+    $dlg.AcceptButton = $btnSend
+    $dlg.CancelButton = $btnCan
+    $dlg.Controls.Add($pnlMemo)
+    $dlg.Controls.Add($pnlBot)
+    $dlg.Controls.Add($pnlFields)
+    $dlg.Controls.Add($lblGuide)
+    $pnlMemo.BringToFront()
+
+    $dr = $dlg.ShowDialog($script:Ui.Form)
+    $selCat  = [string]$cmbCat.SelectedItem
+    $selPrt  = $cmbPrt.Text.Trim()
+    $memoVal = $txtMemo.Text.Trim()
+    $dlg.Dispose()
+
+    if ($dr -ne [System.Windows.Forms.DialogResult]::OK) { return }
+
+    $net     = $script:AppState.NetworkInfo
+    $prtBak  = $null
+    $pcIp    = 'NO_IP'
+    $netStat = 'Unknown'
+    $wppOn   = $false
+    if ($net) {
+        $prtBak  = $net.PrtBakDir
+        $pcIp    = [string]$net.IPAddress
+        $netStat = [string]$net.Status
+        if ($net.WppStatus) { $wppOn = [bool]$net.WppStatus.IsEnabled }
+    }
+    $uiLog = ''
+    if ($script:Ui.TxtLog -and -not $script:Ui.TxtLog.IsDisposed) { $uiLog = [string]$script:Ui.TxtLog.Text }
+    $loadedSrc = ''
+    if ($script:Tab2Ui -and $script:Tab2Ui.LoadedSourcePath) { $loadedSrc = [string]$script:Tab2Ui.LoadedSourcePath }
+    $extraSec = @()
+    if ($script:Tab2Ui -and $script:Tab2Ui.TxtAuthPass -and -not [string]::IsNullOrWhiteSpace($script:Tab2Ui.TxtAuthPass.Text)) {
+        $extraSec = @($script:Tab2Ui.TxtAuthPass.Text)
+    }
+
+    $tParams = @{
+        Category           = $selCat
+        UserDescription    = $memoVal
+        TargetPrinter      = $selPrt
+        UiLogText          = $uiLog
+        ErrorSummary       = $ErrorSummary
+        PrtBakDir          = $prtBak
+        PcIp               = $pcIp
+        OsCaption          = [string]$script:AppState.OsCaption
+        LocalSid           = [string]$script:AppState.LocalSid
+        NetStatus          = $netStat
+        WppEnabled         = $wppOn
+        LoadedBackupSource = $loadedSrc
+        ExtraSecrets       = $extraSec
+    }
+
+    $work = {
+        param($arg)
+        Write-ProgressSafe -Percent 40 -Message '환경·프린터·포트·LPT/USB 상태 수집 및 민감정보 마스킹 중...'
+        $res = Send-AsanBugReport `
+            -Category ([string]$arg.Category) `
+            -UserDescription ([string]$arg.UserDescription) `
+            -TargetPrinter ([string]$arg.TargetPrinter) `
+            -UiLogText ([string]$arg.UiLogText) `
+            -ErrorSummary ([string]$arg.ErrorSummary) `
+            -PrtBakDir $arg.PrtBakDir `
+            -PcIp ([string]$arg.PcIp) `
+            -OsCaption ([string]$arg.OsCaption) `
+            -LocalSid ([string]$arg.LocalSid) `
+            -NetStatus ([string]$arg.NetStatus) `
+            -WppEnabled ([bool]$arg.WppEnabled) `
+            -LoadedBackupSource ([string]$arg.LoadedBackupSource) `
+            -ExtraSecrets @($arg.ExtraSecrets)
+        Write-ProgressSafe -Percent 100 -Message "버그 리포트 저장 완료: $($res.SavedPath)"
+        return $res
+    }
+
+    $done = {
+        param($ok, $data, $err, $cbState)
+        if (-not $ok -or -not $data) {
+            Add-UiLog -Message "버그 리포트 전송 실패: $err" -Level 'ERROR'
+            [System.Windows.Forms.MessageBox]::Show("버그 리포트 전송 중 오류가 발생했습니다:`r`n$err", '전송 오류', 'OK', 'Error') | Out-Null
+            return
+        }
+        if ($data.SavedToServer) {
+            Add-UiLog -Message "서버 리포트함 전송 완료: $($data.SavedPath)" -Level 'INFO'
+            [System.Windows.Forms.MessageBox]::Show(
+                "오류/버그 리포트가 사내 서버 리포트함으로 전송되었습니다.`r`n`r`n• 리포트 ID: $($data.ReportId)`r`n• 저장 경로: $($data.SavedPath)",
+                '리포트 전송 완료',
+                'OK',
+                'Information'
+            ) | Out-Null
+        } else {
+            Add-UiLog -Message "오프라인/로컬 리포트 저장 완료: $($data.SavedPath)" -Level 'WARN'
+            [System.Windows.Forms.MessageBox]::Show(
+                "서버 연결이 불가하여 로컬 오프라인 리포트 폴더에 저장했습니다.`r`n`r`n• 저장 경로: $($data.SavedPath)`r`n• 추후 파일만 개발 담당자에게 전달해 주세요.",
+                '로컬 리포트 저장 완료',
+                'OK',
+                'Information'
+            ) | Out-Null
+        }
+    }
+
+    Invoke-AsanAsyncTask -TaskName '오류/버그 리포트 수집 및 전송' -WorkScript $work -Params $tParams -OnComplete $done -Indeterminate
+}
+
 function Update-HeaderAndWppUi {
     $net = $script:AppState.NetworkInfo
     $script:Ui.LblOs.Text  = "OS: $($script:AppState.OsCaption)"
@@ -691,6 +920,11 @@ function Initialize-MainGuiShell {
     $flpHdrMeta.Controls.AddRange(@($lblOs, $lblPcIp, $lblSid))
 
     $flpHdrRight2 = New-RightFlowStrip -TopPadding 2 -RightPadding 0
+    $btnBugReport = New-StyledButton -Text '오류/버그 리포트' -Width 116 -Height 22 -BackColor ([System.Drawing.Color]::FromArgb(234, 88, 12)) -RegisterBusy
+    $btnBugReport.Font   = $script:FontSmall
+    $btnBugReport.Margin = New-Object System.Windows.Forms.Padding(6, 0, 0, 0)
+    $btnBugReport.Add_Click({ Show-BugReportDialog })
+
     $btnCopySid = New-StyledButton -Text 'SID 복사' -Width 74 -Height 22 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105))
     $btnCopySid.Font = $script:FontSmall
     $btnCopySid.Add_Click({
@@ -701,6 +935,7 @@ function Initialize-MainGuiShell {
             } catch {}
         }
     })
+    $flpHdrRight2.Controls.Add($btnBugReport)
     $flpHdrRight2.Controls.Add($btnCopySid)
 
     $pnlHdrRow2.Controls.Add($flpHdrMeta)
@@ -971,6 +1206,7 @@ function Initialize-MainGuiShell {
     $script:Ui.LblPcIp         = $lblPcIp
     $script:Ui.LblSid          = $lblSid
     $script:Ui.BtnCopySid      = $btnCopySid
+    $script:Ui.BtnBugReport    = $btnBugReport
     $script:Ui.LblNetBadge     = $lblNetBadge
     $script:Ui.LblServerPath   = $lblServerPath
     $script:Ui.BtnRefresh      = $btnRefresh
@@ -1427,7 +1663,15 @@ function Start-Tab1BackupExecution {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data -or -not $data.BackupResult) {
             Add-UiLog -Message "백업 실패: $err" -Level 'ERROR'
-            [System.Windows.Forms.MessageBox]::Show("백업 작업 중 오류가 발생했습니다:`r`n$err", '백업 실패', 'OK', 'Error') | Out-Null
+            $repAns = [System.Windows.Forms.MessageBox]::Show(
+                "백업 작업 중 오류가 발생했습니다:`r`n$err`r`n`r`n이 오류 내용을 서버 리포트함(_PRTBAK\_REPORTS)으로 전송하시겠습니까?",
+                '백업 실패',
+                'YesNo',
+                'Error'
+            )
+            if ($repAns -eq [System.Windows.Forms.DialogResult]::Yes) {
+                Show-BugReportDialog -DefaultCategory '백업 오류' -ErrorSummary ([string]$err)
+            }
             return
         }
 

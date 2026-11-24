@@ -32,6 +32,7 @@ $script:Tab2Ui = @{
     CurrentSpecInfo    = $null
     BtnSpecInstall     = $null
     BtnSpecStep2       = $null
+    BtnUsbReenum       = $null
     BtnSpecFolder      = $null
     BtnSpecProps       = $null
     TxtSpecChecklist   = $null
@@ -425,9 +426,10 @@ function Load-Tab2BackupSourceAsync {
         Update-Tab2AuthPanel
         Update-Tab2SpecialPanel
 
+        $manualSpecs = @($script:Tab2Ui.SpecialRows | Where-Object { -not ($_.SpecialType -eq 'ZEBRA_ZT411' -and $_.PortKind -eq 'TCPIP') })
         if ($script:AppState.AuthFailedHosts.Count -gt 0) {
             Set-Tab2HelperVisibility -Expanded $true -SelectTabIndex 0
-        } elseif ($script:Tab2Ui.SpecialRows.Count -gt 0) {
+        } elseif ($manualSpecs.Count -gt 0) {
             Set-Tab2HelperVisibility -Expanded $true -SelectTabIndex 1
         } else {
             Set-Tab2HelperVisibility -Expanded $false
@@ -513,7 +515,15 @@ function Start-Tab2RestoreExecution {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data) {
             Add-UiLog -Message "복원 엔진 오류: $err" -Level 'ERROR'
-            [System.Windows.Forms.MessageBox]::Show("복원 중 오류가 발생했습니다:`r`n$err", '복원 오류', 'OK', 'Error') | Out-Null
+            $repAns = [System.Windows.Forms.MessageBox]::Show(
+                "복원 중 오류가 발생했습니다:`r`n$err`r`n`r`n이 오류 내용을 서버 리포트함(_PRTBAK\_REPORTS)으로 전송하시겠습니까?",
+                '복원 오류',
+                'YesNo',
+                'Error'
+            )
+            if ($repAns -eq [System.Windows.Forms.DialogResult]::Yes) {
+                Show-BugReportDialog -DefaultCategory '복원/드라이버 오류' -ErrorSummary ([string]$err)
+            }
             return
         }
 
@@ -542,6 +552,9 @@ function Start-Tab2RestoreExecution {
             $extra.Add("[복원 실패] $($f.PrinterName) ($($f.PortName)): $($f.Reason)")
         }
 
+        if ($data.NeedsUsbReplug) {
+            $extra.Add('[USB 재연결 필요] USB 바코드 소프트웨어 자동 재인식을 시도했으나 USB 포트가 미생성되었습니다 — USB 케이블을 1회 뽑았다 다시 꽂은 뒤 [실패 항목만 재시도]를 누르세요.')
+        }
         $origNotes = @()
         if ($script:AppState.CurrentBackupMeta -and $script:AppState.CurrentBackupMeta.Data) {
             $origNotes = @($script:AppState.CurrentBackupMeta.Data.BackupNotes)
@@ -550,9 +563,10 @@ function Start-Tab2RestoreExecution {
         Update-Tab2AuthPanel
         Update-Tab2SpecialPanel
 
+        $manualSpecs = @($script:Tab2Ui.SpecialRows | Where-Object { -not ($_.SpecialType -eq 'ZEBRA_ZT411' -and $_.PortKind -eq 'TCPIP') })
         if ($script:AppState.AuthFailedHosts.Count -gt 0) {
             Set-Tab2HelperVisibility -Expanded $true -SelectTabIndex 0
-        } elseif ($script:Tab2Ui.SpecialRows.Count -gt 0) {
+        } elseif ($manualSpecs.Count -gt 0 -or $data.NeedsUsbReplug) {
             Set-Tab2HelperVisibility -Expanded $true -SelectTabIndex 1
         }
         Sync-AllUiButtonStates
@@ -572,6 +586,11 @@ function Start-Tab2RestoreExecution {
         $sumLines.Add("• 복원 실패 항목 : ${failCnt}건")
         $sumLines.Add("• 감지된 특수장비: ${specCnt}대 (하단 특수 프린터 도우미 확인)")
 
+        if ($data.NeedsUsbReplug) {
+            $sumLines.Add("")
+            $sumLines.Add("[USB 바코드 재연결 안내]")
+            $sumLines.Add("-> 소프트웨어 자동 재인식을 시도했으나 USB 포트가 미생성되었습니다. USB 케이블을 1회 뽑았다 다시 꽂은 뒤 [실패 항목만 재시도]를 눌러주세요.")
+        }
         if ($samList.Count -gt 0) {
             $sumLines.Add("")
             $sumLines.Add("[삼성 범용 드라이버(UPD 3) 주의]")
@@ -583,14 +602,25 @@ function Start-Tab2RestoreExecution {
             $sumLines.Add("[공유 호스트 인증 / 동일 SID 충돌 감지]")
             $sumLines.Add("-> 하단 [공유 인증/SID 조치] 탭에서 암호 재입력 또는 스풀러 초기화 후 [실패 항목만 재시도]를 누르세요.")
         }
-        if ($failCnt -eq 0 -and $specCnt -eq 0) {
+        if ($failCnt -eq 0 -and $manualSpecs.Count -eq 0) {
             $sumLines.Add("")
             $sumLines.Add("[3. 검증/테스트] 탭으로 이동하여 일반 프린터 테스트 인쇄를 진행하세요.")
         }
 
-        $icon = [System.Windows.Forms.MessageBoxIcon]::Information
-        if ($failCnt -gt 0 -or $samList.Count -gt 0) { $icon = [System.Windows.Forms.MessageBoxIcon]::Warning }
-        [System.Windows.Forms.MessageBox]::Show(($sumLines -join "`r`n"), '복원 완료 요약', 'OK', $icon) | Out-Null
+        if ($failCnt -gt 0) {
+            $sumLines.Add("")
+            $sumLines.Add("복원 실패 항목을 서버 리포트함(_PRTBAK\_REPORTS)으로 지금 전송하시겠습니까?")
+            $repAns = [System.Windows.Forms.MessageBox]::Show(($sumLines -join "`r`n"), '복원 완료 요약 (일부 실패)', 'YesNo', 'Warning')
+            if ($repAns -eq [System.Windows.Forms.DialogResult]::Yes) {
+                $firstFailPrt = [string](@($data.Failures)[0].PrinterName)
+                $failSummary  = (@($data.Failures | ForEach-Object { "$($_.PrinterName) ($($_.PortName)): $($_.Reason)" }) -join "`r`n")
+                Show-BugReportDialog -DefaultCategory '복원/드라이버 오류' -DefaultPrinter $firstFailPrt -ErrorSummary $failSummary
+            }
+        } else {
+            $icon = [System.Windows.Forms.MessageBoxIcon]::Information
+            if ($samList.Count -gt 0 -or $data.NeedsUsbReplug) { $icon = [System.Windows.Forms.MessageBoxIcon]::Warning }
+            [System.Windows.Forms.MessageBox]::Show(($sumLines -join "`r`n"), '복원 완료 요약', 'OK', $icon) | Out-Null
+        }
     }
 
     $taskTitle = '프린터/드라이버 선택 복원'
@@ -805,6 +835,29 @@ function Invoke-Tab2Sip30mStep2Async {
     }
 
     Invoke-AsanAsyncTask -TaskName 'SIP-30M(id카드) 2단계 자동 마무리' -WorkScript $work -Params $tParams -OnComplete $done -Indeterminate
+}
+
+function Invoke-Tab2UsbReenumAsync {
+    $work = {
+        param($arg)
+        Write-ProgressSafe -Percent 25 -Message 'USB 바코드 프린터 장치 검색 및 PnP 소프트웨어 재인식 실행 중...'
+        $res = Invoke-UsbBarcodeAutoReenumerate -WaitSeconds 8 -ForceAllBarcodeUsb
+        Write-ProgressSafe -Percent 100 -Message $res.Summary
+        return $res
+    }
+    $done = {
+        param($ok, $data, $err, $cbState)
+        if (-not $ok -or -not $data) {
+            Add-UiLog -Message "USB 바코드 재인식 오류: $err" -Level 'ERROR'
+            [System.Windows.Forms.MessageBox]::Show("USB 재인식 중 오류가 발생했습니다:`r`n$err", 'USB 재인식 오류', 'OK', 'Error') | Out-Null
+            return
+        }
+        $icon = [System.Windows.Forms.MessageBoxIcon]::Information
+        if ($data.NeedsManualReplug) { $icon = [System.Windows.Forms.MessageBoxIcon]::Warning }
+        foreach ($cb in $script:Ui.OnRestoreCompleted) { try { & $cb } catch {} }
+        [System.Windows.Forms.MessageBox]::Show($data.Summary, 'USB 바코드 소프트웨어 재인식', 'OK', $icon) | Out-Null
+    }
+    Invoke-AsanAsyncTask -TaskName 'USB 바코드 소프트웨어 재인식' -WorkScript $work -OnComplete $done -Indeterminate
 }
 
 # ============================================================================
@@ -1093,12 +1146,12 @@ function Initialize-Tab2RestoreUi {
     $cmbSpec = New-Object System.Windows.Forms.ComboBox
     $cmbSpec.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
     $cmbSpec.Location      = New-Object System.Drawing.Point(68, 3)
-    $cmbSpec.Size          = New-Object System.Drawing.Size(235, 24)
+    $cmbSpec.Size          = New-Object System.Drawing.Size(195, 24)
     $cmbSpec.Add_SelectedIndexChanged({ Update-Tab2SpecialSelection })
 
-    $btnSpecInst = New-StyledButton -Text '1단계: 전용 설치 실행' -Width 156 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(124, 58, 237))
+    $btnSpecInst = New-StyledButton -Text '1단계: 전용 설치 실행' -Width 146 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(124, 58, 237))
     $btnSpecInst.Font     = $script:FontSmall
-    $btnSpecInst.Location = New-Object System.Drawing.Point(311, 2)
+    $btnSpecInst.Location = New-Object System.Drawing.Point(269, 2)
     $btnSpecInst.Enabled  = $false
     $btnSpecInst.Add_Click({
         $cur = $script:Tab2Ui.CurrentSpecInfo
@@ -1112,15 +1165,20 @@ function Initialize-Tab2RestoreUi {
         }
     })
 
-    $btnSpecStep2 = New-StyledButton -Text '2단계: SIP-30M 포트/설정 마무리' -Width 206 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(15, 118, 110)) -RegisterBusy
+    $btnSpecStep2 = New-StyledButton -Text '2단계: SIP-30M 마무리' -Width 186 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(15, 118, 110)) -RegisterBusy
     $btnSpecStep2.Font     = $script:FontSmall
-    $btnSpecStep2.Location = New-Object System.Drawing.Point(473, 2)
+    $btnSpecStep2.Location = New-Object System.Drawing.Point(421, 2)
     $btnSpecStep2.Enabled  = $false
     $btnSpecStep2.Add_Click({ Invoke-Tab2Sip30mStep2Async })
 
-    $btnSpecDir = New-StyledButton -Text '폴더 열기' -Width 74 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105))
+    $btnUsbReenum = New-StyledButton -Text 'USB 재인식' -Width 86 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(2, 132, 199)) -RegisterBusy
+    $btnUsbReenum.Font     = $script:FontSmall
+    $btnUsbReenum.Location = New-Object System.Drawing.Point(613, 2)
+    $btnUsbReenum.Add_Click({ Invoke-Tab2UsbReenumAsync })
+
+    $btnSpecDir = New-StyledButton -Text '폴더 열기' -Width 72 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105))
     $btnSpecDir.Font     = $script:FontSmall
-    $btnSpecDir.Location = New-Object System.Drawing.Point(685, 2)
+    $btnSpecDir.Location = New-Object System.Drawing.Point(705, 2)
     $btnSpecDir.Enabled  = $false
     $btnSpecDir.Add_Click({
         $cur = $script:Tab2Ui.CurrentSpecInfo
@@ -1130,9 +1188,9 @@ function Initialize-Tab2RestoreUi {
     })
 
     # [H4 Fix] 프린터 미설치 시 오류 팝업 대신 친절한 안내 표시
-    $btnSpecProps = New-StyledButton -Text '속성 열기' -Width 74 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(51, 65, 85))
+    $btnSpecProps = New-StyledButton -Text '속성 열기' -Width 72 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(51, 65, 85))
     $btnSpecProps.Font     = $script:FontSmall
-    $btnSpecProps.Location = New-Object System.Drawing.Point(765, 2)
+    $btnSpecProps.Location = New-Object System.Drawing.Point(783, 2)
     $btnSpecProps.Enabled  = $false
     $btnSpecProps.Add_Click({
         $cur = $script:Tab2Ui.CurrentSpecInfo
@@ -1152,7 +1210,7 @@ function Initialize-Tab2RestoreUi {
         try { Start-Process -FilePath 'rundll32.exe' -ArgumentList $safeArg } catch {}
     })
 
-    $pnlSpecTop.Controls.AddRange(@($lblSp, $cmbSpec, $btnSpecInst, $btnSpecStep2, $btnSpecDir, $btnSpecProps))
+    $pnlSpecTop.Controls.AddRange(@($lblSp, $cmbSpec, $btnSpecInst, $btnSpecStep2, $btnUsbReenum, $btnSpecDir, $btnSpecProps))
 
     $txtSpecChk = New-Object System.Windows.Forms.TextBox
     $txtSpecChk.Dock        = [System.Windows.Forms.DockStyle]::Fill
@@ -1230,6 +1288,7 @@ function Initialize-Tab2RestoreUi {
     $script:Tab2Ui.CmbSpecialList   = $cmbSpec
     $script:Tab2Ui.BtnSpecInstall   = $btnSpecInst
     $script:Tab2Ui.BtnSpecStep2     = $btnSpecStep2
+    $script:Tab2Ui.BtnUsbReenum     = $btnUsbReenum
     $script:Tab2Ui.BtnSpecFolder    = $btnSpecDir
     $script:Tab2Ui.BtnSpecProps     = $btnSpecProps
     $script:Tab2Ui.TxtSpecChecklist = $txtSpecChk

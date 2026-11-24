@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     아산병원 프린터/드라이버 통합 마이그레이션 도구 로컬 비파괴 스모크 테스트
@@ -183,6 +183,7 @@ if (`$net.Status -notin @('Online','IntranetOnly','Offline')) { throw "알 수 �
 `$pSip  = Get-SpecialPrinterProfile -PrinterName 'id카드' -DriverName 'SISS HODOO SIP-30' -PortName '10.1.1.1'
 `$pSew  = Get-SpecialPrinterProfile -PrinterName 'Sewoo' -DriverName 'SLK-TE201' -PortName 'USBPOS0'
 `$pZeb  = Get-SpecialPrinterProfile -PrinterName '투약바코드' -DriverName 'ZDesigner ZD410-203dpi ZPL' -PortName 'USB001'
+`$pZt4  = Get-SpecialPrinterProfile -PrinterName '약제팀 라벨' -DriverName 'ZDesigner ZT411-203dpi ZPL' -PortName '172.25.99.30'
 `$pBix  = Get-SpecialPrinterProfile -PrinterName '팔찌' -DriverName 'BIXOLON SLP-TX220' -PortName 'USB002'
 `$pT88  = Get-SpecialPrinterProfile -PrinterName 'EPSON TM-T88VI' -DriverName 'EPSON TM-T88VI Receipt' -PortName 'LPT1:'
 `$pStd  = Get-SpecialPrinterProfile -PrinterName '병동레이저' -DriverName 'Kyocera ECOSYS PA5000x KX' -PortName '10.1.1.2'
@@ -190,10 +191,39 @@ if (`$net.Status -notin @('Online','IntranetOnly','Offline')) { throw "알 수 �
 if (`$pSip.Type -ne 'SIP30M_IDCARD' -or (-not `$pSip.SkipAliveFilter)) { throw 'SIP30M 분류 오류' }
 if (`$pSew.Type -ne 'SEWOO_TE201' -or (-not `$pSew.Win11ReinstallOnly)) { throw 'SEWOO 분류 오류' }
 if (`$pZeb.Type -ne 'ZD410_411') { throw 'ZD410 분류 오류' }
+if (`$pZt4.Type -ne 'ZEBRA_ZT411' -or (-not `$pZt4.ExcludeFromPcl6) -or (-not `$pZt4.ExcludeBulkTest)) { throw 'ZT411 분류 오류' }
 if (`$pBix.Type -ne 'BIXOLON_TX220') { throw 'TX220 분류 오류' }
 if (`$pT88.Type -ne 'EPSON_TMT88_LPT' -or (-not `$pT88.NoDriverBackup)) { throw 'EPSON TM-T88VI 무드라이버 분류 오류' }
 if (`$pStd.IsSpecial) { throw '일반 프린터 오분류' }
 if (-not (Test-IsVirtualPrinter -PrinterName 'Microsoft Print to PDF' -PortName 'PORTPROMPT:')) { throw '가상 프린터 필터 오류' }
+
+# 2-B. 버그 리포트 민감정보 마스킹 + _PRTBAK\_REPORTS 격리 + Get-ServerBackupEntries 시스템폴더 제외 검증
+`$masked = Protect-ReportSensitiveText -Text 'pw1=[REDACTED_LEGACY_SECRET] pw2=[REDACTED_LEGACY_SECRET]. pw3=[REDACTED_LEGACY_SECRET] custom=MySecret!' -ExtraSecrets @('MySecret!')
+if (`$masked -match 'asan1234|MySecret') { throw "민감정보 마스킹 실패: `$masked" }
+
+`$fakePrtBak = Join-Path '$($workRoot -replace "'", "''")' 'FakePrtBak'
+New-Item -ItemType Directory -Path `$fakePrtBak -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path `$fakePrtBak '_REPORTS') -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path `$fakePrtBak '_DB') -Force | Out-Null
+`$validBakDir = Join-Path `$fakePrtBak 'TESTPC(172.25.1.1)'
+New-Item -ItemType Directory -Path `$validBakDir -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path `$validBakDir 'PrinterBackup.json'), '{}', (New-Object System.Text.UTF8Encoding(`$true)))
+
+`$repRes = Send-AsanBugReport -Category '테스트' -UserDescription 'pw=[REDACTED_LEGACY_SECRET]' -TargetPrinter '약제팀 ZT411' -UiLogText 'log [REDACTED_LEGACY_SECRET]' -PrtBakDir `$fakePrtBak -PcIp '172.25.1.1'
+if (-not `$repRes.Success -or (-not `$repRes.SavedToServer) -or (-not (Test-Path -LiteralPath (Join-Path `$repRes.SavedPath 'BugReport_Summary.txt')))) {
+    throw '버그 리포트 저장 검증 실패'
+}
+`$repSumTxt = [IO.File]::ReadAllText((Join-Path `$repRes.SavedPath 'BugReport_Summary.txt'), [Text.Encoding]::UTF8)
+if (`$repSumTxt -match 'asan1234') { throw '저장된 버그 리포트에 비밀번호 평문 잔존!' }
+
+`$srvEntries = @(Get-ServerBackupEntries -PrtBakDir `$fakePrtBak -PcIp '172.25.1.1')
+if (`$srvEntries.Count -ne 1 -or `$srvEntries[0].Name -ne 'TESTPC(172.25.1.1)') {
+    throw ("_REPORTS/_DB 시스템 폴더 격리 실패: count=" + `$srvEntries.Count)
+}
+
+# 2-C. USB 바코드 자동 재인식 함수 안전 실행 확인 (미등록 바코드 없으면 0건 정상 종료)
+`$usbRes = Invoke-UsbBarcodeAutoReenumerate -WaitSeconds 2
+if (`$null -eq `$usbRes -or [string]::IsNullOrWhiteSpace(`$usbRes.Summary)) { throw 'USB 재인식 반환값 오류' }
 
 # 3. 모델 줄기/와일드카드 & 2패스 드라이버 스코어링 검증
 `$stemsSam = Get-ModelStems -Tokens (Get-SignificantTokens 'Samsung SL-M3820ND PCL6')
