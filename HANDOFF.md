@@ -1,7 +1,7 @@
 # 작업 인수인계서 (HANDOFF) — 집 ↔ 직장 PC 양방향 공용
 
-> **최종 갱신:** 2026-11-26 05:50 (집 PC — 세션 마감: `README.md` 사용자 매뉴얼·명세 전면 개편 + 비식별 GUI 캡처 5종 `docs/images/` 첨부 + 오늘 전체 작업 정리 및 GitHub 동기화)  
-> **현재 개발 버전:** `v1.0.0-beta.3` (안 A 비밀 분리 + P0 전면 안정화 + ZT411 골든 이미지 로컬 정책 + 재귀 리뷰 Round 1~4 + 코어 5모듈 소분리 + 고시인성 UI/UX·비활성 사유 툴팁·자동 오류 리포트·전 탭 여백 통일·공용 디자인 스킬·README 시각 매뉴얼 완료)  
+> **최종 갱신:** 2026-11-26 06:05 (집 PC — 런타임 외부 `secrets.local.json` 자동 로드 · 수동 `서버 로그인` UI 구현 + 암호 미포함 GitHub Release `v1.0.0-beta.3` 배포)  
+> **현재 개발 버전:** `v1.0.0-beta.3` (안 A 비밀 분리 + 런타임 외부 시크릿 로드·수동 서버 로그인 + GitHub Pre-release 안전 배포 + 고시인성 UI/UX·여백 통일·공용 디자인 스킬·README 시각 매뉴얼 완료)  
 > **GitHub 비공개 저장소:** https://github.com/nikin78/asan-printer-manager  
 > **자동 규칙 파일:** `AGENTS.md` *(Antigravity IDE가 저장소 루트 오픈 시 자동 로드)*  
 > **로컬 빌드 산출물:** `dist/Asan_Printer_Manager.bat` *(`.gitignore` 처리 — 각 PC에서 `secrets.local.json`으로 로컬 빌드 후 사내 경로/USB 배포)*
@@ -23,6 +23,7 @@
 | **자동 검증 스위트 고도화** | `verify_static.ps1` **6/6 PASS** (9모듈·Core=73/GUI=65, 부트스트랩 추출 실실행·`CoreToGui=0`·`ScriptVarsInWork=0`·AST `MessageBox`·`$previewScript`·`src/` 미등록 파일·`src/`↔`dist/` SHA-256 동기화), `smoke_test_local.ps1` **3/3 PASS** (Round 4 회귀 단위테스트 + `DisabledReasons` 검증 + `1040×720`/`960×640`+WPP 레이아웃 오류 0건 · `exit 99`) | **완료 (ALL PASS)** |
 | **전 탭 여백·패딩 통일 & 공용 GUI 디자인 스킬 전역화** | • WinForms 테두리 텍스트박스 붙음 현상을 `New-PaddedTextBoxPanel` 래퍼로 전 탭 해소(WPP·버그 리포트·하단 로그·탭 2 주의사항/도우미·탭 4 미리보기)<br>• 전 탭 그리드 헤더 `34px`(`WrapMode=False`)/행 `32px`/셀 패딩 `(8,2,8,2)` 확대 및 `1040×720` 가로 스크롤 방지 열 폭 최적화, 상단 배너(`40px`+`4px` 포인트 바)·`1단계` 카드(`65px`)·`960×640`+WPP 동적 압축 조율<br>• `.agents/skills/asan-desktop-ui/`에 여백 통일 규격·패턴 반영 및 본 PC 전역 스킬(`~/.gemini/config/skills/asan-desktop-ui`) 설치 + `AGENTS.md` §5 지속 동기화 규칙 명문화 | **완료 (시각·자동 PASS)** |
 | **GitHub `README.md` 사용자 매뉴얼·시각자료 전면 개편** | • 비식별 예시 데이터(`W52-NURSE01`, 더미 SID)로 실제 GUI 5화면(`docs/images/tab1_backup.png`, `tab1_offline.png`, `tab2_restore.png`, `tab3_verify.png`, `tab4_server.png`) 제작 및 픽셀 검수<br>• Mermaid 전체 PC 교체 워크플로우 다이어그램, 탭별 가이드, 네트워크 배지·비활성 툴팁·자동 오류 리포트·단축키 안내, WPP/SID/특수 프린터 5종 최신 버튼명 기준 현장 체크리스트·명세 전면 개편 | **완료 (검수 PASS)** |
+| **런타임 외부 시크릿 로드 · 수동 `서버 로그인` · GitHub Release 배포** | • `Import-RuntimeSecretsIfPresent`(실행 폴더 `secrets.local.json` 읽기 전용 자동 로드, Zero-USB-Write) + `Get-EffectiveDefaultUser` + `Connect-AsanBackupServerWithCred`(세션 메모리 전용·종료 시 즉시 해제·버그 리포트 자동 `[REDACTED]` 마스킹)<br>• 상단 **`▲ 서버 로그인 필요`** 배지 + **`서버 로그인`** 버튼 + `Show-ServerLoginDialog` 구현(`1040×720`/`960×640` 레이아웃 감사 PASS)<br>• GitHub Releases `v1.0.0-beta.3` Pre-release에 실암호 0바이트 `Asan_Printer_Manager.bat` + `secrets.local.example.json` + `SHA256SUMS.txt` 게시 | **완료 (검증·배포 PASS)** |
 
 ---
 
@@ -77,6 +78,12 @@ git pull --ff-only
 
 ## 5. 세션별 작업 로그 (최신순)
 
+* **2026-11-26 06:05 (집 PC / 런타임 외부 `secrets.local.json` 자동 로드 · 수동 `서버 로그인` UI · 암호 미포함 GitHub Release `v1.0.0-beta.3` 배포):**
+  * **완료 작업:**
+    1. **보안 아키텍처 고도화 (`01a_ctx_win32.ps1`, `01b_net_diag.ps1`):** GitHub Release에 병원 공용 암호를 올리지 않으면서도 누구나 실행 파일을 바로 내려받아 쓸 수 있도록, 실행 파일과 같은 폴더(`OriginalScriptPath`) 또는 `ASAN_SECRETS_FILE`의 `secrets.local.json`을 읽기 전용으로 자동 로드하는 `Import-RuntimeSecretsIfPresent`, `Get-EffectiveDefaultUser`, 메모리 세션 전용 수동 인증 `Connect-AsanBackupServerWithCred` 추가(PC 영구 저장 금지, 종료 시 메모리·SMB 세션 즉시 해제, 버그 리포트 `[REDACTED]` 자동 마스킹).
+    2. **수동 서버 로그인 UI (`02_gui_shell_tab1.ps1`):** 사내 백업 서버(`172.25.152.232:445`) 접근 시 인증이 필요할 때 상단에 **`▲ 서버 로그인 필요`** 배지 + **`서버 로그인`** 버튼 + `Show-ServerLoginDialog` 모달 자동 연동 및 전 탭 비활성 사유 툴팁/탭 1 배너 동기화.
+    3. **검증 및 GitHub Pre-release 배포:** `smoke_test_local.ps1`에 런타임 외부 설정 로드·필터·마스킹 단위테스트(2-F)와 `HeaderWithLogin` `1040×720`/`960×640` 레이아웃 감사 추가. 로컬 빌드(`552,802B`, SHA-256 `CB9E78DE...`) 및 릴리스용 암호 미포함 빌드(`552,803B`, SHA-256 `6B3F5FDB...`, 실암호 0건) 모두 `verify_static` **6/6 PASS**(`Core=76/GUI=67`) · `smoke_test_local` **3/3 PASS** 확인 후 GitHub Releases `v1.0.0-beta.3`에 `Asan_Printer_Manager.bat` + `secrets.local.example.json` + `SHA256SUMS.txt` 배포 완료.
+  * **다음 재개 지점:** 직장 PC에서 GitHub Release의 `Asan_Printer_Manager.bat`을 내려받아 `secrets.local.json`과 함께(또는 수동 `서버 로그인`으로) 병원 현장 E2E 통합 테스트(`docs/E2E_TEST_CHECKLIST_v16.md` `TC-01`~`TC-22`) 수행 → 이슈 없으면 **`v1.0.0`** 정식 릴리스 승격.
 * **2026-11-26 05:50 (집 PC / 세션 최종 마감 — `README.md` 사용자 매뉴얼·시각자료 전면 개편 및 오늘 작업 총정리):**
   * **오늘 세션 완료 작업 총괄 (`6d379e8` ~ 본 커밋):**
     1. 코어 `01_core.ps1` 5모듈 무손실 소분리(`01a`~`01e`) 및 `AGENTS.md` §3-5 최신화.

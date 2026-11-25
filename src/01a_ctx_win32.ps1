@@ -40,6 +40,9 @@ $global:AsanCtx = [hashtable]::Synchronized(@{
     InternalDnsIP              = '10.71.1.5'
     DefaultUser                = 'admin'
     DefaultPasswords           = @('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')
+    RuntimeUser                = $null
+    RuntimePasswords           = @()
+    RuntimeSecretsSource       = $null
     CandidateShares            = @("\\$serverIpVal\백업 작업", "\\$serverIpVal\백업폴더")
     DriverRoots                = @(
         'C:\Users\admin\드라이버(win10_x64)\PRT',

@@ -365,6 +365,35 @@ if (`$bixVend -notcontains 'BIXOLON') { throw 'TX220 벤더 매핑 누락' }
 `$zbrPkg  = @(Get-DetectedVendors -Text 'Zebra Technologies zbrn.inf')
 if ((`$zbrVend -notcontains 'ZEBRA') -or (`$zbrPkg -notcontains 'ZEBRA')) { throw 'ZT411 정규 벤더 매칭 오류' }
 
+# 2-F. 런타임 외부 secrets.local.json 자동 로드 · 플레이스홀더/예제 필터 · 런타임 암호 자동 마스킹 검증
+`$origRtPws  = `$global:AsanCtx.RuntimePasswords
+`$origRtUser = `$global:AsanCtx.RuntimeUser
+`$origRtSrc  = `$global:AsanCtx.RuntimeSecretsSource
+try {
+    `$global:AsanCtx.RuntimePasswords     = @()
+    `$global:AsanCtx.RuntimeUser          = `$null
+    `$global:AsanCtx.RuntimeSecretsSource = `$null
+    `$tmpSecPath = Join-Path '$($workRoot -replace "'", "''")' 'runtime_secrets_test.json'
+    `$tmpSecJson = '{"DefaultUser":"asan_rt_user","DefaultPasswords":["CHANGE_ME_1","__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__","Rt&Sec''Pw99!","Rt&Sec''Pw99!"]}'
+    [IO.File]::WriteAllText(`$tmpSecPath, `$tmpSecJson, (New-Object System.Text.UTF8Encoding(`$false)))
+    `$rtLoad = Import-RuntimeSecretsIfPresent -ExplicitPath `$tmpSecPath -ForceReload
+    if (-not `$rtLoad.Loaded -or `$rtLoad.PasswordCount -ne 1 -or (Get-EffectiveDefaultUser) -ne 'asan_rt_user') {
+        throw "런타임 secrets.local.json 로드 검증 실패 (Loaded=`$(`$rtLoad.Loaded), Cnt=`$(`$rtLoad.PasswordCount), User=`$(Get-EffectiveDefaultUser))"
+    }
+    `$allEffPws = @(Get-ConfiguredDefaultPasswords)
+    if (`$allEffPws.Count -lt 1 -or `$allEffPws[0] -ne "Rt&Sec'Pw99!" -or (`$allEffPws -contains 'CHANGE_ME_1')) {
+        throw '런타임 암호 우선순위/필터 검증 실패'
+    }
+    `$rtMasked = Protect-ReportSensitiveText -Text "pw=Rt&Sec'Pw99! esc=Rt\u0026Sec\u0027Pw99!"
+    if (`$rtMasked -match 'Rt&Sec|Rt\\u0026Sec') {
+        throw "런타임 암호 자동 마스킹 실패: `$rtMasked"
+    }
+} finally {
+    `$global:AsanCtx.RuntimePasswords     = `$origRtPws
+    `$global:AsanCtx.RuntimeUser          = `$origRtUser
+    `$global:AsanCtx.RuntimeSecretsSource = `$origRtSrc
+}
+
 # 3. 모델 줄기/와일드카드 & 2패스 드라이버 스코어링 검증
 `$stemsSam = Get-ModelStems -Tokens (Get-SignificantTokens 'Samsung SL-M3820ND PCL6')
 `$wcSam    = Test-WildcardModelMatch -CandidateDisplayName 'Samsung M332x 382x 402x Series' -WantedStems `$stemsSam
@@ -585,8 +614,14 @@ Sync-AllUiButtonStates
                     @{ Label = '960x640';  W = 960;  H = 640 }
                 )) {
                     `$f.Size = New-Object System.Drawing.Size(`$szPair.W, `$szPair.H)
+                    `$origLoginVis = `$false
+                    if (`$script:Ui.BtnServerLogin) {
+                        `$origLoginVis = `$script:Ui.BtnServerLogin.Visible
+                        `$script:Ui.BtnServerLogin.Visible = `$true
+                    }
                     [System.Windows.Forms.Application]::DoEvents()
-                    Test-ContainerLayout -Container `$script:Ui.PnlHeader -ContextLabel "`$(`$szPair.Label)/Header"
+                    Test-ContainerLayout -Container `$script:Ui.PnlHeader -ContextLabel "`$(`$szPair.Label)/HeaderWithLogin"
+                    if (`$script:Ui.BtnServerLogin) { `$script:Ui.BtnServerLogin.Visible = `$origLoginVis }
                     Test-ContainerLayout -Container `$script:Ui.PnlFooter -ContextLabel "`$(`$szPair.Label)/Footer"
 
                     # WPP 배너 임시 표시 상태에서 배너 + 탭 2 도우미 동시 표시 레이아웃 검사 후 원복

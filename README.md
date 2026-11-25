@@ -23,7 +23,8 @@
 
 | 항목 | 상세 명세 |
 | :--- | :--- |
-| **배포 형태** | 단일 실행 파일 `dist/Asan_Printer_Manager.bat` *(로컬 `secrets.local.json` 주입 빌드, Git 비추적)* |
+| **배포 형태** | 단일 실행 파일 `Asan_Printer_Manager.bat` — **GitHub Releases에서 암호 미포함 정식 실행 파일 바로 다운로드 가능** *(또는 로컬 `secrets.local.json` 주입 빌드)* |
+| **사내 인증 방식** | ① 실행 파일과 같은 폴더(USB/사내 폴더)에 `secrets.local.json` 배치 시 **재빌드 없이 런타임 자동 로드(읽기 전용)**<br>② 설정 파일이 없을 때는 상단 **`서버 로그인`** 버튼으로 아이디·암호 입력 *(현재 실행 메모리에만 유지 · PC 영구 저장 금지)* |
 | **지원 운영체제** | **기존 PC:** Windows 10 / Windows 11 모두 지원 · **새 PC:** Windows 11 (x64) |
 | **외부 의존성** | **0개** — Windows 내장 PowerShell 5.1 + `.NET Framework 4.x` + OS 내장 도구(`PrintBrm`, `pnputil`, `PrintUIEntry`)만 사용 |
 | **Zero USB Write** | 실행 즉시 `%TEMP%\AsanPrinterMgr\`로 자가 복제(스테이징)하여 원본 USB·공유 폴더에 임시 파일·로그를 1바이트도 기록하지 않음 *(매체제어 SaferZone / BSone / DRM 안전, 종료 시 `%TEMP%` 자가 삭제)* |
@@ -135,6 +136,7 @@ flowchart LR
 | 배지 표시 | 의미 | 가능한 작업 |
 | :--- | :--- | :--- |
 | **그린** `● 사내망 · 서버 연결됨` | 사내망 및 백업 서버(`172.25.152.232`) 정상 연결 | 서버 백업/복원 · 서버 관리 · 온라인 오류 리포트 전송 |
+| **오렌지** `▲ 서버 로그인 필요` | 사내망·백업 서버 도달 가능, 계정/암호 미설정 또는 인증 실패 | 상단 **`서버 로그인`** 클릭 *(또는 실행 폴더에 `secrets.local.json` 배치 후 `F5`)* · ZIP 백업/복원 |
 | **오렌지** `▲ 사내망 연결 · 서버 미응답` | 사내망 연결됨, 백업 서버 응답 지연/차단 | ZIP 파일 백업/복원 · 로컬 오류 리포트 저장 |
 | **레드** `■ 사내망 미연결` | 병원 사내망 미연결 (오프라인) | ZIP 파일 백업/복원 · 로컬 오류 리포트 저장 |
 
@@ -257,7 +259,12 @@ asan-printer-manager/
     └── antigravity_ide_v16_0.md    # 초기 마스터 개발 설계 원본
 ```
 
-### 최초 1회 로컬 비밀 설정 (안 A — Git 평문 암호 분리)
+### 빠른 다운로드 & 실행 (GitHub Releases)
+1. GitHub 저장소 우측 **[Releases](https://github.com/nikin78/asan-printer-manager/releases)**에서 최신 **`Asan_Printer_Manager.bat`**을 내려받습니다. *(보안을 위해 병원 공용 암호는 포함되어 있지 않습니다.)*
+2. **현장 무인 연결(권장):** 실행 파일과 같은 폴더(예: 작업용 USB)에 `secrets.local.example.json`을 `secrets.local.json`으로 복사해 병원 공용 암호를 1회 기입해 두면, 앞으로 새 버전 `.bat`을 덮어쓰기만 해도 자동으로 사내 백업 서버에 연결됩니다.
+3. **설정 파일 없이 바로 실행:** `secrets.local.json` 없이 단독 실행해도 사내망 연결 시 상단에 **`서버 로그인`** 버튼이 나타나며, 로그인한 계정은 현재 실행 메모리에만 유지되고 종료 시 즉시 해제됩니다.
+
+### 최초 1회 로컬 비밀 설정 (개발자 로컬 빌드용)
 1. 저장소 루트의 `secrets.local.example.json`을 `secrets.local.json`으로 복사합니다.
 2. `secrets.local.json`의 `DefaultPasswords`에 병원 공용 암호 3종을 입력합니다. *(Git에서 `.gitignore`로 영구 제외됩니다.)*
 

@@ -29,6 +29,7 @@ $script:Ui = @{
     LblSid             = $null
     BtnCopySid         = $null
     BtnBugReport       = $null
+    BtnServerLogin     = $null
     LblNetBadge        = $null
     LblServerPath      = $null
     BtnRefresh         = $null
@@ -647,7 +648,9 @@ function Sync-AllUiButtonStates {
     if ($script:Tab1Ui -and $script:Tab1Ui.BtnBackupServer -and -not $script:Tab1Ui.BtnBackupServer.IsDisposed) {
         $r1 = $busyMsg
         if (-not $busy) {
-            if ($net -and $net.Status -eq 'IntranetOnly') {
+            if ($net -and $net.Status -eq 'IntranetOnly' -and $net.ServerAuthRequired) {
+                $r1 = '백업 서버 로그인이 필요합니다. 상단 서버 로그인을 누르거나 실행 폴더에 secrets.local.json을 넣어 주세요.'
+            } elseif ($net -and $net.Status -eq 'IntranetOnly') {
                 $r1 = '사내망은 연결되었으나 백업 서버가 응답하지 않습니다. ZIP 파일로 저장을 이용해 주세요.'
             } else {
                 $r1 = '병원 사내망에 연결되지 않아 서버 백업을 사용할 수 없습니다. 네트워크를 연결하거나 ZIP 파일로 저장을 이용해 주세요.'
@@ -675,7 +678,8 @@ function Sync-AllUiButtonStates {
         if ($script:Tab2Ui.BtnLoadServer) {
             $rLoad = $busyMsg
             if (-not $busy) {
-                if (-not $isOnline) { $rLoad = '사내 백업 서버에 연결되지 않아 목록을 불러올 수 없습니다. ZIP 파일 열기를 이용해 주세요.' }
+                if ($net -and $net.ServerAuthRequired) { $rLoad = '백업 서버 로그인이 필요합니다. 상단 서버 로그인을 누르거나 ZIP 파일 열기를 이용해 주세요.' }
+                elseif (-not $isOnline) { $rLoad = '사내 백업 서버에 연결되지 않아 목록을 불러올 수 없습니다. ZIP 파일 열기를 이용해 주세요.' }
                 else { $rLoad = '서버에 저장된 백업 폴더가 없습니다.' }
             }
             Set-ButtonTipState -Button $script:Tab2Ui.BtnLoadServer -Enabled ((-not $busy) -and $hasServer) -DisabledReason $rLoad
@@ -750,7 +754,8 @@ function Sync-AllUiButtonStates {
         if ($script:Tab4Ui.BtnCleanOld5) {
             $rOld = $busyMsg
             if (-not $busy) {
-                if (-not $isOnline) { $rOld = '사내 백업 서버에 연결되지 않아 정리할 수 없습니다.' }
+                if ($net -and $net.ServerAuthRequired) { $rOld = '백업 서버 로그인이 필요합니다. 상단 서버 로그인을 먼저 눌러 주세요.' }
+                elseif (-not $isOnline) { $rOld = '사내 백업 서버에 연결되지 않아 정리할 수 없습니다.' }
                 else { $rOld = '5일 이상 지난 서버 백업이 없어 정리할 항목이 없습니다.' }
             }
             Set-ButtonTipState -Button $script:Tab4Ui.BtnCleanOld5 -Enabled ((-not $busy) -and $isOnline -and ($old5 -gt 0)) -DisabledReason $rOld
@@ -763,7 +768,8 @@ function Sync-AllUiButtonStates {
         if ($script:Tab4Ui.BtnDeleteOne) {
             $rDel = $busyMsg
             if (-not $busy) {
-                if (-not $isOnline) { $rDel = '사내 백업 서버에 연결되지 않아 삭제할 수 없습니다.' }
+                if ($net -and $net.ServerAuthRequired) { $rDel = '백업 서버 로그인이 필요합니다. 상단 서버 로그인을 먼저 눌러 주세요.' }
+                elseif (-not $isOnline) { $rDel = '사내 백업 서버에 연결되지 않아 삭제할 수 없습니다.' }
                 else { $rDel = '먼저 위 목록에서 삭제할 백업 폴더를 선택해 주세요.' }
             }
             Set-ButtonTipState -Button $script:Tab4Ui.BtnDeleteOne -Enabled ((-not $busy) -and $isOnline -and $hasSel) -DisabledReason $rDel
@@ -1331,6 +1337,151 @@ function Show-BugReportDialog {
     Invoke-AsanAsyncTask -TaskName '오류/버그 리포트 수집 및 전송' -WorkScript $work -Params $tParams -OnComplete $done -Indeterminate
 }
 
+function Invoke-ServerLoginAsync {
+    param(
+        [string]$UserName,
+        [string]$Password
+    )
+    if ($script:AsyncState.IsBusy) { return }
+
+    $work = {
+        param($arg)
+        Write-ProgressSafe -Percent 40 -Message "백업 서버($($global:AsanCtx.ServerIP)) 계정 인증 중..."
+        $res = Connect-AsanBackupServerWithCred -UserName ([string]$arg.UserName) -Password ([string]$arg.Password)
+        Write-ProgressSafe -Percent 100 -Message '인증 확인 완료'
+        return $res
+    }
+
+    $done = {
+        param($ok, $data, $err, $cbState)
+        if (-not $ok -or -not $data) {
+            Add-UiLog -Message "백업 서버 로그인 처리 오류: $err" -Level 'ERROR'
+            [void](Show-AsanMessageBox -Text "백업 서버 연결 중 오류가 발생했습니다.`r`n$err" -Caption '서버 로그인 오류' -Buttons 'OK' -Icon 'Error')
+            return
+        }
+        if ($data.Ok) {
+            Add-UiLog -Message "백업 서버 수동 로그인 성공 ($($data.PrtBakDir))" -Level 'INFO'
+            Invoke-EnvironmentRefreshAsync
+        } else {
+            Add-UiLog -Message "백업 서버 수동 로그인 실패: $($data.Message)" -Level 'WARN'
+            $retryAns = Show-AsanMessageBox -Text "$($data.Message)`r`n`r`n계정 정보를 다시 입력하시겠습니까?" -Caption '서버 로그인 실패' -Buttons 'YesNo' -Icon 'Warning'
+            if ($retryAns -eq [System.Windows.Forms.DialogResult]::Yes) {
+                Show-ServerLoginDialog
+            }
+        }
+    }
+
+    Invoke-AsanAsyncTask -TaskName '백업 서버 로그인' -WorkScript $work -Params @{ UserName = $UserName; Password = $Password } -OnComplete $done -Indeterminate
+}
+
+function Show-ServerLoginDialog {
+    if ($script:AsyncState.IsBusy) { return }
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text            = '사내 백업 서버 로그인'
+    $dlg.Size            = New-Object System.Drawing.Size(444, 286)
+    $dlg.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterParent
+    $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dlg.MaximizeBox     = $false
+    $dlg.MinimizeBox     = $false
+    $dlg.BackColor       = $script:Theme.CardBg
+    $dlg.Font            = $script:FontBase
+    if ($script:Ui.AppIcon) { $dlg.Icon = $script:Ui.AppIcon }
+
+    $pnlTopAccent = New-Object System.Windows.Forms.Panel
+    $pnlTopAccent.Dock      = [System.Windows.Forms.DockStyle]::Top
+    $pnlTopAccent.Height    = 4
+    $pnlTopAccent.BackColor = $script:Theme.AsanGreen
+
+    $pnlBody = New-Object System.Windows.Forms.Panel
+    $pnlBody.Dock      = [System.Windows.Forms.DockStyle]::Fill
+    $pnlBody.Padding   = New-Object System.Windows.Forms.Padding(20, 16, 20, 12)
+    $pnlBody.BackColor = $script:Theme.CardBg
+
+    $lblDesc = New-Object System.Windows.Forms.Label
+    $lblDesc.Text      = "사내 백업 서버($($global:AsanCtx.ServerIP))에 연결할 계정 정보를 입력해 주세요.`r`n입력한 암호는 현재 실행 중에만 메모리에 유지되며 이 PC에 저장되지 않습니다."
+    $lblDesc.Location  = New-Object System.Drawing.Point(20, 16)
+    $lblDesc.Size      = New-Object System.Drawing.Size(388, 42)
+    $lblDesc.Font      = $script:FontSmall
+    $lblDesc.ForeColor = $script:Theme.InkSecondary
+
+    $lblUser = New-Object System.Windows.Forms.Label
+    $lblUser.Text      = '아이디'
+    $lblUser.Location  = New-Object System.Drawing.Point(20, 72)
+    $lblUser.Size      = New-Object System.Drawing.Size(70, 24)
+    $lblUser.Font      = $script:FontBold
+    $lblUser.ForeColor = $script:Theme.InkPrimary
+    $lblUser.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+
+    $txtUser = New-Object System.Windows.Forms.TextBox
+    $txtUser.Text     = Get-EffectiveDefaultUser
+    $txtUser.Location = New-Object System.Drawing.Point(94, 72)
+    $txtUser.Size     = New-Object System.Drawing.Size(314, 24)
+    $txtUser.Font     = $script:FontBase
+
+    $lblPass = New-Object System.Windows.Forms.Label
+    $lblPass.Text      = '암호'
+    $lblPass.Location  = New-Object System.Drawing.Point(20, 108)
+    $lblPass.Size      = New-Object System.Drawing.Size(70, 24)
+    $lblPass.Font      = $script:FontBold
+    $lblPass.ForeColor = $script:Theme.InkPrimary
+    $lblPass.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+
+    $txtPass = New-Object System.Windows.Forms.TextBox
+    $txtPass.UseSystemPasswordChar = $true
+    $txtPass.Location = New-Object System.Drawing.Point(94, 108)
+    $txtPass.Size     = New-Object System.Drawing.Size(314, 24)
+    $txtPass.Font     = $script:FontBase
+
+    $lblHint = New-Object System.Windows.Forms.Label
+    $lblHint.Text      = '안내: 실행 파일과 같은 폴더에 secrets.local.json을 두면 매번 입력하지 않아도 자동으로 연결됩니다.'
+    $lblHint.Location  = New-Object System.Drawing.Point(20, 146)
+    $lblHint.Size      = New-Object System.Drawing.Size(388, 34)
+    $lblHint.Font      = $script:FontSmall
+    $lblHint.ForeColor = $script:Theme.AsanDeep
+
+    $pnlBtns = New-Object System.Windows.Forms.Panel
+    $pnlBtns.Dock      = [System.Windows.Forms.DockStyle]::Bottom
+    $pnlBtns.Height    = 52
+    $pnlBtns.BackColor = $script:Theme.CanvasBg
+    $pnlBtns.Padding   = New-Object System.Windows.Forms.Padding(16, 10, 20, 10)
+
+    $flpBtns = New-RightFlowStrip -TopPadding 0 -RightPadding 0
+    $btnConnect = New-StyledButton -Text '서버 연결' -Width 108 -Height 32 -Variant 'Primary'
+    $btnConnect.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $btnConnect.Margin       = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
+
+    $btnCancel = New-StyledButton -Text '취소' -Width 86 -Height 32 -Variant 'Secondary'
+    $btnCancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+
+    $flpBtns.Controls.Add($btnConnect)
+    $flpBtns.Controls.Add($btnCancel)
+    $pnlBtns.Controls.Add($flpBtns)
+
+    $pnlBody.Controls.AddRange(@($lblDesc, $lblUser, $txtUser, $lblPass, $txtPass, $lblHint))
+    $dlg.Controls.Add($pnlBody)
+    $dlg.Controls.Add($pnlBtns)
+    $dlg.Controls.Add($pnlTopAccent)
+
+    $dlg.AcceptButton = $btnConnect
+    $dlg.CancelButton = $btnCancel
+    $dlg.ActiveControl = $txtPass
+
+    $dr    = $dlg.ShowDialog($script:Ui.Form)
+    $uText = [string]$txtUser.Text
+    $pText = [string]$txtPass.Text
+    $dlg.Dispose()
+
+    if ($dr -eq [System.Windows.Forms.DialogResult]::OK) {
+        if ([string]::IsNullOrWhiteSpace($pText)) {
+            [void](Show-AsanMessageBox -Text '백업 서버 암호를 입력해 주세요.' -Caption '입력 확인' -Buttons 'OK' -Icon 'Warning')
+            Show-ServerLoginDialog
+            return
+        }
+        Invoke-ServerLoginAsync -UserName $uText -Password $pText
+    }
+}
+
 function Update-HeaderAndWppUi {
     $net = $script:AppState.NetworkInfo
     $shortOs = ([string]$script:AppState.OsCaption) -replace '^Microsoft\s+', ''
@@ -1355,16 +1506,29 @@ function Update-HeaderAndWppUi {
         $script:Ui.LblNetBadge.Text      = ' ● 사내망 · 서버 연결됨 '
         $script:Ui.LblNetBadge.BackColor = $script:Theme.BadgeOnlineBg
         $script:Ui.LblServerPath.Text    = "백업 서버  $($global:AsanCtx.ServerIP) 연결됨"
-        if ($tip) { $tip.SetToolTip($script:Ui.LblNetBadge, "병원 사내망과 백업 서버($($global:AsanCtx.ServerIP))에 정상 연결되어 있습니다.") }
+        if ($script:Ui.BtnServerLogin) { $script:Ui.BtnServerLogin.Visible = $false }
+        $secNote = ''
+        if (-not [string]::IsNullOrWhiteSpace([string]$net.SecretsLoadedFrom)) {
+            $secNote = " (인증 설정: $([IO.Path]::GetFileName([string]$net.SecretsLoadedFrom)))"
+        }
+        if ($tip) { $tip.SetToolTip($script:Ui.LblNetBadge, "병원 사내망과 백업 서버($($global:AsanCtx.ServerIP))에 정상 연결되어 있습니다.$secNote") }
+    } elseif ($net.Status -eq 'IntranetOnly' -and $net.ServerAuthRequired) {
+        $script:Ui.LblNetBadge.Text      = ' ▲ 서버 로그인 필요 '
+        $script:Ui.LblNetBadge.BackColor = $script:Theme.AsanOrange
+        $script:Ui.LblServerPath.Text    = '사내망 연결됨 · 백업 서버 로그인 필요'
+        if ($script:Ui.BtnServerLogin) { $script:Ui.BtnServerLogin.Visible = $true }
+        if ($tip) { $tip.SetToolTip($script:Ui.LblNetBadge, "백업 서버($($global:AsanCtx.ServerIP))에 연결할 암호가 필요합니다. 상단 '서버 로그인'을 누르거나 실행 폴더에 secrets.local.json을 넣어 주세요.") }
     } elseif ($net.Status -eq 'IntranetOnly') {
         $script:Ui.LblNetBadge.Text      = ' ▲ 사내망 연결 · 서버 미응답 '
         $script:Ui.LblNetBadge.BackColor = $script:Theme.AsanOrange
         $script:Ui.LblServerPath.Text    = '사내망 연결됨 · 백업 서버 응답 없음 · ZIP 백업 가능'
+        if ($script:Ui.BtnServerLogin) { $script:Ui.BtnServerLogin.Visible = $false }
         if ($tip) { $tip.SetToolTip($script:Ui.LblNetBadge, "병원 사내망은 연결되었으나 백업 서버($($global:AsanCtx.ServerIP))가 응답하지 않습니다. ZIP 파일 백업·복원은 사용할 수 있습니다.") }
     } else {
         $script:Ui.LblNetBadge.Text      = ' ■ 사내망 미연결 '
         $script:Ui.LblNetBadge.BackColor = $script:Theme.DangerRed
         $script:Ui.LblServerPath.Text    = '사내망 미연결 · 네트워크 없이 ZIP 백업·복원 가능'
+        if ($script:Ui.BtnServerLogin) { $script:Ui.BtnServerLogin.Visible = $false }
         if ($tip) { $tip.SetToolTip($script:Ui.LblNetBadge, "병원 사내망 네트워크에 연결되지 않았습니다. 랜선·고정 IP·사내 DNS($($global:AsanCtx.InternalDnsIP))를 확인하거나 ZIP 파일 백업·복원을 이용해 주세요.") }
     }
 
@@ -1525,6 +1689,13 @@ function Initialize-MainGuiShell {
     $btnRefresh.Add_Click({ Invoke-EnvironmentRefreshAsync })
     $tip.SetToolTip($btnRefresh, '네트워크와 서버 연결 상태를 다시 확인합니다 (단축키 F5)')
 
+    $btnServerLogin = New-StyledButton -Text '서버 로그인' -Width 92 -Height 30 -Variant 'SoftOrange' -RegisterBusy
+    $btnServerLogin.Font    = $script:FontSmallB
+    $btnServerLogin.Margin  = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
+    $btnServerLogin.Visible = $false
+    $btnServerLogin.Add_Click({ Show-ServerLoginDialog })
+    $tip.SetToolTip($btnServerLogin, '사내 백업 서버 계정과 암호를 입력해 현재 세션에 연결합니다')
+
     $lblNetBadge = New-Object System.Windows.Forms.Label
     $lblNetBadge.Text      = ' ● 네트워크 확인 중 '
     $lblNetBadge.ForeColor = [System.Drawing.Color]::White
@@ -1537,6 +1708,7 @@ function Initialize-MainGuiShell {
     # RightToLeft 순서: 먼저 추가한 컨트롤이 가장 오른쪽에 배치됨
     $flpHdrRight1.Controls.Add($btnBugReport)
     $flpHdrRight1.Controls.Add($btnRefresh)
+    $flpHdrRight1.Controls.Add($btnServerLogin)
     $flpHdrRight1.Controls.Add($lblNetBadge)
 
     $pnlBrand.Controls.Add($pnlTitleStack)
@@ -1955,8 +2127,12 @@ function Initialize-MainGuiShell {
             try { $script:Ui.SidFlashTimer.Stop(); $script:Ui.SidFlashTimer.Dispose() } catch {}
             $script:Ui.SidFlashTimer = $null
         }
-        # [보안] 종료 시 사내 백업 서버 SMB 세션을 즉시 끊어 교체 PC에 관리자 접근이 남지 않도록 차단
+        # [보안] 종료 시 사내 백업 서버 SMB 세션 및 메모리 런타임 암호를 즉시 해제
         try { Disconnect-AllHostSessions -HostName $global:AsanCtx.ServerIP } catch {}
+        try {
+            $global:AsanCtx.RuntimePasswords = @()
+            $global:AsanCtx.RuntimeUser      = $null
+        } catch {}
     })
 
     $script:Ui.Form            = $form
@@ -1979,6 +2155,7 @@ function Initialize-MainGuiShell {
     $script:Ui.LblSid          = $lblSid
     $script:Ui.BtnCopySid      = $btnCopySid
     $script:Ui.BtnBugReport    = $btnBugReport
+    $script:Ui.BtnServerLogin  = $btnServerLogin
     $script:Ui.LblNetBadge     = $lblNetBadge
     $script:Ui.LblServerPath   = $lblServerPath
     $script:Ui.BtnRefresh      = $btnRefresh
@@ -2123,6 +2300,7 @@ function Render-Tab1PrinterGrid {
 
         if ($script:Tab1Ui.HasScannedOnce) {
             $validTotal = $cntHealthy + $cntWsd + $cntSpecial + $cntWarn
+            $needSrvAuth = ($script:AppState.NetworkInfo -and $script:AppState.NetworkInfo.ServerAuthRequired)
             if ($script:Tab1Ui.LastScanOffline) {
                 $script:Tab1Ui.PnlBanner.BackColor       = $script:Theme.AsanOrangeTint
                 $script:Tab1Ui.PnlBannerAccent.BackColor = $script:Theme.AsanOrange
@@ -2132,6 +2310,11 @@ function Render-Tab1PrinterGrid {
                 } else {
                     $script:Tab1Ui.LblBanner.Text        = "사내망 미연결 상태로 백업 대상 ${validTotal}대를 확인했습니다. 아래 ZIP 파일로 저장을 눌러 주세요."
                 }
+            } elseif ($needSrvAuth) {
+                $script:Tab1Ui.PnlBanner.BackColor       = $script:Theme.AsanOrangeTint
+                $script:Tab1Ui.PnlBannerAccent.BackColor = $script:Theme.AsanOrange
+                $script:Tab1Ui.LblBanner.ForeColor       = $script:Theme.AsanOrangeText
+                $script:Tab1Ui.LblBanner.Text            = "프린터 ${validTotal}대를 확인했습니다. 서버 백업은 상단 '서버 로그인'을 누르거나, 바로 ZIP 파일로 저장해 주세요."
             } elseif ($cntWarn -gt 0) {
                 $script:Tab1Ui.PnlBanner.BackColor       = $script:Theme.AsanOrangeTint
                 $script:Tab1Ui.PnlBannerAccent.BackColor = $script:Theme.AsanOrange

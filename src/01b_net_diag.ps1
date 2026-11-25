@@ -236,12 +236,115 @@ function Test-PingFast {
     }
 }
 
+function Get-EffectiveDefaultUser {
+    $ru = [string]$global:AsanCtx.RuntimeUser
+    if (-not [string]::IsNullOrWhiteSpace($ru)) { return $ru.Trim() }
+    return [string]$global:AsanCtx.DefaultUser
+}
+
+function Import-RuntimeSecretsIfPresent {
+    param(
+        [string]$ExplicitPath = '',
+        [switch]$ForceReload
+    )
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        $candidates.Add($ExplicitPath.Trim())
+    } else {
+        if (-not [string]::IsNullOrWhiteSpace($env:ASAN_SECRETS_FILE)) {
+            $candidates.Add($env:ASAN_SECRETS_FILE.Trim())
+        }
+        $origPath = [string]$global:AsanCtx.OriginalScriptPath
+        if (-not [string]::IsNullOrWhiteSpace($origPath)) {
+            try {
+                $origDir = [IO.Path]::GetDirectoryName($origPath)
+                if (-not [string]::IsNullOrWhiteSpace($origDir)) {
+                    $candidates.Add((Join-Path $origDir 'secrets.local.json'))
+                }
+            } catch {}
+        }
+    }
+
+    $foundPath = $null
+    foreach ($cand in $candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($cand) -and (Test-Path -LiteralPath $cand -PathType Leaf)) {
+            $foundPath = $cand
+            break
+        }
+    }
+    if (-not $foundPath) {
+        return [pscustomobject]@{ Loaded = $false; SourcePath = $null; PasswordCount = 0; UserName = $null }
+    }
+
+    if ((-not $ForceReload) -and ([string]$global:AsanCtx.RuntimeSecretsSource -ieq $foundPath) -and ((@($global:AsanCtx.RuntimePasswords)).Count -gt 0)) {
+        return [pscustomobject]@{
+            Loaded        = $true
+            SourcePath    = $foundPath
+            PasswordCount = (@($global:AsanCtx.RuntimePasswords)).Count
+            UserName      = (Get-EffectiveDefaultUser)
+        }
+    }
+
+    try {
+        $raw = [IO.File]::ReadAllText($foundPath, [Text.Encoding]::UTF8)
+        if ($raw.Length -gt 0 -and $raw[0] -eq [char]0xFEFF) { $raw = $raw.Substring(1) }
+        $obj = $raw | ConvertFrom-Json
+
+        $filePws = [System.Collections.Generic.List[string]]::new()
+        if ($obj -and ($obj.PSObject.Properties.Name -contains 'DefaultPasswords')) {
+            foreach ($pw in @($obj.DefaultPasswords)) {
+                $s = [string]$pw
+                if (-not [string]::IsNullOrWhiteSpace($s) -and $s -ne '__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__' -and $s -notmatch '(?i)^CHANGE_ME_') {
+                    if (-not $filePws.Contains($s)) { $filePws.Add($s) }
+                }
+            }
+        }
+
+        $fileUser = $null
+        if ($obj -and ($obj.PSObject.Properties.Name -contains 'DefaultUser')) {
+            $uVal = [string]$obj.DefaultUser
+            if (-not [string]::IsNullOrWhiteSpace($uVal)) { $fileUser = $uVal.Trim() }
+        }
+
+        if ($filePws.Count -gt 0) {
+            # 기존 세션 중 수동 입력된 암호가 있다면 우선순위를 유지하며 병합
+            $merged = [System.Collections.Generic.List[string]]::new()
+            foreach ($cur in @($global:AsanCtx.RuntimePasswords)) {
+                $cs = [string]$cur
+                if (-not [string]::IsNullOrWhiteSpace($cs) -and (-not $merged.Contains($cs))) { $merged.Add($cs) }
+            }
+            foreach ($fp in $filePws) {
+                if (-not $merged.Contains($fp)) { $merged.Add($fp) }
+            }
+            $global:AsanCtx.RuntimePasswords     = @($merged.ToArray())
+            $global:AsanCtx.RuntimeSecretsSource = $foundPath
+            if ($fileUser -and [string]::IsNullOrWhiteSpace([string]$global:AsanCtx.RuntimeUser)) {
+                $global:AsanCtx.RuntimeUser = $fileUser
+            }
+            return [pscustomobject]@{
+                Loaded        = $true
+                SourcePath    = $foundPath
+                PasswordCount = $filePws.Count
+                UserName      = (Get-EffectiveDefaultUser)
+            }
+        }
+    } catch {}
+
+    return [pscustomobject]@{ Loaded = $false; SourcePath = $foundPath; PasswordCount = 0; UserName = $null }
+}
+
 function Get-ConfiguredDefaultPasswords {
     $valid = [System.Collections.Generic.List[string]]::new()
+    foreach ($pw in @($global:AsanCtx.RuntimePasswords)) {
+        $s = [string]$pw
+        if (-not [string]::IsNullOrWhiteSpace($s) -and $s -ne '__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__' -and $s -notmatch '(?i)^CHANGE_ME_') {
+            if (-not $valid.Contains($s)) { $valid.Add($s) }
+        }
+    }
     foreach ($pw in @($global:AsanCtx.DefaultPasswords)) {
         $s = [string]$pw
-        if (-not [string]::IsNullOrWhiteSpace($s) -and $s -ne '__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__') {
-            $valid.Add($s)
+        if (-not [string]::IsNullOrWhiteSpace($s) -and $s -ne '__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__' -and $s -notmatch '(?i)^CHANGE_ME_') {
+            if (-not $valid.Contains($s)) { $valid.Add($s) }
         }
     }
     return @($valid.ToArray())
@@ -418,6 +521,10 @@ function Connect-AsanBackupServer {
         return $null
     }
 
+    if ((@(Get-ConfiguredDefaultPasswords)).Count -eq 0) {
+        [void](Import-RuntimeSecretsIfPresent)
+    }
+
     $activeShare = $null
     foreach ($s in $global:AsanCtx.CandidateShares) {
         if (Test-Path -LiteralPath $s) { $activeShare = $s; break }
@@ -425,7 +532,7 @@ function Connect-AsanBackupServer {
 
     if (-not $activeShare) {
         $ipcPath  = "\\$srvIp\IPC$"
-        $qualUser = Get-QualifiedRemoteUser -HostName $srvIp -UserName $global:AsanCtx.DefaultUser
+        $qualUser = Get-QualifiedRemoteUser -HostName $srvIp -UserName (Get-EffectiveDefaultUser)
         foreach ($pw in @(Get-ConfiguredDefaultPasswords)) {
             [void][AsanWin32.NativeApi]::DisconnectShare($ipcPath)
             $rc = [AsanWin32.NativeApi]::ConnectShare($ipcPath, $qualUser, $pw)
@@ -466,15 +573,94 @@ function Connect-AsanBackupServer {
     return $prtBakDir
 }
 
+function Connect-AsanBackupServerWithCred {
+    param(
+        [string]$UserName,
+        [string]$Password
+    )
+    $srvIp = $global:AsanCtx.ServerIP
+    $u = [string]$UserName
+    if ([string]::IsNullOrWhiteSpace($u)) { $u = Get-EffectiveDefaultUser }
+    $u = $u.Trim()
+    $p = [string]$Password
+    if ([string]::IsNullOrEmpty($p)) {
+        return [pscustomobject]@{ Ok = $false; PrtBakDir = $null; ErrorCode = 87; Message = '암호를 입력해 주세요.' }
+    }
+    if (-not (Test-TcpPortFast -HostIp $srvIp -Port 445 -TimeoutMs 2500)) {
+        return [pscustomobject]@{ Ok = $false; PrtBakDir = $null; ErrorCode = 53; Message = "백업 서버($srvIp)에 연결할 수 없습니다. 사내망 연결 상태를 확인해 주세요." }
+    }
+
+    $ipcPath  = "\\$srvIp\IPC$"
+    $qualUser = Get-QualifiedRemoteUser -HostName $srvIp -UserName $u
+    Disconnect-AllHostSessions -HostName $srvIp
+    $rc = [AsanWin32.NativeApi]::ConnectShare($ipcPath, $qualUser, $p)
+    if ($rc -eq 1219) {
+        Disconnect-AllHostSessions -HostName $srvIp
+        $rc = [AsanWin32.NativeApi]::ConnectShare($ipcPath, $qualUser, $p)
+    }
+
+    $activeShare = $null
+    if ($rc -eq 0) {
+        foreach ($s in $global:AsanCtx.CandidateShares) {
+            if (Test-Path -LiteralPath $s) { $activeShare = $s; break }
+            $rcShare = [AsanWin32.NativeApi]::ConnectShare($s, $qualUser, $p)
+            if ($rcShare -eq 0 -or (Test-Path -LiteralPath $s)) { $activeShare = $s; break }
+        }
+    }
+
+    if (-not $activeShare) {
+        $errMsg = "백업 서버($srvIp) 인증에 실패했습니다 (오류 코드 $rc)."
+        if ($rc -in @(5, 86, 1326, 1331, 1909)) {
+            $errMsg = '아이디 또는 암호가 일치하지 않습니다. 계정 정보를 다시 확인해 주세요.'
+        } elseif ($rc -eq 1219) {
+            $errMsg = '기존 네트워크 세션이 충돌했습니다. 잠시 후 다시 시도해 주세요.'
+        } elseif ($rc -eq 0) {
+            $errMsg = "서버 인증은 통과했으나 백업 공유 폴더($($global:AsanCtx.CandidateShares -join ', '))에 접근할 수 없습니다."
+        }
+        return [pscustomobject]@{ Ok = $false; PrtBakDir = $null; ErrorCode = $rc; Message = $errMsg }
+    }
+
+    # [보안] 성공한 계정/암호는 현재 프로그램 메모리 세션에만 유지 (PC 영구 저장 금지, 리포트 자동 마스킹)
+    $merged = [System.Collections.Generic.List[string]]::new()
+    $merged.Add($p)
+    foreach ($cur in @($global:AsanCtx.RuntimePasswords)) {
+        $cs = [string]$cur
+        if (-not [string]::IsNullOrWhiteSpace($cs) -and (-not $merged.Contains($cs))) { $merged.Add($cs) }
+    }
+    $global:AsanCtx.RuntimeUser      = $u
+    $global:AsanCtx.RuntimePasswords = @($merged.ToArray())
+    if ([string]::IsNullOrWhiteSpace([string]$global:AsanCtx.RuntimeSecretsSource)) {
+        $global:AsanCtx.RuntimeSecretsSource = '수동 로그인'
+    }
+
+    $prtBakDir = Join-Path $activeShare '_PRTBAK'
+    try {
+        if (-not (Test-Path -LiteralPath $prtBakDir)) {
+            $dirItem = New-Item -ItemType Directory -Path $prtBakDir -Force -ErrorAction Stop
+            try { $dirItem.Attributes = $dirItem.Attributes -bor [IO.FileAttributes]::Hidden } catch {}
+        }
+    } catch {}
+
+    return [pscustomobject]@{
+        Ok        = $true
+        PrtBakDir = $prtBakDir
+        ErrorCode = 0
+        Message   = "백업 서버($srvIp)에 연결되었습니다."
+    }
+}
+
 function Test-AsanNetworkAndServer {
-    $netInfo   = Get-ActiveNetworkInfo
-    $wppInfo   = Test-WindowsProtectedPrintMode
-    $dnsOk     = $false
-    $dnsConf   = $false
-    $serverTcp = $false
-    $prtBakDir = $null
-    $status    = 'Offline'
-    $message   = '사내망 미연결 — 고정 IP 및 DNS(10.71.1.5)를 먼저 설정하세요.'
+    [void](Import-RuntimeSecretsIfPresent)
+    $netInfo        = Get-ActiveNetworkInfo
+    $wppInfo        = Test-WindowsProtectedPrintMode
+    $dnsOk          = $false
+    $dnsConf        = $false
+    $serverTcp      = $false
+    $serverAuthReq  = $false
+    $prtBakDir      = $null
+    $status         = 'Offline'
+    $message        = '사내망 미연결 — 고정 IP 및 DNS(10.71.1.5)를 먼저 설정해 주세요.'
+    $hasCfgPws      = ((@(Get-ConfiguredDefaultPasswords)).Count -gt 0)
 
     if ($netInfo.HasValidIP) {
         if ($netInfo.InterfaceIndex -gt 0) {
@@ -493,8 +679,13 @@ function Test-AsanNetworkAndServer {
                 $status  = 'Online'
                 $message = "사내망 및 백업 서버 정상 연결됨 ($prtBakDir)"
             } else {
-                $status  = 'IntranetOnly'
-                $message = "백업 서버($($global:AsanCtx.ServerIP)) SMB 포트는 열려 있으나 공유 폴더 접근/인증에 실패했습니다."
+                $status        = 'IntranetOnly'
+                $serverAuthReq = $true
+                if (-not $hasCfgPws) {
+                    $message = "백업 서버($($global:AsanCtx.ServerIP))에 연결하려면 상단 '서버 로그인'을 누르거나 실행 폴더에 secrets.local.json을 넣어 주세요."
+                } else {
+                    $message = "백업 서버($($global:AsanCtx.ServerIP)) 공유 폴더 인증에 실패했습니다. 상단 '서버 로그인'으로 계정을 확인해 주세요."
+                }
             }
         } elseif ($dnsOk -or ($dnsConf -and $netInfo.Gateway -and (Test-PingFast -HostIp $netInfo.Gateway -TimeoutMs 1000))) {
             $status  = 'IntranetOnly'
@@ -503,15 +694,18 @@ function Test-AsanNetworkAndServer {
     }
 
     return [pscustomobject]@{
-        Status      = $status
-        Message     = $message
-        IPAddress   = $netInfo.IPAddress
-        Gateway     = $netInfo.Gateway
-        AdapterName = $netInfo.AdapterName
-        DnsOk       = $dnsOk
-        ServerTcpOk = $serverTcp
-        PrtBakDir   = $prtBakDir
-        WppStatus   = $wppInfo
+        Status                 = $status
+        Message                = $message
+        IPAddress              = $netInfo.IPAddress
+        Gateway                = $netInfo.Gateway
+        AdapterName            = $netInfo.AdapterName
+        DnsOk                  = $dnsOk
+        ServerTcpOk            = $serverTcp
+        ServerAuthRequired     = $serverAuthReq
+        HasConfiguredPasswords = $hasCfgPws
+        SecretsLoadedFrom      = $global:AsanCtx.RuntimeSecretsSource
+        PrtBakDir              = $prtBakDir
+        WppStatus              = $wppInfo
     }
 }
 
@@ -899,7 +1093,7 @@ function Connect-SharedHostSmart {
         $qUser = Get-QualifiedRemoteUser -HostName $HostName -UserName $CustomUser
         $attempts.Add([pscustomobject]@{ User = $qUser; Pass = [string]$CustomPass; IsCustom = $true })
     } else {
-        $qDef = Get-QualifiedRemoteUser -HostName $HostName -UserName $global:AsanCtx.DefaultUser
+        $qDef = Get-QualifiedRemoteUser -HostName $HostName -UserName (Get-EffectiveDefaultUser)
         foreach ($pw in @(Get-ConfiguredDefaultPasswords)) {
             $attempts.Add([pscustomobject]@{ User = $qDef; Pass = $pw; IsCustom = $false })
         }
@@ -910,7 +1104,7 @@ function Connect-SharedHostSmart {
             Success    = $false
             Status     = 'AuthOrSidConflict'
             Win32Error = 1326
-            Reason     = '기본 공용 암호가 구성되지 않았습니다(secrets.local.json 확인) — 하단 인증 패널에서 직접 계정을 입력하세요.'
+            Reason     = '기본 공용 암호가 설정되지 않았습니다. 실행 폴더에 secrets.local.json을 두거나 공유 인증 도우미에서 계정을 입력해 주세요.'
             UsedUser   = $null
             UsedPass   = $null
         }
