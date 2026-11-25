@@ -47,13 +47,68 @@ $script:Tab2Ui = @{
     SuppressSpecEvent  = $false
     PnlAuthTop         = $null
     PnlSpecTop         = $null
+    PnlSourceOuter     = $null
+    PnlNotes           = $null
+    PnlNotesWrap       = $null
+    PnlGridBar         = $null
+    PnlAction          = $null
+    PnlAuthTextWrap    = $null
+    PnlSpecTextWrap    = $null
 }
 
 # ============================================================================
 # 탭 2 UI 렌더링 및 도우미 패널 제어 헬퍼
 # ============================================================================
 function Update-Tab2HelperHeightSafe {
-    if (-not $script:Tab2Ui.PnlHelper -or $script:Tab2Ui.PnlHelper.IsDisposed -or -not $script:Tab2Ui.HelperExpanded) { return }
+    if (-not $script:Tab2Ui.PnlHelper -or $script:Tab2Ui.PnlHelper.IsDisposed) { return }
+
+    $tabH = 500
+    if ($script:Ui.TabRestore -and -not $script:Ui.TabRestore.IsDisposed) {
+        $tabH = [int]$script:Ui.TabRestore.ClientSize.Height
+    }
+
+    # 극소 화면(960x640 + WPP 경고 배너 동시 표시)에서만 상하 패딩을 미세 압축해 표(>=80px)·텍스트(>=40px) 동시 보장
+    $isTight = ($tabH -gt 200 -and $tabH -lt 405 -and $script:Tab2Ui.HelperExpanded)
+    if ($script:Tab2Ui.PnlSourceOuter) {
+        if ($isTight) {
+            $script:Tab2Ui.PnlSourceOuter.Height  = 52
+            $script:Tab2Ui.PnlSourceOuter.Padding = New-Object System.Windows.Forms.Padding(0, 0, 0, 3)
+        } else {
+            $script:Tab2Ui.PnlSourceOuter.Height  = 65
+            $script:Tab2Ui.PnlSourceOuter.Padding = New-Object System.Windows.Forms.Padding(0, 0, 0, 6)
+        }
+    }
+    if ($script:Tab2Ui.PnlNotes -and $script:Tab2Ui.PnlNotesWrap) {
+        if ($isTight) {
+            $script:Tab2Ui.PnlNotes.Height      = 50
+            $script:Tab2Ui.PnlNotes.Padding     = New-Object System.Windows.Forms.Padding(0, 0, 0, 3)
+            $script:Tab2Ui.PnlNotesWrap.Padding = New-Object System.Windows.Forms.Padding(10, 2, 8, 2)
+        } else {
+            $script:Tab2Ui.PnlNotes.Height      = 58
+            $script:Tab2Ui.PnlNotes.Padding     = New-Object System.Windows.Forms.Padding(0, 0, 0, 6)
+            $script:Tab2Ui.PnlNotesWrap.Padding = New-Object System.Windows.Forms.Padding(10, 5, 8, 5)
+        }
+    }
+    if ($script:Tab2Ui.PnlGridBar) {
+        if ($isTight) { $script:Tab2Ui.PnlGridBar.Height = 28 } else { $script:Tab2Ui.PnlGridBar.Height = 32 }
+    }
+    if ($script:Tab2Ui.PnlAction) {
+        if ($isTight) { $script:Tab2Ui.PnlAction.Height = 41 } else { $script:Tab2Ui.PnlAction.Height = 46 }
+    }
+    foreach ($tpH in @($script:Tab2Ui.TpAuth, $script:Tab2Ui.TpSpec)) {
+        if ($tpH -and -not $tpH.IsDisposed) {
+            if ($isTight) { $tpH.Padding = New-Object System.Windows.Forms.Padding(8, 2, 8, 2) }
+            else { $tpH.Padding = New-Object System.Windows.Forms.Padding(8, 5, 8, 5) }
+        }
+    }
+    foreach ($tw in @($script:Tab2Ui.PnlAuthTextWrap, $script:Tab2Ui.PnlSpecTextWrap)) {
+        if ($tw -and -not $tw.IsDisposed) {
+            if ($isTight) { $tw.Padding = New-Object System.Windows.Forms.Padding(10, 2, 8, 2) }
+            else { $tw.Padding = New-Object System.Windows.Forms.Padding(10, 6, 8, 6) }
+        }
+    }
+
+    if (-not $script:Tab2Ui.HelperExpanded) { return }
     $topH = 32
     if ($script:Tab2Ui.TabHelper -and $script:Tab2Ui.TabHelper.SelectedIndex -eq 0 -and $script:Tab2Ui.PnlAuthTop) {
         $topH = [math]::Max($topH, [int]$script:Tab2Ui.PnlAuthTop.Height)
@@ -61,18 +116,19 @@ function Update-Tab2HelperHeightSafe {
         $topH = [math]::Max($topH, [int]$script:Tab2Ui.PnlSpecTop.Height)
     }
     $extra   = [math]::Max(0, $topH - 32)
-    $targetH = [math]::Min(164, (132 + $extra))
+    $targetH = [math]::Min(172, (148 + $extra))
 
-    # 작은 창(960x640)이나 WPP 배너 동시 표시 시 DgvRestore(>=84px) 및 도우미 TextBox(>=44px) 동시 보장
-    if ($script:Ui.TabRestore -and -not $script:Ui.TabRestore.IsDisposed) {
-        $tabH = [int]$script:Ui.TabRestore.ClientSize.Height
-        if ($tabH -gt 200) {
-            $nonGridFixed = 56 + 44 + 30 + 44 + 10  # Source + Notes + GridBar + Action + TabPadding
-            $maxHelperH   = $tabH - $nonGridFixed - 84
-            $minHelperH   = 104 + $extra
-            if ($maxHelperH -lt $minHelperH) { $maxHelperH = $minHelperH }
-            if ($targetH -gt $maxHelperH) { $targetH = $maxHelperH }
-        }
+    if ($tabH -gt 200) {
+        $nonGridFixed = 0
+        if ($script:Tab2Ui.PnlSourceOuter) { $nonGridFixed += [int]$script:Tab2Ui.PnlSourceOuter.Height } else { $nonGridFixed += 62 }
+        if ($script:Tab2Ui.PnlNotes)       { $nonGridFixed += [int]$script:Tab2Ui.PnlNotes.Height } else { $nonGridFixed += 58 }
+        if ($script:Tab2Ui.PnlGridBar)     { $nonGridFixed += [int]$script:Tab2Ui.PnlGridBar.Height } else { $nonGridFixed += 32 }
+        if ($script:Tab2Ui.PnlAction)      { $nonGridFixed += [int]$script:Tab2Ui.PnlAction.Height } else { $nonGridFixed += 46 }
+        $nonGridFixed += 10
+        $maxHelperH   = $tabH - $nonGridFixed - 84
+        $minHelperH   = 118 + $extra
+        if ($maxHelperH -lt $minHelperH) { $maxHelperH = $minHelperH }
+        if ($targetH -gt $maxHelperH) { $targetH = $maxHelperH }
     }
     if ($script:Tab2Ui.PnlHelper.Height -ne $targetH) {
         $script:Tab2Ui.PnlHelper.Height = $targetH
@@ -108,9 +164,7 @@ function Set-Tab2HelperVisibility {
     if ($Expanded -and $SelectTabIndex -ge 0 -and $script:Tab2Ui.TabHelper -and $SelectTabIndex -lt $script:Tab2Ui.TabHelper.TabPages.Count) {
         $script:Tab2Ui.TabHelper.SelectedIndex = $SelectTabIndex
     }
-    if ($Expanded) {
-        Update-Tab2HelperHeightSafe
-    }
+    Update-Tab2HelperHeightSafe
 }
 
 function Update-Tab2ServerDropdown {
@@ -179,10 +233,12 @@ function Render-Tab2NotesBanner {
     if ($lines.Count -eq 0) {
         $txt.BackColor = $script:Theme.AsanMint
         $txt.ForeColor = $script:Theme.AsanDeep
+        if ($script:Tab2Ui.PnlNotesWrap) { $script:Tab2Ui.PnlNotesWrap.BackColor = $script:Theme.AsanMint }
         $txt.Text      = '특이사항이 없습니다. 아래에서 복원할 프린터를 확인한 뒤 복원을 시작해 주세요.'
     } else {
         $txt.BackColor = $script:Theme.AsanOrangeTint
         $txt.ForeColor = $script:Theme.AsanOrangeText
+        if ($script:Tab2Ui.PnlNotesWrap) { $script:Tab2Ui.PnlNotesWrap.BackColor = $script:Theme.AsanOrangeTint }
         $txt.Text      = ($lines -join "`r`n")
     }
 }
@@ -1005,11 +1061,11 @@ function Invoke-Tab2UsbReenumAsync {
 function Initialize-Tab2RestoreUi {
     $parent = $script:Ui.TabRestore
 
-    # ---------------- [1] 1단계 백업 소스 선택 카드 (화이트 카드 + 좌측 아산 그린 포인트) ----------------
+    # ---------------- [1] 1단계 백업 소스 선택 카드 (화이트 카드 + 좌측 아산 그린 포인트 + 넉넉한 여백) ----------------
     $pnlSourceOuter = New-Object System.Windows.Forms.Panel
     $pnlSourceOuter.Dock      = [System.Windows.Forms.DockStyle]::Top
-    $pnlSourceOuter.Height    = 56
-    $pnlSourceOuter.Padding   = New-Object System.Windows.Forms.Padding(0, 0, 0, 4)
+    $pnlSourceOuter.Height    = 65
+    $pnlSourceOuter.Padding   = New-Object System.Windows.Forms.Padding(0, 0, 0, 6)
     $pnlSourceOuter.BackColor = [System.Drawing.Color]::Transparent
 
     $pnlSource = New-Object System.Windows.Forms.Panel
@@ -1024,12 +1080,12 @@ function Initialize-Tab2RestoreUi {
 
     $pnlSrcInner = New-Object System.Windows.Forms.Panel
     $pnlSrcInner.Dock      = [System.Windows.Forms.DockStyle]::Fill
-    $pnlSrcInner.Padding   = New-Object System.Windows.Forms.Padding(10, 3, 8, 2)
+    $pnlSrcInner.Padding   = New-Object System.Windows.Forms.Padding(12, 6, 10, 5)
     $pnlSrcInner.BackColor = [System.Drawing.Color]::Transparent
 
     $flpSrcRow = New-Object System.Windows.Forms.FlowLayoutPanel
     $flpSrcRow.Dock          = [System.Windows.Forms.DockStyle]::Top
-    $flpSrcRow.Height        = 31
+    $flpSrcRow.Height        = 28
     $flpSrcRow.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
     $flpSrcRow.WrapContents  = $false
     $flpSrcRow.BackColor     = [System.Drawing.Color]::Transparent
@@ -1111,28 +1167,21 @@ function Initialize-Tab2RestoreUi {
     $pnlSource.Controls.Add($pnlSrcAccent)
     $pnlSourceOuter.Controls.Add($pnlSource)
 
-    # ---------------- [2] 영속 리포트(BackupNotes + 복원 경고) 배너 (SMK-C 최소 높이 40px 이상 준수) ----------------
+    # ---------------- [2] 영속 리포트(BackupNotes + 복원 경고) 패딩 카드 배너 ----------------
     $pnlNotes = New-Object System.Windows.Forms.Panel
     $pnlNotes.Dock    = [System.Windows.Forms.DockStyle]::Top
-    $pnlNotes.Height  = 44
-    $pnlNotes.Padding = New-Object System.Windows.Forms.Padding(0, 0, 0, 4)
+    $pnlNotes.Height  = 58
+    $pnlNotes.Padding = New-Object System.Windows.Forms.Padding(0, 0, 0, 6)
 
-    $txtNotes = New-Object System.Windows.Forms.TextBox
-    $txtNotes.Dock        = [System.Windows.Forms.DockStyle]::Fill
-    $txtNotes.Multiline   = $true
-    $txtNotes.ReadOnly    = $true
-    $txtNotes.ScrollBars  = [System.Windows.Forms.ScrollBars]::Vertical
-    $txtNotes.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $txtNotes.BackColor   = $script:Theme.AsanMint
-    $txtNotes.ForeColor   = $script:Theme.AsanDeep
-    $txtNotes.Font        = $script:FontSmall
-    $txtNotes.Text        = '백업을 불러오면 복원 전에 확인할 주의 사항이 여기에 표시됩니다.'
-    $pnlNotes.Controls.Add($txtNotes)
+    $notesBox     = New-PaddedTextBoxPanel -BackColor $script:Theme.AsanMint -ForeColor $script:Theme.AsanDeep -Font $script:FontSmall -PadX 10 -PadY 5 -ReadOnly $true -InitialText '백업을 불러오면 복원 전에 확인할 주의 사항이 여기에 표시됩니다.'
+    $pnlNotesWrap = $notesBox.Panel
+    $txtNotes     = $notesBox.TextBox
+    $pnlNotes.Controls.Add($pnlNotesWrap)
 
     # ---------------- [3] 2단계 프린터 선택 툴바 (FlowLayoutPanel + RightFlowStrip — DPI 안전) ----------------
     $pnlGridBar = New-Object System.Windows.Forms.Panel
     $pnlGridBar.Dock   = [System.Windows.Forms.DockStyle]::Top
-    $pnlGridBar.Height = 30
+    $pnlGridBar.Height = 32
 
     $flpGridLeft = New-Object System.Windows.Forms.FlowLayoutPanel
     $flpGridLeft.Dock          = [System.Windows.Forms.DockStyle]::Fill
@@ -1211,16 +1260,16 @@ function Initialize-Tab2RestoreUi {
     $colChk = New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
     $colChk.Name       = 'Selected'
     $colChk.HeaderText = '복원'
-    $colChk.Width      = 50
+    $colChk.Width      = 54
     [void]$dgv.Columns.Add($colChk)
 
     foreach ($cDef in @(
-        @{ Name = 'Default';  Header = '기본';           Width = 50;  Fill = $false },
-        @{ Name = 'Status';   Header = '상태';           Width = 108; Fill = $false },
-        @{ Name = 'Category'; Header = '구분';           Width = 112; Fill = $false },
-        @{ Name = 'Printer';  Header = '프린터 이름';     Width = 170; Fill = $false },
-        @{ Name = 'Port';     Header = '포트 / 전환 대상'; Width = 158; Fill = $false },
-        @{ Name = 'Driver';   Header = '드라이버';       Width = 170; Fill = $false },
+        @{ Name = 'Default';  Header = '기본';           Width = 54;  Fill = $false },
+        @{ Name = 'Status';   Header = '상태';           Width = 112; Fill = $false },
+        @{ Name = 'Category'; Header = '구분';           Width = 118; Fill = $false },
+        @{ Name = 'Printer';  Header = '프린터 이름';     Width = 146; Fill = $false },
+        @{ Name = 'Port';     Header = '포트 / 전환 대상'; Width = 132; Fill = $false },
+        @{ Name = 'Driver';   Header = '드라이버';       Width = 152; Fill = $false },
         @{ Name = 'Reason';   Header = '상세 내용';      Width = 180; Fill = $true }
     )) {
         $c = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
@@ -1265,7 +1314,7 @@ function Initialize-Tab2RestoreUi {
     $tpAuth = New-Object System.Windows.Forms.TabPage(' 공유 인증 · SID 해결 (0) ')
     $tpAuth.BackColor = [System.Drawing.Color]::FromArgb(254, 248, 247)
     $tpAuth.Font      = $script:FontBase
-    $tpAuth.Padding   = New-Object System.Windows.Forms.Padding(5)
+    $tpAuth.Padding   = New-Object System.Windows.Forms.Padding(8, 5, 8, 5)
 
     $pnlAuthTop = New-Object System.Windows.Forms.FlowLayoutPanel
     $pnlAuthTop.Dock          = [System.Windows.Forms.DockStyle]::Top
@@ -1274,7 +1323,7 @@ function Initialize-Tab2RestoreUi {
     $pnlAuthTop.AutoSize      = $true
     $pnlAuthTop.AutoSizeMode  = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
     $pnlAuthTop.BackColor     = [System.Drawing.Color]::Transparent
-    $pnlAuthTop.Padding       = New-Object System.Windows.Forms.Padding(0, 2, 0, 3)
+    $pnlAuthTop.Padding       = New-Object System.Windows.Forms.Padding(0, 1, 0, 5)
 
     $lblH = New-Object System.Windows.Forms.Label
     $lblH.Text     = '호스트 IP'
@@ -1321,25 +1370,19 @@ function Initialize-Tab2RestoreUi {
 
     $pnlAuthTop.Controls.AddRange(@($lblH, $cmbAuthHost, $lblU, $txtAuthUser, $lblP, $txtAuthPass, $btnAuthRetry, $btnSidReset))
 
-    $txtAuthInfo = New-Object System.Windows.Forms.TextBox
-    $txtAuthInfo.Dock        = [System.Windows.Forms.DockStyle]::Fill
-    $txtAuthInfo.Multiline   = $true
-    $txtAuthInfo.ReadOnly    = $true
-    $txtAuthInfo.ScrollBars  = [System.Windows.Forms.ScrollBars]::Vertical
-    $txtAuthInfo.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $txtAuthInfo.BackColor   = $script:Theme.CardBg
-    $txtAuthInfo.ForeColor   = $script:Theme.DangerRedDeep
-    $txtAuthInfo.Font        = $script:FontSmall
+    $authBox         = New-PaddedTextBoxPanel -BackColor $script:Theme.CardBg -ForeColor $script:Theme.DangerRedDeep -Font $script:FontSmall -PadX 10 -PadY 6 -ReadOnly $true
+    $pnlAuthTextWrap = $authBox.Panel
+    $txtAuthInfo     = $authBox.TextBox
 
-    $tpAuth.Controls.Add($txtAuthInfo)
+    $tpAuth.Controls.Add($pnlAuthTextWrap)
     $tpAuth.Controls.Add($pnlAuthTop)
-    $txtAuthInfo.BringToFront()
+    $pnlAuthTextWrap.BringToFront()
 
     # -- [5-B] 특수 프린터 반자동 도우미 탭 (DPI 125~150% 대응 FlowLayoutPanel) --
     $tpSpec = New-Object System.Windows.Forms.TabPage(' 특수 프린터 설치 도우미 (0) ')
     $tpSpec.BackColor = [System.Drawing.Color]::FromArgb(245, 249, 249)
     $tpSpec.Font      = $script:FontBase
-    $tpSpec.Padding   = New-Object System.Windows.Forms.Padding(5)
+    $tpSpec.Padding   = New-Object System.Windows.Forms.Padding(8, 5, 8, 5)
 
     $pnlSpecTop = New-Object System.Windows.Forms.FlowLayoutPanel
     $pnlSpecTop.Dock          = [System.Windows.Forms.DockStyle]::Top
@@ -1348,7 +1391,7 @@ function Initialize-Tab2RestoreUi {
     $pnlSpecTop.AutoSize      = $true
     $pnlSpecTop.AutoSizeMode  = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
     $pnlSpecTop.BackColor     = [System.Drawing.Color]::Transparent
-    $pnlSpecTop.Padding       = New-Object System.Windows.Forms.Padding(0, 2, 0, 3)
+    $pnlSpecTop.Padding       = New-Object System.Windows.Forms.Padding(0, 1, 0, 5)
 
     $lblSp = New-Object System.Windows.Forms.Label
     $lblSp.Text     = '장비'
@@ -1420,19 +1463,13 @@ function Initialize-Tab2RestoreUi {
 
     $pnlSpecTop.Controls.AddRange(@($lblSp, $cmbSpec, $btnSpecInst, $btnSpecStep2, $btnUsbReenum, $btnSpecDir, $btnSpecProps))
 
-    $txtSpecChk = New-Object System.Windows.Forms.TextBox
-    $txtSpecChk.Dock        = [System.Windows.Forms.DockStyle]::Fill
-    $txtSpecChk.Multiline   = $true
-    $txtSpecChk.ReadOnly    = $true
-    $txtSpecChk.ScrollBars  = [System.Windows.Forms.ScrollBars]::Vertical
-    $txtSpecChk.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $txtSpecChk.BackColor   = $script:Theme.CardBg
-    $txtSpecChk.ForeColor   = $script:Theme.InkPrimary
-    $txtSpecChk.Font        = $script:FontSmall
+    $specBox         = New-PaddedTextBoxPanel -BackColor $script:Theme.CardBg -ForeColor $script:Theme.InkPrimary -Font $script:FontSmall -PadX 10 -PadY 6 -ReadOnly $true
+    $pnlSpecTextWrap = $specBox.Panel
+    $txtSpecChk      = $specBox.TextBox
 
-    $tpSpec.Controls.Add($txtSpecChk)
+    $tpSpec.Controls.Add($pnlSpecTextWrap)
     $tpSpec.Controls.Add($pnlSpecTop)
-    $txtSpecChk.BringToFront()
+    $pnlSpecTextWrap.BringToFront()
 
     $tabHelper.TabPages.Add($tpAuth)
     $tabHelper.TabPages.Add($tpSpec)
@@ -1502,6 +1539,13 @@ function Initialize-Tab2RestoreUi {
     $script:Tab2Ui.TpSpecial        = $tpSpec
     $script:Tab2Ui.PnlAuthTop       = $pnlAuthTop
     $script:Tab2Ui.PnlSpecTop       = $pnlSpecTop
+    $script:Tab2Ui.PnlSourceOuter   = $pnlSourceOuter
+    $script:Tab2Ui.PnlNotes         = $pnlNotes
+    $script:Tab2Ui.PnlNotesWrap     = $pnlNotesWrap
+    $script:Tab2Ui.PnlGridBar       = $pnlGridBar
+    $script:Tab2Ui.PnlAction        = $pnlAction
+    $script:Tab2Ui.PnlAuthTextWrap  = $pnlAuthTextWrap
+    $script:Tab2Ui.PnlSpecTextWrap  = $pnlSpecTextWrap
     $script:Tab2Ui.CmbAuthHost      = $cmbAuthHost
     $script:Tab2Ui.TxtAuthUser      = $txtAuthUser
     $script:Tab2Ui.TxtAuthPass      = $txtAuthPass

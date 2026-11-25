@@ -94,6 +94,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\smoke_test_local.p
    * 루트의 `HANDOFF.md`(특히 **최신 세션 로그** · **감사/이슈 백로그** · **우선순위별 다음 작업**)를 먼저 읽고 작업 재개 지점을 확인합니다.
 3. **작업 종료 · 커밋 전 (필수):**
    * 코드 변경이 있다면 4절의 3단계 검증(`build_single_bat.ps1` → `verify_static.ps1` → `smoke_test_local.ps1`)을 모두 통과시킵니다.
+   * **GUI 디자인·여백·UX 기조를 변경한 경우**, `.agents/skills/asan-desktop-ui/`(및 본 PC 전역 사본 `$env:USERPROFILE\.gemini\config\skills\asan-desktop-ui`)도 함께 최신화해 타 아산병원 툴과의 디자인 통일성을 유지합니다.
    * 커밋 전 반드시 **`HANDOFF.md`를 최신화**합니다(완료 현황, 새로 발견·해결한 이슈, 의사결정 보류 항목, 다음 PC에서 바로 이어할 1순위 작업, **세션별 작업 로그** 최상단 1줄 추가).
    * 코드와 `HANDOFF.md`(필요 시 `AGENTS.md`)를 함께 커밋하고 `git push origin main`까지 완료한 뒤 종료 보고합니다.
    * *(중요)* 민감정보·임시파일(`*.log`, `*.tmp`, `_AsanPrtOffline/`)은 절대 커밋하지 않습니다.

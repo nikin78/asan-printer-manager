@@ -4,6 +4,7 @@
 # - 3-5B 패치 반영: C2, C3, C4, H2(코어 이관 반영), H3
 # ============================================================================
 $script:Tab3Ui = @{
+    PnlSumAccent    = $null
     BtnRefresh      = $null
     BtnFixPolicy    = $null
     BtnResetSpooler = $null
@@ -128,10 +129,12 @@ function Render-Tab3VerifyGrid {
         $script:Tab3Ui.LblSummary.Text      = "설치된 프린터 일반 ${cntNormal}대 · 특수 ${cntSpecial}대 중 ${cntPolicy}대의 표준 설정을 수정해야 합니다. 표준 설정 일괄 수정을 눌러 주세요."
         $script:Tab3Ui.LblSummary.ForeColor = $script:Theme.DangerRedDeep
         if ($script:Tab3Ui.LblSummary.Parent) { $script:Tab3Ui.LblSummary.Parent.BackColor = $script:Theme.DangerRedTint }
+        if ($script:Tab3Ui.PnlSumAccent) { $script:Tab3Ui.PnlSumAccent.BackColor = $script:Theme.DangerRed }
     } else {
         $script:Tab3Ui.LblSummary.Text      = "설치된 프린터 일반 ${cntNormal}대 · 특수 ${cntSpecial}대의 표준 설정이 모두 정상입니다. 아래에서 테스트 인쇄를 진행해 주세요."
         $script:Tab3Ui.LblSummary.ForeColor = $script:Theme.AsanDeep
         if ($script:Tab3Ui.LblSummary.Parent) { $script:Tab3Ui.LblSummary.Parent.BackColor = $script:Theme.AsanMint }
+        if ($script:Tab3Ui.PnlSumAccent) { $script:Tab3Ui.PnlSumAccent.BackColor = $script:Theme.AsanGreen }
     }
     Sync-AllUiButtonStates
 }
@@ -219,33 +222,39 @@ function Initialize-Tab3VerifyUi {
     $parent = $script:Ui.TabVerify
     $tip    = $script:Ui.ToolTip
 
-    # [1] 상단 워크플로우 요약 바 + DPI 안전 FlowLayoutPanel 툴바
+    # [1] 상단 워크플로우 요약 바 (좌측 4px 상태 바 통일) + DPI 안전 FlowLayoutPanel 툴바
     $pnlTop = New-Object System.Windows.Forms.Panel
     $pnlTop.Dock      = [System.Windows.Forms.DockStyle]::Top
-    $pnlTop.Height    = 78
+    $pnlTop.Height    = 84
     $pnlTop.BackColor = [System.Drawing.Color]::Transparent
 
     $pnlSumBar = New-Object System.Windows.Forms.Panel
     $pnlSumBar.Dock        = [System.Windows.Forms.DockStyle]::Top
-    $pnlSumBar.Height      = 36
+    $pnlSumBar.Height      = 40
     $pnlSumBar.BackColor   = $script:Theme.AsanMint
     $pnlSumBar.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $pnlSumBar.Padding     = New-Object System.Windows.Forms.Padding(10, 0, 10, 0)
+
+    $pnlSumAccent = New-Object System.Windows.Forms.Panel
+    $pnlSumAccent.Dock      = [System.Windows.Forms.DockStyle]::Left
+    $pnlSumAccent.Width     = 4
+    $pnlSumAccent.BackColor = $script:Theme.AsanGreen
 
     $lblSum = New-Object System.Windows.Forms.Label
     $lblSum.Text      = '설치된 프린터 상태를 확인하고 있습니다.'
     $lblSum.Font      = $script:FontBold
     $lblSum.ForeColor = $script:Theme.AsanDeep
     $lblSum.Dock      = [System.Windows.Forms.DockStyle]::Fill
+    $lblSum.Padding   = New-Object System.Windows.Forms.Padding(12, 0, 12, 0)
     $lblSum.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
     $pnlSumBar.Controls.Add($lblSum)
+    $pnlSumBar.Controls.Add($pnlSumAccent)
 
     $flpTopBar = New-Object System.Windows.Forms.FlowLayoutPanel
     $flpTopBar.Dock          = [System.Windows.Forms.DockStyle]::Fill
     $flpTopBar.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
     $flpTopBar.WrapContents  = $false
     $flpTopBar.BackColor     = [System.Drawing.Color]::Transparent
-    $flpTopBar.Padding       = New-Object System.Windows.Forms.Padding(0, 7, 0, 0)
+    $flpTopBar.Padding       = New-Object System.Windows.Forms.Padding(0, 8, 0, 0)
 
     $btnRef = New-StyledButton -Text '목록 새로고침' -Width 112 -Height 28 -Variant 'Secondary' -RegisterBusy
     $btnRef.Margin = New-Object System.Windows.Forms.Padding(0, 0, 8, 0)
@@ -325,14 +334,14 @@ function Initialize-Tab3VerifyUi {
     $dgv.Dock = [System.Windows.Forms.DockStyle]::Fill
 
     foreach ($cDef in @(
-        @{ Name = 'Default';  Header = '기본';       Width = 50;  Fill = $false },
-        @{ Name = 'Category'; Header = '구분';       Width = 112; Fill = $false },
+        @{ Name = 'Default';  Header = '기본';       Width = 56;  Fill = $false },
+        @{ Name = 'Category'; Header = '구분';       Width = 118; Fill = $false },
         @{ Name = 'Printer';  Header = '프린터 이름'; Width = 200; Fill = $false },
         @{ Name = 'Port';     Header = '포트';       Width = 165; Fill = $false },
-        @{ Name = 'Snmp';     Header = 'SNMP';       Width = 64;  Fill = $false },
-        @{ Name = 'Bidi';     Header = '양방향';     Width = 76;  Fill = $false },
+        @{ Name = 'Snmp';     Header = 'SNMP';       Width = 68;  Fill = $false },
+        @{ Name = 'Bidi';     Header = '양방향';     Width = 82;  Fill = $false },
         @{ Name = 'Driver';   Header = '드라이버';   Width = 200; Fill = $true  },
-        @{ Name = 'Status';   Header = '상태';       Width = 84;  Fill = $false }
+        @{ Name = 'Status';   Header = '상태';       Width = 88;  Fill = $false }
     )) {
         $c = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
         $c.Name       = $cDef.Name
@@ -424,6 +433,7 @@ function Initialize-Tab3VerifyUi {
     $parent.Controls.Add($pnlTop)
     $dgv.BringToFront()
 
+    $script:Tab3Ui.PnlSumAccent    = $pnlSumAccent
     $script:Tab3Ui.BtnRefresh      = $btnRef
     $script:Tab3Ui.BtnFixPolicy    = $btnFix
     $script:Tab3Ui.BtnResetSpooler = $btnReset
@@ -787,12 +797,12 @@ function Initialize-Tab4ServerUi {
     $dgv.Dock = [System.Windows.Forms.DockStyle]::Fill
 
     foreach ($cDef in @(
-        @{ Name = 'Match'; Header = '매칭';       Width = 84;  Fill = $false },
-        @{ Name = 'Name';  Header = '백업 폴더명'; Width = 220; Fill = $false },
-        @{ Name = 'Date';  Header = '백업 일시';   Width = 140; Fill = $false },
-        @{ Name = 'Age';   Header = '경과일';     Width = 72;  Fill = $false },
-        @{ Name = 'Brm';   Header = 'PrintBrm';   Width = 74;  Fill = $false },
-        @{ Name = 'Path';  Header = '서버 경로';   Width = 260; Fill = $true }
+        @{ Name = 'Match'; Header = '매칭';       Width = 92;  Fill = $false },
+        @{ Name = 'Name';  Header = '백업 폴더명'; Width = 224; Fill = $false },
+        @{ Name = 'Date';  Header = '백업 일시';   Width = 144; Fill = $false },
+        @{ Name = 'Age';   Header = '경과일';     Width = 76;  Fill = $false },
+        @{ Name = 'Brm';   Header = 'PrintBrm';   Width = 80;  Fill = $false },
+        @{ Name = 'Path';  Header = '서버 경로';   Width = 250; Fill = $true }
     )) {
         $c = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
         $c.Name       = $cDef.Name
@@ -820,35 +830,27 @@ function Initialize-Tab4ServerUi {
         }
     })
 
-    # [3] 하단 리포트 미리보기 창 (고시인성 딥그린 헤더 + 화이트 미리보기)
+    # [3] 하단 리포트 미리보기 창 (고시인성 딥그린 헤더 + 넉넉한 내부 여백 미리보기 카드)
     $pnlPrev = New-Object System.Windows.Forms.Panel
     $pnlPrev.Dock    = [System.Windows.Forms.DockStyle]::Bottom
-    $pnlPrev.Height  = 140
+    $pnlPrev.Height  = 148
     $pnlPrev.Padding = New-Object System.Windows.Forms.Padding(0, 8, 0, 0)
 
     $lblPrevHead = New-Object System.Windows.Forms.Label
     $lblPrevHead.Text      = '선택한 백업 리포트 미리보기'
     $lblPrevHead.Dock      = [System.Windows.Forms.DockStyle]::Top
-    $lblPrevHead.Height    = 24
+    $lblPrevHead.Height    = 28
     $lblPrevHead.BackColor = $script:Theme.GridHeadBg
     $lblPrevHead.ForeColor = $script:Theme.GridHeadFg
     $lblPrevHead.Font      = $script:FontSmallB
-    $lblPrevHead.Padding   = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
+    $lblPrevHead.Padding   = New-Object System.Windows.Forms.Padding(12, 0, 12, 0)
     $lblPrevHead.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
 
-    $txtPrev = New-Object System.Windows.Forms.TextBox
-    $txtPrev.Dock        = [System.Windows.Forms.DockStyle]::Fill
-    $txtPrev.Multiline   = $true
-    $txtPrev.ReadOnly    = $true
-    $txtPrev.ScrollBars  = [System.Windows.Forms.ScrollBars]::Vertical
-    $txtPrev.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $txtPrev.BackColor   = $script:Theme.CardBg
-    $txtPrev.ForeColor   = $script:Theme.InkPrimary
-    $txtPrev.Font        = $script:FontMono
-    $txtPrev.Text        = '목록에서 백업 폴더를 선택하면 백업 리포트 미리보기가 표시됩니다.'
-    $pnlPrev.Controls.Add($txtPrev)
+    $prevBox = New-PaddedTextBoxPanel -BackColor $script:Theme.CardBg -ForeColor $script:Theme.InkPrimary -Font $script:FontMono -PadX 12 -PadY 8 -ReadOnly $true -InitialText '목록에서 백업 폴더를 선택하면 백업 리포트 미리보기가 표시됩니다.'
+    $txtPrev = $prevBox.TextBox
+    $pnlPrev.Controls.Add($prevBox.Panel)
     $pnlPrev.Controls.Add($lblPrevHead)
-    $txtPrev.BringToFront()
+    $prevBox.Panel.BringToFront()
 
     # [4] 최하단 액션 바 (FlowLayoutPanel + RightFlowStrip — DPI 안전)
     $pnlBot = New-Object System.Windows.Forms.Panel

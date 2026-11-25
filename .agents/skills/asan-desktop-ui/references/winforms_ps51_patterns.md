@@ -174,13 +174,55 @@ function Register-DisabledTooltipTree {
 
 ---
 
-## 3. DPI 안전 레이아웃 & 고대비 그리드 패턴
+## 3. 여백 안전 멀티라인 텍스트박스 · DPI 안전 레이아웃 · 고대비 그리드 패턴
+
+### 3-1. `New-PaddedTextBoxPanel` (테두리-텍스트 붙음 방지 필수 래퍼)
+
+WinForms 기본 `TextBox(BorderStyle=FixedSingle)`은 글자가 테두리에 1px로 붙어 답답하므로, 모든 테두리형 멀티라인 입력/표시 창(안내 배너, 체크리스트, 리포트 미리보기, 로그, 메모)은 아래 래퍼로 감쌉니다. 배경색을 동적으로 바꿀 때는 `$tb.BackColor`와 래퍼 `$wrap.BackColor`를 함께 변경하세요.
+
+```powershell
+function New-PaddedTextBoxPanel {
+    param(
+        [System.Drawing.Color]$BackColor = ([System.Drawing.Color]::White),
+        [System.Drawing.Color]$ForeColor = ([System.Drawing.Color]::FromArgb(20, 34, 35)),
+        [System.Drawing.Font]$Font = $null,
+        [int]$PadX = 10,
+        [int]$PadY = 6,
+        [bool]$ReadOnly = $true,
+        [bool]$AcceptsReturn = $false,
+        [string]$InitialText = ''
+    )
+    $wrap = New-Object System.Windows.Forms.Panel
+    $wrap.Dock        = [System.Windows.Forms.DockStyle]::Fill
+    $wrap.BackColor   = $BackColor
+    $wrap.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $wrap.Padding     = New-Object System.Windows.Forms.Padding($PadX, $PadY, ([math]::Max(4, $PadX - 2)), $PadY)
+
+    $tb = New-Object System.Windows.Forms.TextBox
+    $tb.Dock          = [System.Windows.Forms.DockStyle]::Fill
+    $tb.Multiline     = $true
+    $tb.ReadOnly      = $ReadOnly
+    $tb.AcceptsReturn = $AcceptsReturn
+    $tb.ScrollBars    = [System.Windows.Forms.ScrollBars]::Vertical
+    $tb.BorderStyle   = [System.Windows.Forms.BorderStyle]::None
+    $tb.BackColor     = $BackColor
+    $tb.ForeColor     = $ForeColor
+    if ($Font) { $tb.Font = $Font } else { $tb.Font = $script:FontSmall }
+    if (-not [string]::IsNullOrEmpty($InitialText)) { $tb.Text = $InitialText }
+
+    $wrap.Controls.Add($tb)
+    return [pscustomobject]@{ Panel = $wrap; TextBox = $tb }
+}
+```
+
+### 3-2. 레이아웃 · 그리드 · 탭 표준
 
 * **우측 버튼 스트립 (`New-RightFlowStrip`):** `Dock = Right`, `FlowDirection = RightToLeft`, `WrapContents = $false`, `AutoSize = $true` (`AutoSizeMode = GrowAndShrink`). 주의: `RightToLeft`이므로 **먼저 추가한 컨트롤이 가장 오른쪽**에 배치됩니다.
 * **그리드 (`New-StyledGrid`):**
-  * `EnableHeadersVisualStyles = $false`, `ColumnHeadersHeight = 32`, `RowTemplate.Height = 30`, `ShowCellToolTips = $true`, `DoubleBuffered = $true`(리플렉션 설정).
+  * `EnableHeadersVisualStyles = $false`, `ColumnHeadersHeight = 34`, `RowTemplate.Height = 32`, `ShowCellToolTips = $true`, `DoubleBuffered = $true`(리플렉션 설정).
+  * `ColumnHeadersDefaultCellStyle.WrapMode = False`(2글자 헤더 세로 줄바꿈 차단), `ColumnHeadersDefaultCellStyle.Padding = (8, 2, 8, 2)`, `DefaultCellStyle.Padding = (8, 2, 8, 2)`.
   * `ColumnHeadersDefaultCellStyle.BackColor = $script:Theme.GridHeadBg` (`#0B4F51`), `ForeColor = White`.
-  * 마지막 설명/경로 열은 `AutoSizeMode = Fill`, `MinimumWidth = 150`.
+  * 2글자 고정 열(`복원`/`기본`) 최소 폭 `54px`, 마지막 설명/경로 열은 `AutoSizeMode = Fill`, `MinimumWidth = 150`, 전체 폭+Fill 최소폭 합 `<= 930px`.
 * **단계형 탭 (`OwnerDrawFixed`):**
   * `ItemSize = (0, 32)`, `Padding = (18, 6)`, 활성 탭은 흰 배경 + 상단 `4px` `#006769` 바 + `#004D4F` Bold, 비활성 탭은 `#D9E7E6` + `#2F4244` Regular.
 * **리소스 해제 (`finally`):** GDI+ `Bitmap`(헤더 배지), `Icon`, `ToolTip`, 모든 `System.Windows.Forms.Timer`는 `ShowDialog()` 종료 `finally` 블록에서 반드시 `.Dispose()` 합니다.

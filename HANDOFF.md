@@ -1,7 +1,7 @@
 # 작업 인수인계서 (HANDOFF) — 집 ↔ 직장 PC 양방향 공용
 
-> **최종 갱신:** 2026-11-26 04:22 (집 PC — 타 아산병원 툴 재사용 공용 GUI 디자인 스킬 `.agents/skills/asan-desktop-ui/` 제작 및 GitHub 동기화)  
-> **현재 개발 버전:** `v1.0.0-beta.3` (안 A 비밀 분리 + P0 전면 안정화 + ZT411 골든 이미지 로컬 정책 + 재귀 리뷰 Round 1~4 + 코어 5모듈 소분리 + 고시인성 UI/UX·비활성 사유 툴팁·자동 오류 리포트 안내 완료)  
+> **최종 갱신:** 2026-11-26 04:48 (집 PC — 전 탭 여백·패딩 통일 `New-PaddedTextBoxPanel` 적용 + 공용 GUI 디자인 스킬 전역 설치·동기화 규칙 반영)  
+> **현재 개발 버전:** `v1.0.0-beta.3` (안 A 비밀 분리 + P0 전면 안정화 + ZT411 골든 이미지 로컬 정책 + 재귀 리뷰 Round 1~4 + 코어 5모듈 소분리 + 고시인성 UI/UX·비활성 사유 툴팁·자동 오류 리포트·전 탭 여백 통일 완료)  
 > **GitHub 비공개 저장소:** https://github.com/nikin78/asan-printer-manager  
 > **자동 규칙 파일:** `AGENTS.md` *(Antigravity IDE가 저장소 루트 오픈 시 자동 로드)*  
 > **로컬 빌드 산출물:** `dist/Asan_Printer_Manager.bat` *(`.gitignore` 처리 — 각 PC에서 `secrets.local.json`으로 로컬 빌드 후 사내 경로/USB 배포)*
@@ -20,7 +20,8 @@
 | **코어 모듈 5분할 (`01a`~`01e`) + 문서 동기화** | 약 4,900줄의 `src/01_core.ps1`을 `01a_ctx_win32.ps1` / `01b_net_diag.ps1` / `01c_driver_inf.ps1` / `01d_backup_restore.ps1` / `01e_special_report_snapshot.ps1`로 **비공백 코드 0줄 차이 무손실 분할**(단일 `.bat` 배포 유지), `AGENTS.md`(2·3-5·4절)·`build_single_bat`·`verify_static`·`README.md`·`E2E_TEST_CHECKLIST_v16.md` 동기화 | **완료 (무손실 검증 PASS)** |
 | **재귀 코드 리뷰 Round 4 (17건 패치 + 검증 사각지대 해소)** | • **P0 현장 치명 결함 수정:** WOW64 32비트 진입 시 UAC 승격 100% 실패(`Sysnative\cmd.exe`→`System32\cmd.exe`), 신규 TCP/IP 포트 생성 `HRESULT 0x80070057`(`Add-PrinterPort -SNMP 0` 제거), `신도리코`→`RICOH` 오탐 및 Zebra `203dpi`/`52병동` 교차 매칭 차단, `DriverStore` 중복 INF `break` 누락·`_x86_`/`_arm64_` 제외<br>• **보안·안정성 보강:** `%TEMP%\AsanPrinterMgr_*.ps1` 로드 직후 즉시 삭제, `EnumPrintSharesEx` `try/finally` 버퍼 해제, `Get-SmbMapping` 드라이브 매핑 정리, 백업 서버 `WriteDomainCredential` 이중 가드, `Test-UncSharePrinterAlive` 오류 코드 구분·재시도, WSD 1단계 완료 시 조기 종료, `PrintBrm -b` 0바이트 검증·`_OLD_` 원자 롤백·GUID 임시폴더 격리, 스풀러 중지 실패/USB 바코드 양방향 보호/`.reg` 실패 전파, `Get-BackupEffectiveWriteTime` fail-closed, `Protect-ReportSensitiveText` JSON 이스케이프 마스킹<br>• **검증 사각지대 해소:** `build_single_bat` `-AllowPlaceholderBuild` 버그·`CHANGE_ME_` 차단, `verify_static` 부트스트랩 추출 원라이너 실실행·`CoreToGui=0`·`ScriptVarsInWork=0` 검사 추가, `smoke_test_local` Round 4 회귀 단위테스트 + `960×640` WPP 동시 노출 감사 추가 | **완료 (ALL PASS)** |
 | **고시인성 아산 그린·오렌지 UI/UX · 상용 UX 라이팅 · 구 PC Win 10/11 공용 지원** | • **저작권 로고 제외:** 병원 공식 로고 PNG를 완전 제거하고 자체 GDI+ 벡터 프린터 심볼 배지·앱 아이콘만 사용<br>• **가시성 전면 강화:** 딥 아산 그린(`#005658`) 헤더 + 2px 아산 오렌지 라인 + 딥 틸(`#0B4F51`) 흰 글씨 표 헤더 + 선명한 테두리 버튼 + 5색 상태 구분(`정상` 그린 / `WSD 전환` 스카이시안 / `특수 장비` 퍼플 / `확인 필요` 오렌지 / `인증 오류` 레드) + `1단계`/`2단계` 배지 + 툴팁(`ToolTip`)<br>• **구 PC Win 10/11 공용 로직:** 백업 JSON/리포트에 `SourceOsName`/`SourceOsBuild`/`SourceIsWin11` 저장 및 탭 2 표시, 기동 시 서버 자동 매칭 백업 유무로 백업/복원 탭 지능 선택 + 탭 1 최초 진입 지연 자동 스캔 추가, `(Win 10)`/`(Win 11)` 고정 표기 제거<br>• **상용 UX 라이팅 정비:** `※`/`★`/`▶`/`[...]`/괄호 단문 표기 제거 및 직관적 동사형 버튼·친절한 안내 문구(`~해 주세요`) 적용 | **완료 (시각·자동 PASS)** |
-| **자동 검증 스위트 고도화** | `verify_static.ps1` **6/6 PASS** (9모듈·Core=73/GUI=60, 부트스트랩 추출 실실행·`CoreToGui=0`·`ScriptVarsInWork=0`·AST `MessageBox`·`$previewScript`·`src/` 미등록 파일·`src/`↔`dist/` SHA-256 동기화), `smoke_test_local.ps1` **3/3 PASS** (Round 4 회귀 단위테스트 + `1040×720`/`960×640`+WPP 레이아웃 오류 0건 · `exit 99`) | **완료 (ALL PASS)** |
+| **자동 검증 스위트 고도화** | `verify_static.ps1` **6/6 PASS** (9모듈·Core=73/GUI=65, 부트스트랩 추출 실실행·`CoreToGui=0`·`ScriptVarsInWork=0`·AST `MessageBox`·`$previewScript`·`src/` 미등록 파일·`src/`↔`dist/` SHA-256 동기화), `smoke_test_local.ps1` **3/3 PASS** (Round 4 회귀 단위테스트 + `DisabledReasons` 검증 + `1040×720`/`960×640`+WPP 레이아웃 오류 0건 · `exit 99`) | **완료 (ALL PASS)** |
+| **전 탭 여백·패딩 통일 & 공용 GUI 디자인 스킬 전역화** | • WinForms 테두리 텍스트박스 붙음 현상을 `New-PaddedTextBoxPanel` 래퍼로 전 탭 해소(WPP·버그 리포트·하단 로그·탭 2 주의사항/도우미·탭 4 미리보기)<br>• 전 탭 그리드 헤더 `34px`/행 `32px`/셀 패딩 `(8,2,8,2)` 확대 및 `1040×720` 가로 스크롤 방지 열 폭 최적화, 상단 배너(`40px`+`4px` 포인트 바)·`1단계` 카드(`65px`)·`960×640`+WPP 동적 압축 조율<br>• `.agents/skills/asan-desktop-ui/`에 여백 통일 규격·패턴 반영 및 본 PC 전역 스킬(`~/.gemini/config/skills/asan-desktop-ui`) 설치 + `AGENTS.md` §5 지속 동기화 규칙 명문화 | **완료 (시각·자동 PASS)** |
 
 ---
 
@@ -70,6 +71,12 @@ git pull --ff-only
 
 ## 5. 세션별 작업 로그 (최신순)
 
+* **2026-11-26 04:48 (집 PC / 전 탭 여백·패딩 통일 `New-PaddedTextBoxPanel` 적용 · 공용 디자인 스킬 전역 설치 및 지속 동기화 규칙 반영):**
+  * **완료 작업:**
+    1. **공용 GUI 디자인 스킬 전역 설치 및 지속 동기화 규칙화:** `.agents/skills/asan-desktop-ui/`를 본 PC 전역 Antigravity 스킬 디렉터리(`~/.gemini/config/skills/asan-desktop-ui`)에 설치하고, `SKILL.md`·`references/winforms_ps51_patterns.md`에 **여백·패딩 통일 규격(3-1절)**, `New-PaddedTextBoxPanel` 패턴, `1040×720` 그리드 가로 스크롤 방지 폭 기준(`<= 930px`)을 추가. `AGENTS.md` §5에 향후 GUI 변경 시 저장소·전역 스킬 동시 최신화 규칙 명문화.
+    2. **전 탭 텍스트·칸 여백 통일 (`02`~`04`):** `New-PaddedTextBoxPanel`을 도입해 WPP 안내·버그 리포트 메모·하단 상세 로그(`128px`)·탭 2 주의사항 배너(`TxtNotes`, 배경색 연동)·공유/특수 도우미 텍스트(`TxtAuthInfo`/`TxtSpecChecklist`)·탭 4 미리보기(`TxtPreview`)의 1px 테두리 붙음 현상 완전 제거. 전 탭 `DataGridView` 헤더 `34px`/행 `32px`/셀·헤더 패딩 `(8,2,8,2)` 적용 및 탭 1·탭 2 컬럼 너비 재조정으로 `1040×720` 불필요한 가로 스크롤바 제거. 탭 3 상단 배너에도 `4px` 좌측 상태 포인트 바·`40px` 높이 통일, 탭 2 `1단계` 카드 `65px` 호흡 확보 + 극소 화면(`960×640`+WPP) 동적 압축(`Update-Tab2HelperHeightSafe`) 보정.
+  * **검증 결과:** `build_single_bat` (533,438B, 10,649줄, `secrets.local.json` 실암호 3종 주입, SHA-256 `BE49F90A...`), `verify_static` **6/6 PASS** (`Core=73/GUI=65`, `UndefinedCalls=0`, `GuiInWork=0`, `ScriptVarsInWork=0`, `CoreToGui=0`, `SrcEncIssues=0`), `smoke_test_local` **3/3 PASS** (Stage 4 `DoEvents()` 타이머 재진입 방지 포함, `RuntimeErrors=0`, `LayoutIssues(1040×720 & 960×640)=0`, `exit 99`), 실제 렌더링 5화면(`Tab1`~`Tab4` 1040×720 + `Tab2` 960×640) 시각 감사 완료.
+  * **다음 재개 지점:** 직장 PC에서 `git pull --ff-only` → `secrets.local.json` 1회 생성 후 `dist\Asan_Printer_Manager.bat` 로컬 빌드 → 병원 현장 E2E 통합 테스트(`docs/E2E_TEST_CHECKLIST_v16.md` `TC-01`~`TC-22`) 수행 후 **`v1.0.0`** 정식 승격.
 * **2026-11-26 04:22 (집 PC / 아산병원 툴 공용 GUI 디자인 시스템 Antigravity 스킬 제작):**
   * **완료 작업:** 다른 아산병원 현장 운영 툴을 Antigravity IDE에서 바이브 코딩할 때 디자인·UX 통일성을 자동으로 유지할 수 있도록 Antigravity 표준 점진적 공개(Progressive Disclosure) 스킬 패키지 `.agents/skills/asan-desktop-ui/SKILL.md`(저작권 로고 금지·고시인성 컬러/타이포 토큰·4영역 셸·비활성 점선/사유 툴팁·상용 UX 라이팅·네트워크/OS 표기·온/오프라인 오류 자동 리포트·시각 감사 철칙) 및 `.agents/skills/asan-desktop-ui/references/winforms_ps51_patterns.md`(PS 5.1 WinForms 실전 코드 템플릿)를 제작하고 `AGENTS.md`·`HANDOFF.md`에 반영.
 * **2026-11-26 04:10 (집 PC / 비활성 버튼 점선·사유 툴팁 · 작업 오류 자동 리포트 안내 · 네트워크 표기 직관화 · 재귀 UX 보강):**

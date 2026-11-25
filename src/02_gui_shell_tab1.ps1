@@ -514,6 +514,39 @@ function Add-ColorLegendChip {
     $TargetFlow.Controls.Add($lbl)
 }
 
+function New-PaddedTextBoxPanel {
+    param(
+        [System.Drawing.Color]$BackColor = ([System.Drawing.Color]::White),
+        [System.Drawing.Color]$ForeColor = ([System.Drawing.Color]::FromArgb(20, 34, 35)),
+        [System.Drawing.Font]$Font = $null,
+        [int]$PadX = 10,
+        [int]$PadY = 6,
+        [bool]$ReadOnly = $true,
+        [bool]$AcceptsReturn = $false,
+        [string]$InitialText = ''
+    )
+    $wrap = New-Object System.Windows.Forms.Panel
+    $wrap.Dock        = [System.Windows.Forms.DockStyle]::Fill
+    $wrap.BackColor   = $BackColor
+    $wrap.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $wrap.Padding     = New-Object System.Windows.Forms.Padding($PadX, $PadY, ([math]::Max(4, $PadX - 2)), $PadY)
+
+    $tb = New-Object System.Windows.Forms.TextBox
+    $tb.Dock          = [System.Windows.Forms.DockStyle]::Fill
+    $tb.Multiline     = $true
+    $tb.ReadOnly      = $ReadOnly
+    $tb.AcceptsReturn = $AcceptsReturn
+    $tb.ScrollBars    = [System.Windows.Forms.ScrollBars]::Vertical
+    $tb.BorderStyle   = [System.Windows.Forms.BorderStyle]::None
+    $tb.BackColor     = $BackColor
+    $tb.ForeColor     = $ForeColor
+    if ($Font) { $tb.Font = $Font } else { $tb.Font = $script:FontSmall }
+    if (-not [string]::IsNullOrEmpty($InitialText)) { $tb.Text = $InitialText }
+
+    $wrap.Controls.Add($tb)
+    return [pscustomobject]@{ Panel = $wrap; TextBox = $tb }
+}
+
 function New-StyledGrid {
     param([switch]$AllowCheckEdit)
     $dgv = New-Object System.Windows.Forms.DataGridView
@@ -530,8 +563,8 @@ function New-StyledGrid {
     $dgv.GridColor                   = $script:Theme.GridLine
     $dgv.EnableHeadersVisualStyles   = $false
     $dgv.ColumnHeadersHeightSizeMode = [System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode]::DisableResizing
-    $dgv.ColumnHeadersHeight         = 32
-    $dgv.RowTemplate.Height          = 30
+    $dgv.ColumnHeadersHeight         = 34
+    $dgv.RowTemplate.Height          = 32
     $dgv.Font                        = $script:FontBase
     $dgv.ShowCellToolTips            = $true
     $dgv.AutoSizeColumnsMode         = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::None
@@ -539,10 +572,11 @@ function New-StyledGrid {
     $dgv.ColumnHeadersDefaultCellStyle.BackColor = $script:Theme.GridHeadBg
     $dgv.ColumnHeadersDefaultCellStyle.ForeColor = $script:Theme.GridHeadFg
     $dgv.ColumnHeadersDefaultCellStyle.Font      = $script:FontBold
-    $dgv.ColumnHeadersDefaultCellStyle.Padding   = New-Object System.Windows.Forms.Padding(5, 0, 5, 0)
+    $dgv.ColumnHeadersDefaultCellStyle.WrapMode  = [System.Windows.Forms.DataGridViewTriState]::False
+    $dgv.ColumnHeadersDefaultCellStyle.Padding   = New-Object System.Windows.Forms.Padding(8, 2, 8, 2)
     $dgv.DefaultCellStyle.BackColor              = $script:Theme.CardBg
     $dgv.DefaultCellStyle.ForeColor              = $script:Theme.InkPrimary
-    $dgv.DefaultCellStyle.Padding                = New-Object System.Windows.Forms.Padding(5, 0, 5, 0)
+    $dgv.DefaultCellStyle.Padding                = New-Object System.Windows.Forms.Padding(8, 2, 8, 2)
     $dgv.AlternatingRowsDefaultCellStyle.BackColor = $script:Theme.RowAltBg
     $dgv.DefaultCellStyle.SelectionBackColor     = $script:Theme.AsanMintHover
     $dgv.DefaultCellStyle.SelectionForeColor     = $script:Theme.InkPrimary
@@ -565,13 +599,17 @@ function Set-FooterLogExpanded {
     param([bool]$Expanded)
     $script:Ui.LogExpanded = $Expanded
     if ($script:Ui.TxtLog -and -not $script:Ui.TxtLog.IsDisposed) {
-        $script:Ui.TxtLog.Visible = $Expanded
+        if ($script:Ui.TxtLog.Parent -and $script:Ui.TxtLog.Parent.Tag -eq 'LogWrap') {
+            $script:Ui.TxtLog.Parent.Visible = $Expanded
+        } else {
+            $script:Ui.TxtLog.Visible = $Expanded
+        }
     }
     if ($script:Ui.BtnClearLog -and -not $script:Ui.BtnClearLog.IsDisposed) {
         $script:Ui.BtnClearLog.Visible = $Expanded
     }
     if ($script:Ui.PnlFooter -and -not $script:Ui.PnlFooter.IsDisposed) {
-        if ($Expanded) { $script:Ui.PnlFooter.Height = 120 }
+        if ($Expanded) { $script:Ui.PnlFooter.Height = 128 }
         else { $script:Ui.PnlFooter.Height = 38 }
     }
     if ($script:Ui.BtnToggleLog -and -not $script:Ui.BtnToggleLog.IsDisposed) {
@@ -994,19 +1032,10 @@ function Show-WppRemediationDialog {
 
     $pnlBody = New-Object System.Windows.Forms.Panel
     $pnlBody.Dock    = [System.Windows.Forms.DockStyle]::Fill
-    $pnlBody.Padding = New-Object System.Windows.Forms.Padding(14, 12, 14, 6)
+    $pnlBody.Padding = New-Object System.Windows.Forms.Padding(16, 12, 16, 6)
 
-    $txtGuide = New-Object System.Windows.Forms.TextBox
-    $txtGuide.Dock        = [System.Windows.Forms.DockStyle]::Fill
-    $txtGuide.Multiline   = $true
-    $txtGuide.ReadOnly    = $true
-    $txtGuide.ScrollBars  = [System.Windows.Forms.ScrollBars]::Vertical
-    $txtGuide.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $txtGuide.BackColor   = $script:Theme.DangerRedTint
-    $txtGuide.ForeColor   = $script:Theme.InkPrimary
-    $txtGuide.Font        = $script:FontBase
-    $txtGuide.Text        = $WppStatus.RemediationGuide
-    $pnlBody.Controls.Add($txtGuide)
+    $wppBox   = New-PaddedTextBoxPanel -BackColor $script:Theme.DangerRedTint -ForeColor $script:Theme.InkPrimary -Font $script:FontBase -PadX 12 -PadY 8 -InitialText $WppStatus.RemediationGuide
+    $pnlBody.Controls.Add($wppBox.Panel)
 
     $dlg.CancelButton = $btnClose
     $dlg.Controls.Add($pnlBody)
@@ -1189,23 +1218,18 @@ function Show-BugReportDialog {
     $lblMemo.Text   = '발생한 문제나 현장 상황을 간단히 적어 주세요'
     $lblMemo.Font   = $script:FontBold
     $lblMemo.Dock   = [System.Windows.Forms.DockStyle]::Top
-    $lblMemo.Height = 22
+    $lblMemo.Height = 24
 
-    $txtMemo = New-Object System.Windows.Forms.TextBox
-    $txtMemo.Dock          = [System.Windows.Forms.DockStyle]::Fill
-    $txtMemo.Multiline     = $true
-    $txtMemo.AcceptsReturn = $true
-    $txtMemo.ScrollBars    = [System.Windows.Forms.ScrollBars]::Vertical
-    $txtMemo.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $txtMemo.Font        = $script:FontBase
+    $memoBox = New-PaddedTextBoxPanel -BackColor ([System.Drawing.Color]::White) -ForeColor $script:Theme.InkPrimary -Font $script:FontBase -PadX 10 -PadY 7 -ReadOnly $false -AcceptsReturn $true
+    $txtMemo = $memoBox.TextBox
     if (-not [string]::IsNullOrWhiteSpace($ErrorSummary)) {
         $txtMemo.Text = "[자동 첨부 오류 요약]`r`n$ErrorSummary`r`n`r`n[현장 추가 메모]`r`n"
         $txtMemo.SelectionStart = $txtMemo.TextLength
     }
 
-    $pnlMemo.Controls.Add($txtMemo)
+    $pnlMemo.Controls.Add($memoBox.Panel)
     $pnlMemo.Controls.Add($lblMemo)
-    $txtMemo.BringToFront()
+    $memoBox.Panel.BringToFront()
 
     $dlg.AcceptButton = $btnSend
     $dlg.CancelButton = $btnCan
@@ -1453,7 +1477,7 @@ function Initialize-MainGuiShell {
     $pnlBrand.Dock      = [System.Windows.Forms.DockStyle]::Top
     $pnlBrand.Height    = 52
     $pnlBrand.BackColor = $script:Theme.HeaderBg
-    $pnlBrand.Padding   = New-Object System.Windows.Forms.Padding(14, 6, 14, 6)
+    $pnlBrand.Padding   = New-Object System.Windows.Forms.Padding(16, 6, 16, 6)
 
     $badgeImg = New-AsanPrinterBadgeImage
     $picBadge = New-Object System.Windows.Forms.PictureBox
@@ -1529,7 +1553,7 @@ function Initialize-MainGuiShell {
     $pnlMetaBar = New-Object System.Windows.Forms.Panel
     $pnlMetaBar.Dock      = [System.Windows.Forms.DockStyle]::Fill
     $pnlMetaBar.BackColor = $script:Theme.MetaBarBg
-    $pnlMetaBar.Padding   = New-Object System.Windows.Forms.Padding(14, 0, 14, 0)
+    $pnlMetaBar.Padding   = New-Object System.Windows.Forms.Padding(16, 0, 16, 0)
 
     $pnlMetaBottomLine = New-Object System.Windows.Forms.Panel
     $pnlMetaBottomLine.Dock      = [System.Windows.Forms.DockStyle]::Bottom
@@ -1676,7 +1700,7 @@ function Initialize-MainGuiShell {
 
     $pnlFootBody = New-Object System.Windows.Forms.Panel
     $pnlFootBody.Dock      = [System.Windows.Forms.DockStyle]::Fill
-    $pnlFootBody.Padding   = New-Object System.Windows.Forms.Padding(14, 4, 14, 5)
+    $pnlFootBody.Padding   = New-Object System.Windows.Forms.Padding(16, 4, 16, 5)
     $pnlFootBody.BackColor = $script:Theme.CardBg
 
     $pnlFootTop = New-Object System.Windows.Forms.Panel
@@ -1705,14 +1729,14 @@ function Initialize-MainGuiShell {
 
     $flpFootRight = New-RightFlowStrip -TopPadding 2 -RightPadding 0
 
-    $btnToggleLog = New-StyledButton -Text '상세 로그 보기' -Width 108 -Height 24 -Variant 'Secondary'
+    $btnToggleLog = New-StyledButton -Text '상세 로그 보기' -Width 112 -Height 24 -Variant 'Secondary'
     $btnToggleLog.Font   = $script:FontSmallB
     $btnToggleLog.Margin = New-Object System.Windows.Forms.Padding(6, 0, 0, 0)
     $btnToggleLog.Add_Click({
         Set-FooterLogExpanded -Expanded (-not $script:Ui.LogExpanded)
     })
 
-    $btnClearLog = New-StyledButton -Text '로그 지우기' -Width 86 -Height 24 -Variant 'Secondary'
+    $btnClearLog = New-StyledButton -Text '로그 지우기' -Width 90 -Height 24 -Variant 'Secondary'
     $btnClearLog.Font    = $script:FontSmallB
     $btnClearLog.Visible = $false
     $btnClearLog.Add_Click({ $script:Ui.TxtLog.Clear() })
@@ -1724,19 +1748,14 @@ function Initialize-MainGuiShell {
     $pnlFootTop.Controls.Add($flpFootRight)
     $pnlFootTop.Controls.Add($pnlPrgWrap)
 
-    $txtLog = New-Object System.Windows.Forms.TextBox
-    $txtLog.Dock        = [System.Windows.Forms.DockStyle]::Fill
-    $txtLog.Multiline   = $true
-    $txtLog.ReadOnly    = $true
-    $txtLog.ScrollBars  = [System.Windows.Forms.ScrollBars]::Vertical
-    $txtLog.BackColor   = $script:Theme.LogBg
-    $txtLog.ForeColor   = $script:Theme.LogFg
-    $txtLog.Font        = $script:FontMono
-    $txtLog.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $txtLog.Visible     = $false
+    $logBox = New-PaddedTextBoxPanel -BackColor $script:Theme.LogBg -ForeColor $script:Theme.LogFg -Font $script:FontMono -PadX 10 -PadY 6 -ReadOnly $true
+    $logBox.Panel.Tag     = 'LogWrap'
+    $logBox.Panel.Visible = $false
+    $txtLog               = $logBox.TextBox
 
-    $pnlFootBody.Controls.Add($txtLog)
+    $pnlFootBody.Controls.Add($logBox.Panel)
     $pnlFootBody.Controls.Add($pnlFootTop)
+    $logBox.Panel.BringToFront()
     $pnlFooter.Controls.Add($pnlFootBody)
     $pnlFooter.Controls.Add($pnlFootLine)
 
@@ -1744,7 +1763,7 @@ function Initialize-MainGuiShell {
     $pnlMainWrap = New-Object System.Windows.Forms.Panel
     $pnlMainWrap.Dock      = [System.Windows.Forms.DockStyle]::Fill
     $pnlMainWrap.BackColor = $script:Theme.CanvasBg
-    $pnlMainWrap.Padding   = New-Object System.Windows.Forms.Padding(10, 6, 10, 4)
+    $pnlMainWrap.Padding   = New-Object System.Windows.Forms.Padding(12, 8, 12, 6)
 
     $tabMain = New-Object System.Windows.Forms.TabControl
     $tabMain.Dock     = [System.Windows.Forms.DockStyle]::Fill
@@ -1798,7 +1817,7 @@ function Initialize-MainGuiShell {
 
     foreach ($tp in @($tabBackup, $tabRestore, $tabVerify, $tabServer)) {
         $tp.BackColor = $script:Theme.CanvasBg
-        $tp.Padding   = New-Object System.Windows.Forms.Padding(8, 6, 8, 4)
+        $tp.Padding   = New-Object System.Windows.Forms.Padding(10, 6, 10, 4)
         $tp.Font      = $script:FontBase
         $tabMain.TabPages.Add($tp)
     }
@@ -2503,10 +2522,10 @@ function Initialize-Tab1BackupUi {
     $parent = $script:Ui.TabBackup
     $tip    = $script:Ui.ToolTip
 
-    # [1] 상단 안내 배너 (좌측 4px 상태 컬러 바 + 선명한 테두리)
+    # [1] 상단 안내 배너 (좌측 4px 상태 컬러 바 + 균일 12px 내부 여백)
     $pnlBanner = New-Object System.Windows.Forms.Panel
     $pnlBanner.Dock        = [System.Windows.Forms.DockStyle]::Top
-    $pnlBanner.Height      = 38
+    $pnlBanner.Height      = 40
     $pnlBanner.BackColor   = $script:Theme.AsanMint
     $pnlBanner.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
 
@@ -2520,7 +2539,7 @@ function Initialize-Tab1BackupUi {
     $lblBanner.ForeColor = $script:Theme.AsanDeep
     $lblBanner.Font      = $script:FontBold
     $lblBanner.Dock      = [System.Windows.Forms.DockStyle]::Fill
-    $lblBanner.Padding   = New-Object System.Windows.Forms.Padding(10, 0, 10, 0)
+    $lblBanner.Padding   = New-Object System.Windows.Forms.Padding(12, 0, 12, 0)
     $lblBanner.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
 
     $pnlBanner.Controls.Add($lblBanner)
@@ -2529,7 +2548,7 @@ function Initialize-Tab1BackupUi {
     # [2] 툴바 (좌: 다시 스캔 + 가상 프린터 토글 / 우: 실제 컬러 상태 범례)
     $pnlToolbar = New-Object System.Windows.Forms.Panel
     $pnlToolbar.Dock      = [System.Windows.Forms.DockStyle]::Top
-    $pnlToolbar.Height    = 40
+    $pnlToolbar.Height    = 44
     $pnlToolbar.BackColor = [System.Drawing.Color]::Transparent
 
     $flpToolLeft = New-Object System.Windows.Forms.FlowLayoutPanel
@@ -2537,10 +2556,10 @@ function Initialize-Tab1BackupUi {
     $flpToolLeft.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
     $flpToolLeft.WrapContents  = $false
     $flpToolLeft.BackColor     = [System.Drawing.Color]::Transparent
-    $flpToolLeft.Padding       = New-Object System.Windows.Forms.Padding(0, 6, 0, 0)
+    $flpToolLeft.Padding       = New-Object System.Windows.Forms.Padding(0, 8, 0, 0)
 
-    $btnScan = New-StyledButton -Text '다시 스캔' -Width 100 -Height 28 -Variant 'Secondary' -RegisterBusy
-    $btnScan.Margin = New-Object System.Windows.Forms.Padding(0, 0, 12, 0)
+    $btnScan = New-StyledButton -Text '다시 스캔' -Width 104 -Height 28 -Variant 'Secondary' -RegisterBusy
+    $btnScan.Margin = New-Object System.Windows.Forms.Padding(0, 0, 14, 0)
     $btnScan.Add_Click({ Invoke-Tab1ScanAsync })
 
     $chkVirt = New-Object System.Windows.Forms.CheckBox
@@ -2553,7 +2572,7 @@ function Initialize-Tab1BackupUi {
     if ($tip) { $tip.SetToolTip($chkVirt, 'PDF, OneNote, Fax 등 기본 가상 프린터를 목록에 함께 표시합니다') }
     $flpToolLeft.Controls.AddRange(@($btnScan, $chkVirt))
 
-    $flpToolRight = New-RightFlowStrip -TopPadding 11 -RightPadding 2
+    $flpToolRight = New-RightFlowStrip -TopPadding 13 -RightPadding 2
     # RightToLeft이므로 역순 추가 -> 화면 좌->우: 정상 · WSD 전환 · 특수 장비 · 확인 필요 · 인증 오류
     Add-ColorLegendChip -TargetFlow $flpToolRight -LabelText '인증 오류' -DotColor $script:Theme.DangerRed
     Add-ColorLegendChip -TargetFlow $flpToolRight -LabelText '확인 필요' -DotColor $script:Theme.AsanOrange
@@ -2569,12 +2588,12 @@ function Initialize-Tab1BackupUi {
     $dgv.Dock = [System.Windows.Forms.DockStyle]::Fill
 
     foreach ($colDef in @(
-        @{ Name = 'Default';  Header = '기본';         Width = 50;  Fill = $false },
-        @{ Name = 'Status';   Header = '상태';         Width = 108; Fill = $false },
-        @{ Name = 'Category'; Header = '구분';         Width = 112; Fill = $false },
-        @{ Name = 'Printer';  Header = '프린터 이름';   Width = 185; Fill = $false },
-        @{ Name = 'Port';     Header = '포트 / 전환 IP'; Width = 160; Fill = $false },
-        @{ Name = 'Driver';   Header = '드라이버';     Width = 190; Fill = $false },
+        @{ Name = 'Default';  Header = '기본';         Width = 54;  Fill = $false },
+        @{ Name = 'Status';   Header = '상태';         Width = 116; Fill = $false },
+        @{ Name = 'Category'; Header = '구분';         Width = 118; Fill = $false },
+        @{ Name = 'Printer';  Header = '프린터 이름';   Width = 158; Fill = $false },
+        @{ Name = 'Port';     Header = '포트 / 전환 IP'; Width = 136; Fill = $false },
+        @{ Name = 'Driver';   Header = '드라이버';     Width = 166; Fill = $false },
         @{ Name = 'Reason';   Header = '상세 내용';    Width = 180; Fill = $true }
     )) {
         $c = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
@@ -2591,8 +2610,8 @@ function Initialize-Tab1BackupUi {
     # [4] 하단 스캐너 요약 카드 스트립 (FlowLayoutPanel로 DPI 배율 겹침 차단)
     $pnlScannerWrap = New-Object System.Windows.Forms.Panel
     $pnlScannerWrap.Dock      = [System.Windows.Forms.DockStyle]::Bottom
-    $pnlScannerWrap.Height    = 44
-    $pnlScannerWrap.Padding   = New-Object System.Windows.Forms.Padding(0, 6, 0, 0)
+    $pnlScannerWrap.Height    = 46
+    $pnlScannerWrap.Padding   = New-Object System.Windows.Forms.Padding(0, 8, 0, 0)
     $pnlScannerWrap.BackColor = [System.Drawing.Color]::Transparent
 
     $pnlScanner = New-Object System.Windows.Forms.FlowLayoutPanel
@@ -2601,7 +2620,7 @@ function Initialize-Tab1BackupUi {
     $pnlScanner.WrapContents  = $false
     $pnlScanner.BackColor     = $script:Theme.CardBg
     $pnlScanner.BorderStyle   = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $pnlScanner.Padding       = New-Object System.Windows.Forms.Padding(10, 5, 10, 4)
+    $pnlScanner.Padding       = New-Object System.Windows.Forms.Padding(12, 5, 12, 5)
 
     $lblScanSum = New-Object System.Windows.Forms.Label
     $lblScanSum.Text      = '스캐너 드라이버 확인 대기 중'

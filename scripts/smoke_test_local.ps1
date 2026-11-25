@@ -577,6 +577,8 @@ Sync-AllUiButtonStates
                 `$script:SmokeStage = 4
             }
             4 {
+                # DoEvents() 중 타이머 재진입(Stage 4 무한 재귀) 방지를 위해 먼저 정지
+                `$smokeTimer.Stop()
                 `$f = `$script:Ui.Form
                 foreach (`$szPair in @(
                     @{ Label = '1040x720'; W = 1040; H = 720 },
