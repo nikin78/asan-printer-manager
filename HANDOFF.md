@@ -1,6 +1,6 @@
 # 작업 인수인계서 (HANDOFF) — 집 ↔ 직장 PC 양방향 공용
 
-> **최종 갱신:** 2026-11-25 14:05 (직장 PC 세션 — 재귀 코드 리뷰 Round 2·3 완료 [`[FIX-NOW]` 0건] + ZT411 골든 이미지 로컬 정책 반영 + 과거 Git 평문 암호 이력 완전 소거)  
+> **최종 갱신:** 2026-11-25 16:20 (직장 PC 세션 마감 — 재귀 코드 리뷰 Round 2·3 완료 [`[FIX-NOW]` 0건] + ZT411 골든 이미지 로컬 정책 반영 + 과거 Git 평문 암호 이력 완전 소거)  
 > **현재 개발 버전:** `v1.0.0-beta.3` (안 A 비밀 분리 + P0 전면 안정화 + ZT411 골든 이미지 로컬 정책 + 재귀 리뷰 Round 1~3 완료)  
 > **GitHub 비공개 저장소:** https://github.com/nikin78/asan-printer-manager  
 > **자동 규칙 파일:** `AGENTS.md` *(Antigravity IDE가 저장소 루트 오픈 시 자동 로드)*  
@@ -76,7 +76,11 @@ git pull --ff-only
 
 ## 5. 세션별 작업 로그 (최신순)
 
-* **2026-11-25 14:05 (직장 PC / Round 2·3 완료 & ZT411 정책 확정 & 평문 이력 소거):** 재귀 코드 리뷰 Round 2 `[FIX-NOW]` #2~#11 전량 반영 + ZT411 원격 서버(`172.23.2.130`) 접근 제거 및 골든 이미지 로컬 경로(`C:\Users\admin\드라이버(win10_x64)\AMIS 3.0 장비\ZT411 (약국용 신형라벨프린터)\ZD8-6-5-26125\ZDesigner.inf`) 폴백·기존 PC 복원 우선·인쇄 기본 설정 마무리 경고 구현 → Round 3 재귀 감사 지적 3건(ZT411 선설치/USB 폴백 우선순위 역전, `ZD410|ZD411` 재귀 누수, BOM 정규화) 수정 및 재확인 **`[FIX-NOW]` 0건** 달성. 검증: `build_single_bat`(464,992B, 플레이스홀더 모드), `verify_static` 6/6 PASS(Core=73/GUI=56, BarePreview=0), `smoke_test_local` 3/3 PASS(병원 실환경 Win 11 `Online`, 레이아웃 오류 0). 초기 커밋(`92b6704`~`b2d33f0`) 평문 암호·`dist/*.bat` 이력 완전 소거 및 강제 푸시 완료. **다음 재개 지점:** 직장 PC `secrets.local.json` 1회 생성 후 실제 배포용 `.bat` 빌드 → 현장 E2E 테스트(`TC-01`~`TC-22`) 수행.
+* **2026-11-25 16:20 (직장 PC / Round 2·3 완료 · ZT411 정책 확정 · 평문 이력 소거 · 세션 마감):**
+  * **완료 작업:** 재귀 코드 리뷰 Round 2 `[FIX-NOW]` #2~#11 전량 반영 + ZT411 원격 서버(`172.23.2.130`) 접근 제거 및 골든 이미지 로컬 경로(`C:\Users\admin\드라이버(win10_x64)\AMIS 3.0 장비\ZT411 (약국용 신형라벨프린터)\ZD8-6-5-26125\ZDesigner.inf`) 폴백·기존 PC 복원 우선·인쇄 기본 설정 마무리 경고 구현 → Round 3 재귀 감사 지적 3건(ZT411 선설치/USB 폴백 우선순위 역전, `ZD410|ZD411` 재귀 누수, BOM 정규화) 수정 및 재확인 **`[FIX-NOW]` 0건** 달성 + 초기 커밋 평문 암호 및 구형 `dist/*.bat` 전체 Git 이력 소거·강제 푸시 완료.
+  * **수정/추가된 파일 (10개):** `src/01_core.ps1`, `src/02_gui_shell_tab1.ps1`, `src/03_gui_tab2.ps1`, `src/04_gui_tab3_tab4_main.ps1`, `scripts/verify_static.ps1`, `scripts/smoke_test_local.ps1`, `docs/E2E_TEST_CHECKLIST_v16.md`, `CHANGELOG.md`, `HANDOFF.md`, `.editorconfig`.
+  * **검증 결과:** `build_single_bat`(464,992B, 플레이스홀더 모드), `verify_static` **6/6 PASS**(Core=73/GUI=56, BarePreview=0, SrcEncIssues=0), `smoke_test_local` **3/3 PASS**(병원 실환경 Win 11 `Online`, 레이아웃 오류 0, `exit 99`).
+  * **다음 재개 지점:** ① *(집 PC 최초 1회)* `git fetch origin --prune --prune-tags && git reset --hard origin/main` 동기화 ② *(직장 PC)* `secrets.local.json` 1회 생성 후 실제 배포용 `dist\Asan_Printer_Manager.bat` 로컬 빌드 → 병원 현장 E2E 테스트(`docs/E2E_TEST_CHECKLIST_v16.md` `TC-01`~`TC-22`) 수행 후 `v1.0.0` 정식 승격.
 * **2026-11-25 05:00 (집 PC / 재귀 리뷰 Round 1):** 구 Pre-release `v1.0.0-beta.1/2` 삭제, 재귀 코드 리뷰 Round 1 지적 11개 그룹 전량 반영(수정 파일: `src/00_bootstrap.bat`, `src/01_core.ps1`, `src/02_gui_shell_tab1.ps1`, `src/03_gui_tab2.ps1`, `src/04_gui_tab3_tab4_main.ps1`, `scripts/build_single_bat.ps1`, `scripts/verify_static.ps1`, `scripts/smoke_test_local.ps1`). 검증: `build_single_bat`(442,171B, SHA-256 `669B0568...`), `verify_static` 6/6 PASS(Core=73/GUI=54), `smoke_test_local` 3/3 PASS(레이아웃 이슈 0, `NetStatus=Offline`). Round 2 감사에서 `[FIX-NOW]` 11건 도출 → **사용자 요청으로 수정 전 중단·커밋**. **다음 재개 지점:** 3절 0순위 항목 2~11 수정 → Round 3 감사.
 
 * **2026-11-25 (집 PC / `v1.0.0-beta.3`):** 안 A(평문 암호 Git 분리 → `secrets.local.json` 빌드 주입 + `dist/*.bat` gitignore + 추적 파일 평문 0건) 완료, P0/P1 보안·USB 재인식·복원·5일 정리·다국어 INF·DPI·스레드 안전성 전수 패치 완료, 약제팀 `ZT411` 공식 PDF 규격(`zd51177412-certified.exe` 마법사 [나가기] 주의, `C:\ZD5-1-17-7412\ZBRN\ZBRN.inf`, `ZebraDriver 설정.drs`) 완전 반영. `build_single_bat`(424,823B, SHA-256 `9D541761...`), `verify_static`(6/6 PASS, Core=73/GUI=50), `smoke_test_local`(3/3 PASS, 집 PC `NetStatus=Offline` 정상 확인) 통과. **다음 재개 지점:** 직장 PC에서 `git pull` + `secrets.local.json` 1회 생성 후 빌드 → 현장 E2E 테스트(`TC-01`~`TC-22`) 수행.
