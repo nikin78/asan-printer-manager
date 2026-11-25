@@ -20,6 +20,7 @@
 * **약제팀 `Zebra ZT411-203dpi ZPL` 기존 PC 복원 최우선 + 골든 이미지 로컬 폴백 전환:**
   * 접근 계정 미확인 원격 서버(`\\172.23.2.130\driver`) 탐색을 완전 제거하고, 모든 골든 이미지 공통 로컬 경로(`C:\Users\admin\드라이버(win10_x64)\AMIS 3.0 장비\ZT411 (약국용 신형라벨프린터)`)의 사전 압축 해제 드라이버(`ZD8-6-5-26125\ZDesigner.inf`, `zd86526125-certified.exe`)와 용지별 설정 파일(`.drx`/`.drs`)을 자동 탐색하도록 전환(`ZD410`/`ZD411`·`PrnInst.exe` 엄격 제외).
   * 복원 시 **기존 PC 추출 드라이버(`PrintBrm`/`ExportedDrivers`) + `.dat`/`.reg` 설정을 최우선** 적용(`-PreExistingDrivers`/`-PreferExportedFirst`)하고, 부득이하게 골든 이미지 로컬 드라이버로 대체 복원되었거나 백업 설정이 미확인된 경우 요약 팝업·배너·도우미에서 **인쇄 기본 설정 마무리 필요** 경고를 자동 표시.
+* **코어 모듈 5분할 유지보수 개편 (무손실, 단일 `.bat` 배포 유지):** 약 4,900줄의 `src/01_core.ps1`을 `01a_ctx_win32.ps1` / `01b_net_diag.ps1` / `01c_driver_inf.ps1` / `01d_backup_restore.ps1` / `01e_special_report_snapshot.ps1`로 비공백 코드 0줄 차이 무손실 분할하고, `verify_static.ps1`에 `src/` 미등록 파일 감지를 추가하며, `README.md`·`docs/E2E_TEST_CHECKLIST_v16.md`의 ZT411 로컬 정책 및 `%TEMP%` 자가 삭제 안내를 최신 코드와 동기화.
 * **자동 검증 스위트 고도화:** `verify_static.ps1`에 `src/`·`scripts/` 인코딩/CRLF 전수 검사, `src/`↔`dist/` SHA-256 동기화, 안 A 비밀 분리, AST 기반 `Show-AsanMessageBox` 외부 직접 `MessageBox::Show` 0건 검증, 탭 4 베어 Runspace(`$previewScript`) 사용자 함수 호출 금지 검사 추가; `smoke_test_local.ps1`에 다국어 INF·`Provider=%Token%` 간접 참조 해석·5일 정리 NTFS 타임스탬프·TM-T88 포트 분기·ZT411 골든 이미지 정책·`@($null)` 고스트 행·플레이스홀더 호환 동적 마스킹 단위테스트 확장.
 
 ### 버그 수정 (Fixed — P0/P1 전면 패치 및 재귀 코드 리뷰 Round 1~3 완료)

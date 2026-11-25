@@ -96,15 +96,30 @@ if ($utf8Valid -and $null -ne $batText) {
 $srcEncIssues = [System.Collections.Generic.List[string]]::new()
 $srcDirPath   = Join-Path $projRoot 'src'
 $scrDirPath   = Join-Path $projRoot 'scripts'
+$expectedSrcNames = @(
+    '00_bootstrap.bat',
+    '01a_ctx_win32.ps1',
+    '01b_net_diag.ps1',
+    '01c_driver_inf.ps1',
+    '01d_backup_restore.ps1',
+    '01e_special_report_snapshot.ps1',
+    '02_gui_shell_tab1.ps1',
+    '03_gui_tab2.ps1',
+    '04_gui_tab3_tab4_main.ps1'
+)
 foreach ($chkItem in @(
-    @{ Path = (Join-Path $srcDirPath '00_bootstrap.bat');          NeedBom = $false },
-    @{ Path = (Join-Path $srcDirPath '01_core.ps1');               NeedBom = $true },
-    @{ Path = (Join-Path $srcDirPath '02_gui_shell_tab1.ps1');     NeedBom = $true },
-    @{ Path = (Join-Path $srcDirPath '03_gui_tab2.ps1');           NeedBom = $true },
-    @{ Path = (Join-Path $srcDirPath '04_gui_tab3_tab4_main.ps1'); NeedBom = $true },
-    @{ Path = (Join-Path $scrDirPath 'build_single_bat.ps1');      NeedBom = $true },
-    @{ Path = (Join-Path $scrDirPath 'verify_static.ps1');         NeedBom = $true },
-    @{ Path = (Join-Path $scrDirPath 'smoke_test_local.ps1');      NeedBom = $true }
+    @{ Path = (Join-Path $srcDirPath '00_bootstrap.bat');                NeedBom = $false },
+    @{ Path = (Join-Path $srcDirPath '01a_ctx_win32.ps1');               NeedBom = $true },
+    @{ Path = (Join-Path $srcDirPath '01b_net_diag.ps1');                NeedBom = $true },
+    @{ Path = (Join-Path $srcDirPath '01c_driver_inf.ps1');              NeedBom = $true },
+    @{ Path = (Join-Path $srcDirPath '01d_backup_restore.ps1');          NeedBom = $true },
+    @{ Path = (Join-Path $srcDirPath '01e_special_report_snapshot.ps1'); NeedBom = $true },
+    @{ Path = (Join-Path $srcDirPath '02_gui_shell_tab1.ps1');           NeedBom = $true },
+    @{ Path = (Join-Path $srcDirPath '03_gui_tab2.ps1');                 NeedBom = $true },
+    @{ Path = (Join-Path $srcDirPath '04_gui_tab3_tab4_main.ps1');       NeedBom = $true },
+    @{ Path = (Join-Path $scrDirPath 'build_single_bat.ps1');            NeedBom = $true },
+    @{ Path = (Join-Path $scrDirPath 'verify_static.ps1');               NeedBom = $true },
+    @{ Path = (Join-Path $scrDirPath 'smoke_test_local.ps1');            NeedBom = $true }
 )) {
     if (-not (Test-Path -LiteralPath $chkItem.Path)) {
         $srcEncIssues.Add("누락: $([IO.Path]::GetFileName($chkItem.Path))")
@@ -123,12 +138,17 @@ foreach ($chkItem in @(
         $srcEncIssues.Add("CRLF 위반($([IO.Path]::GetFileName($chkItem.Path)): LoneLF=$fLf, LoneCR=$fCr)")
     }
 }
+foreach ($sf in @(Get-ChildItem -LiteralPath $srcDirPath -File -ErrorAction SilentlyContinue)) {
+    if ($expectedSrcNames -notcontains $sf.Name) {
+        $srcEncIssues.Add("미등록 소스 파일 존재(src/): $($sf.Name)")
+    }
+}
 
 # src/ <-> dist/ 동기화 확인 (빌드 누락된 구형 dist 방지)
 $distSyncOk = $true
 $distSyncDetail = 'Synced'
 try {
-    $modOrder = @('00_bootstrap.bat','01_core.ps1','02_gui_shell_tab1.ps1','03_gui_tab2.ps1','04_gui_tab3_tab4_main.ps1')
+    $modOrder = $expectedSrcNames
     $sbExp = New-Object System.Text.StringBuilder
     foreach ($mn in $modOrder) {
         $mr = [IO.File]::ReadAllText((Join-Path $srcDirPath $mn), $utf8Strict)
@@ -325,9 +345,9 @@ try {
             $ruleViolations.Add("Rule10 위반: 필수 고정 상수 누락 ('$constNeedle')")
         }
     }
-    $srcCoreRaw = [IO.File]::ReadAllText((Join-Path $srcDirPath '01_core.ps1'), $utf8Strict)
+    $srcCoreRaw = [IO.File]::ReadAllText((Join-Path $srcDirPath '01a_ctx_win32.ps1'), $utf8Strict)
     if ($srcCoreRaw.IndexOf("@('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')", [StringComparison]::Ordinal) -lt 0) {
-        $ruleViolations.Add('안 A 위반: src/01_core.ps1에 비밀 주입 플레이스홀더가 없습니다 (하드코딩 암호 금지).')
+        $ruleViolations.Add('안 A 위반: src/01a_ctx_win32.ps1에 비밀 주입 플레이스홀더가 없습니다 (하드코딩 암호 금지).')
     }
     if (-not $AllowPlaceholder -and $payloadText.IndexOf("@('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')", [StringComparison]::Ordinal) -ge 0) {
         $ruleViolations.Add('빌드 오류: dist/.bat에 미치환 암호 플레이스홀더가 남아 있습니다 (secrets.local.json 주입 필요).')

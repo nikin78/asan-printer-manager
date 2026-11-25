@@ -56,7 +56,7 @@ try {
     Copy-Item -LiteralPath $BatFile -Destination $roBat -Force
     $beforeFiles = @(Get-ChildItem -LiteralPath $roDir -Force | ForEach-Object { $_.Name })
 
-    # 00_bootstrap.bat 54행과 동일한 URL-Safe Base64 인코딩 -> 01_core.ps1 131-138행과 동일한 디코딩 검증
+    # 00_bootstrap.bat 54행과 동일한 URL-Safe Base64 인코딩 -> 01a_ctx_win32.ps1 11-19행과 동일한 디코딩 검증
     $trickyPath = 'E:\아산 병원 & 교체^작업 (100%) [beta]\Asan_Printer_Manager.bat'
     $env:ORIGINAL_SELF = $trickyPath
     $b64Out = & $ps51 -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "`$ErrorActionPreference='Stop'; [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(`$env:ORIGINAL_SELF)).Replace('+','-').Replace('/','_').TrimEnd('=')"

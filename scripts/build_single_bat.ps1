@@ -3,7 +3,7 @@
 .SYNOPSIS
     아산병원 프린터/드라이버 통합 마이그레이션 도구 단일 .bat 무손실 빌드 스크립트
 .DESCRIPTION
-    src/ 하위 5개 모듈을 번호 순서대로 순수 Windows CRLF(\r\n)로 결합하고
+    src/ 하위 9개 모듈을 번호 순서대로 순수 Windows CRLF(\r\n)로 결합하고
     로컬 secrets.local.json의 공용 암호를 빌드 시점에만 주입하여
     UTF-8 (No BOM) 인코딩으로 dist/Asan_Printer_Manager.bat을 생성합니다.
 #>
@@ -30,7 +30,11 @@ if (-not [string]::IsNullOrWhiteSpace($env:ASAN_SECRETS_FILE) -and $SecretsFile 
 
 $moduleOrder = @(
     '00_bootstrap.bat',
-    '01_core.ps1',
+    '01a_ctx_win32.ps1',
+    '01b_net_diag.ps1',
+    '01c_driver_inf.ps1',
+    '01d_backup_restore.ps1',
+    '01e_special_report_snapshot.ps1',
     '02_gui_shell_tab1.ps1',
     '03_gui_tab2.ps1',
     '04_gui_tab3_tab4_main.ps1'

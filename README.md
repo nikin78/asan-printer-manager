@@ -2,7 +2,7 @@
 
 서울아산병원 **Windows 10 → Windows 11 PC 교체 현장**에서 기존 PC의 프린터 큐, 포트, 서드파티 드라이버, 특수/바코드 장비 세부 설정, WIA 스캐너 드라이버를 무손실 백업·복원하고 병원 표준 인쇄 정책을 자동화하는 **단일 실행 파일(`Asan_Printer_Manager.bat`) WinForms GUI 도구**입니다.
 
-> 버전 이력은 [CHANGELOG.md](./CHANGELOG.md), 배포 버전별 다운로드는 GitHub **Releases** 탭에서 관리됩니다.
+> 버전 이력은 [CHANGELOG.md](./CHANGELOG.md)에서 관리되며, 배포 파일(`dist/Asan_Printer_Manager.bat`)은 로컬 `secrets.local.json`으로 빌드해 사내 경로/USB로 직접 배포합니다.
 
 * **외부 의존성 0개:** Windows 기본 내장 PowerShell 5.1 + `.NET Framework 4.x` + OS 내장 유틸리티만 사용하므로 별도 런타임(Python 등) 설치 없이 어느 Windows 10/11 PC에서나 즉시 실행됩니다.
 * **Zero USB Write:** 실행 즉시 `%TEMP%\AsanPrinterMgr\`로 자가 복제(스테이징)하여 원본 USB·네트워크 공유 폴더에 임시 파일·로그를 **단 1바이트도 기록하지 않습니다.** *(매체제어 SaferZone / BSone / DRM 환경 안전)*
@@ -105,12 +105,13 @@ Windows 11 24H2 이후 **Windows 보호 인쇄 모드(WPP)**가 켜져 있으면
 
 ### ③ 검사/투약/약제 바코드 (`Zebra ZD410 / ZD411 / ZT410 / ZT411`)
 * **약제팀 `ZT411` (`ZDesigner ZT411-203dpi ZPL`):**
-  * TCP/IP(`Standard TCP/IP` / `Generic Network Card`, SNMP OFF) 및 USB 직결 모두 지원하며, 백업된 포트·ZPL 드라이버·`.dat`/`.reg` 설정을 자동 복원합니다. *(PCL6 전환 및 일괄 테스트 인쇄만 안전 제외)*
-  * **수동 재설치/용지 설정 필요 시:** `zd51177412-certified.exe` 실행(`C:\ZD5-1-17-7412` 생성) 후 뜨는 **마법사 창에서는 절대 설정하지 말고 `[나가기]`로 종료** → USB 자동 설치 또는 TCP/IP `디스크 있음`에서 `C:\ZD5-1-17-7412\ZBRN\ZBRN.inf` 선택 → 용지값은 직접 입력하지 말고 **인쇄 기본 설정 → `[가져오기/내보내기 설정]` → `[가져오기...]` → `ZebraDriver 설정.drs`** 불러오기!
+  * TCP/IP(`Standard TCP/IP` / `Generic Network Card`, SNMP OFF) 및 USB 직결 모두 지원하며, **기존 PC 추출 드라이버 + `.dat`/`.reg` 인쇄 기본 설정 자동 복원을 최우선**으로 시도합니다. *(PCL6 전환 및 일괄 테스트 인쇄만 안전 제외)*
+  * **기존 PC 드라이버 부재 시 골든 이미지 로컬 폴백 / 수동 설치:** 모든 골든 이미지 공통 로컬 경로(`C:\Users\admin\드라이버(win10_x64)\AMIS 3.0 장비\ZT411 (약국용 신형라벨프린터)`)의 사전 압축 해제 드라이버(`ZD8-6-5-26125\ZDesigner.inf`)로 대체 복원하며, 셋업(`zd86526125-certified.exe`) 재실행 시 뜨는 **마법사 창에서는 절대 설정하지 말고 `[나가기]`로 종료**한 뒤 INF를 지정합니다.
+  * **인쇄 기본 설정 마무리(필수):** 대체 드라이버로 설치되었거나 기존 설정이 미확인된 경우 요약 팝업·배너·도우미에서 경고가 표시되므로, **인쇄 기본 설정**에서 용지/농도를 직접 마무리하거나 **`[가져오기/내보내기 설정]` → 로컬 용지별 설정 파일(`.drx`/`.drs`)**을 불러옵니다.
 * **USB 직결 (`ZD410/411` 등):** 복원 시 해당 제조사 추출 드라이버를 선등록한 뒤 **`pnputil` 소프트웨어 자동 USB 재인식**을 수행해 `지정되지 않음` 상태에서 자동 승격을 시도하며, USB 직결 양방향 지원 `ON(유지)`을 보존합니다. *(자동 재인식 후에도 미인식 시 도우미의 **`[USB 재인식]`** 버튼 또는 USB 케이블 1회 재연결)*
 * **현장 확인:**
-  1. 프린터 속성 → 드라이버 설정 → **`[상태확인: 사용안함]`** 및 용지설정(`ZD410`: `.drx`, `ZT411`: `ZebraDriver 설정.drs`) 유지 확인.
-  2. 용지/상단 여백 확인: **검사바코드(`5.5×3.0 / 2.6mm`)** · **투약바코드(`5.5×6.0 / 1.0mm`)** · **약제 ZT411(`ZebraDriver 설정.drs`)**.
+  1. 프린터 속성 → 드라이버 설정 → **`[상태확인: 사용안함]`** 및 용지설정(`ZD410`: `.drx`, `ZT411`: 로컬 용지별 `.drx`/`.drs`) 유지 확인.
+  2. 용지/상단 여백 확인: **검사바코드(`5.5×3.0 / 2.6mm`)** · **투약바코드(`5.5×6.0 / 1.0mm`)** · **약제 ZT411(로컬 `.drx`/`.drs`)**.
   3. AMIS 3.0 `Barcode Print Agent`(또는 TCP/IP AMIS 출력) 확인.
 
 ### ④ 팔찌바코드 (`BIXOLON SLP-TX220`)
@@ -138,11 +139,15 @@ asan-printer-manager/
 ├── README.md                     # 사용자 및 운영 매뉴얼 (본 문서)
 ├── secrets.local.example.json    # 로컬 병원 공용 암호 템플릿 (secrets.local.json으로 복사 사용, Git 비추적)
 ├── src/
-│   ├── 00_bootstrap.bat          # Zero-USB-Write 런처 + Base64 UAC + WOW64 + 종료 시 %TEMP% 자가 정리
-│   ├── 01_core.ps1               # $global:AsanCtx, NativeApi(C# 5.0), 진단/백업/복원/특수장비 코어
-│   ├── 02_gui_shell_tab1.ps1     # WinForms 셸, Runspace 실행기, WPP 배너, 탭 1 백업
-│   ├── 03_gui_tab2.ps1           # 탭 2 복원, 지연 검증, 인라인 인증/SID 및 특수장비 도우미
-│   └── 04_gui_tab3_tab4_main.ps1 # 탭 3 검증/테스트, 탭 4 서버 관리, 메인 진입점 + exit 99
+│   ├── 00_bootstrap.bat                # Zero-USB-Write 런처 + Base64 UAC + WOW64 + 종료 시 %TEMP% 자가 정리
+│   ├── 01a_ctx_win32.ps1               # $global:AsanCtx 전역 컨텍스트 + NativeApi(C# 5.0 P/Invoke)
+│   ├── 01b_net_diag.ps1                # WPP 감지, 네트워크/SID/SMB, 특수장비·LPT·USB 재인식, WSD·스캐너 진단
+│   ├── 01c_driver_inf.ps1              # 다국어 INF 파싱/인덱싱, 2패스 드라이버 해결, 정밀 oem*.inf 추출
+│   ├── 01d_backup_restore.ps1          # 온라인/ZIP 백업 엔진, 지연 검증, 6단계 복원·원자적 정책 엔진
+│   ├── 01e_special_report_snapshot.ps1 # 특수장비 핸들러, SID 복구, 서버관리, 버그리포트, 검증조회 + Core 스냅샷
+│   ├── 02_gui_shell_tab1.ps1           # WinForms 셸, Runspace 실행기, WPP 배너, 탭 1 백업
+│   ├── 03_gui_tab2.ps1                 # 탭 2 복원, 지연 검증, 인라인 인증/SID 및 특수장비 도우미
+│   └── 04_gui_tab3_tab4_main.ps1       # 탭 3 검증/테스트, 탭 4 서버 관리, 메인 진입점 + exit 99
 ├── scripts/
 │   ├── build_single_bat.ps1      # src/ + secrets.local.json 병합 -> dist/Asan_Printer_Manager.bat (UTF-8 No BOM + CRLF)
 │   ├── verify_static.ps1         # 6대 자동 정적 검증 (인코딩/src↔dist동기화/마커/PS 5.1 AST/제약/C# 5.0/Runspace)

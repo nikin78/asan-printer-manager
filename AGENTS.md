@@ -19,15 +19,19 @@
 
 * **최종 배포물:** `dist/Asan_Printer_Manager.bat` (단일 실행 파일, 외부 의존성 0개 — Python 등 미사용, `.gitignore` 처리로 로컬 빌드 전용)
 * **비밀 설정 분리 (안 A):** 병원 공용 암호는 Git에 커밋하지 않고 로컬 비추적 파일 **`secrets.local.json`**(`secrets.local.example.json` 참고)에만 보관하며, `scripts/build_single_bat.ps1` 빌드 시점에만 `dist/Asan_Printer_Manager.bat`에 주입합니다.
-* **버전 기준:** `VERSION` 파일 (현재 SemVer `1.0.0-beta.x`, `src/01_core.ps1`의 `$global:AsanCtx.AppVersion`과 항상 동기화)
-* **소스 모듈 (`src/`):**
+* **버전 기준:** `VERSION` 파일 (현재 SemVer `1.0.0-beta.x`, `src/01a_ctx_win32.ps1`의 `$global:AsanCtx.AppVersion`과 항상 동기화)
+* **소스 모듈 (`src/` — 9개 모듈):**
   * `00_bootstrap.bat` — Zero-USB-Write `%TEMP%` 스테이징, WOW64 `Sysnative`, URL-Safe Base64 UAC, `-STA`, `RC == 99` 가드 (`UTF-8 No BOM` + `CRLF`)
-  * `01_core.ps1` — `$global:AsanCtx`, C# 5.0 `AsanWin32.NativeApi`, 진단/백업/복원/특수장비/USB 자동 재인식/버그 리포트 코어 + `$script:CoreFunctionNames` 스냅샷 (`UTF-8 With BOM` + `CRLF`)
+  * `01a_ctx_win32.ps1` — `$global:AsanCtx` 전역 컨텍스트, C# 5.0 `AsanWin32.NativeApi`, `Hide-ConsoleWindowSafe` (`UTF-8 With BOM` + `CRLF`)
+  * `01b_net_diag.ps1` — WPP 감지, 네트워크/SID/SMB, 특수장비 분류·LPT·USB 재인식, 공유 3종 인증, TCP/IP·WSD·스캐너 진단 (`UTF-8 With BOM` + `CRLF`)
+  * `01c_driver_inf.ps1` — 모델 줄기/와일드카드, 다국어 INF 파싱/인덱싱, 2패스 드라이버 해결, 정밀 `oem*.inf` 추출 (`UTF-8 With BOM` + `CRLF`)
+  * `01d_backup_restore.ps1` — 온라인/오프라인 ZIP 백업 엔진, 지연 검증, 6단계 복원 및 원자적 정책 엔진 (`UTF-8 With BOM` + `CRLF`)
+  * `01e_special_report_snapshot.ps1` — 특수장비 핸들러, SID 복구, 서버 관리 헬퍼, 버그 리포트, 검증 조회 + `$script:CoreFunctionNames` 스냅샷 (`UTF-8 With BOM` + `CRLF`)
   * `02_gui_shell_tab1.ps1` — WinForms 셸, Runspace 실행기, WPP 배너, 버그 리포트 팝업, 탭 1 백업 (`UTF-8 With BOM` + `CRLF`)
   * `03_gui_tab2.ps1` — 탭 2 복원, 지연 검증, 공유/SID 도우미, 특수장비·USB 재인식 도우미 (`UTF-8 With BOM` + `CRLF`)
   * `04_gui_tab3_tab4_main.ps1` — 탭 3 검증/테스트, 탭 4 서버 관리, 메인 진입점 + `exit 99` (`UTF-8 With BOM` + `CRLF`)
 * **빌드/검증 스크립트 (`scripts/` — Windows PowerShell 5.1 네이티브, `UTF-8 With BOM` + `CRLF`):**
-  * `build_single_bat.ps1` — `src/` 5개 모듈을 순수 `CRLF` · `UTF-8 No BOM`으로 `dist/Asan_Printer_Manager.bat` 생성
+  * `build_single_bat.ps1` — `src/` 9개 모듈을 순수 `CRLF` · `UTF-8 No BOM`으로 `dist/Asan_Printer_Manager.bat` 생성
   * `verify_static.ps1` — 6대 자동 정적 검증 (인코딩/CRLF, 마커·추출, PS 5.1 AST 파서, 제약 스캔, C# 5.0 `Add-Type`, 함수 교차참조 & 자식 Runspace 실주입)
   * `smoke_test_local.ps1` — 비파괴 로컬 스모크 테스트 (Zero-USB-Write 추출, 코어 진단·단위테스트, 실제 `-STA` WinForms GUI 4탭 순회 & `1040×720`/`960×640` 레이아웃 감사 & `exit 99`)
 * **문서 (`docs/` & 루트):** `HANDOFF.md`(최신 인계서), `CHANGELOG.md`, `README.md`, `docs/antigravity_ide_v16_0.md`(초기 마스터 명세), `docs/E2E_TEST_CHECKLIST_v16.md`
@@ -76,7 +80,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_static.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\smoke_test_local.ps1
 ```
 
-릴리스 버전을 올릴 때는 `VERSION`, `src/01_core.ps1`(`AppVersion`), `CHANGELOG.md`, `README.md`를 함께 갱신한 뒤 위 3단계 검증을 통과시키고 `git push`합니다. *(주의: 안 A 정책상 공용 암호가 주입된 `dist/Asan_Printer_Manager.bat`은 Git/개인 클라우드에 커밋·업로드하지 않고 로컬 빌드 후 사내 경로/USB로만 배포합니다.)*
+릴리스 버전을 올릴 때는 `VERSION`, `src/01a_ctx_win32.ps1`(`AppVersion`), `CHANGELOG.md`, `README.md`를 함께 갱신한 뒤 위 3단계 검증을 통과시키고 `git push`합니다. *(주의: 안 A 정책상 공용 암호가 주입된 `dist/Asan_Printer_Manager.bat`은 Git/개인 클라우드에 커밋·업로드하지 않고 로컬 빌드 후 사내 경로/USB로만 배포합니다.)*
 
 ---
 

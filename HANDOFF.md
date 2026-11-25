@@ -1,17 +1,10 @@
 # 작업 인수인계서 (HANDOFF) — 집 ↔ 직장 PC 양방향 공용
 
-> **최종 갱신:** 2026-11-25 16:20 (직장 PC 세션 마감 — 재귀 코드 리뷰 Round 2·3 완료 [`[FIX-NOW]` 0건] + ZT411 골든 이미지 로컬 정책 반영 + 과거 Git 평문 암호 이력 완전 소거)  
-> **현재 개발 버전:** `v1.0.0-beta.3` (안 A 비밀 분리 + P0 전면 안정화 + ZT411 골든 이미지 로컬 정책 + 재귀 리뷰 Round 1~3 완료)  
+> **최종 갱신:** 2026-11-25 21:10 (집 PC — 원격 이력 동기화 + 코어 모듈 5분할 [`01a`~`01e` 무손실] + `README.md`/E2E 체크리스트 최신화 + 실암호 3단계 검증 PASS)  
+> **현재 개발 버전:** `v1.0.0-beta.3` (안 A 비밀 분리 + P0 전면 안정화 + ZT411 골든 이미지 로컬 정책 + 재귀 리뷰 Round 1~3 + 코어 5모듈 소분리 완료)  
 > **GitHub 비공개 저장소:** https://github.com/nikin78/asan-printer-manager  
 > **자동 규칙 파일:** `AGENTS.md` *(Antigravity IDE가 저장소 루트 오픈 시 자동 로드)*  
 > **로컬 빌드 산출물:** `dist/Asan_Printer_Manager.bat` *(`.gitignore` 처리 — 각 PC에서 `secrets.local.json`으로 로컬 빌드 후 사내 경로/USB 배포)*
-
-> **[중요 · 집 PC 복귀 시 1회 동기화 안내]**  
-> 이번 세션에서 초기 커밋(`92b6704`~`b2d33f0`)에 남아 있던 병원 공용 암호 평문 및 구형 `dist/Asan_Printer_Manager.bat`을 Git 전체 이력에서 완전 소거하고 강제 푸시했습니다. **집 PC에서 다음 작업 시작 시 1회만** 아래 명령으로 원격 이력에 맞춰 주세요 *(이후에는 평소대로 `git pull --ff-only` 사용)*.
-> ```powershell
-> git fetch origin --prune --prune-tags
-> git reset --hard origin/main
-> ```
 
 ---
 
@@ -24,7 +17,8 @@
 | **P0/P1 전면 안정화 (`v1.0.0-beta.3`)** | • USB 바코드 자동 재인식 오탐 차단(정상 `USB 인쇄 지원`·`VID_0525`·Win10 `Sewoo` 제외, 실제 오류/미지정 `VID_0A5F`/`1504`만 표적 처리)<br>• 백업 시 `SEWOO_TE201` INF 추출 차단 + 복원 4단계 선설치 Win 11 세우 보호(`$wasPreExisting`) + USB/오프라인 공유 실패 시 거짓 성공 차단(`[실패 항목만 재시도]` 정상화)<br>• `Test-AsanNetworkAndServer` 외부망 `IntranetOnly` 오판 수정<br>• 5일 정리 NTFS 재백업 타임스탬프 버그 수정(`PrinterBackup.json` 기준 + 비반올림 통일)<br>• `EPSON_TMT88_LPT` LPT 포트 분기 + `LPT2`/`LPT3` 안내<br>• 다국어 INF `[Strings]` 영문/한글 우선순위 + `pnputil` `3010` 지원 + `PrintUIEntry /Ss` 파일 생성 검증 + `.reg` 치환 오류 보호 + 오프라인 ZIP USB 복사 실존 검증<br>• `DeleteDomainCredential` `Domain:target=` 추가, WSD 전역 3단계(UUID→완전일치→부분일치), `@($null)` 고스트 행 방어, 버그 리포트 `AcceptsReturn`/`HostCredCache` 마스킹/`FallbackNote`, 복원 `RestoreRows` 스냅샷, DPI 125~150% `FlowLayoutPanel`, INF `DriverStore`/`LocalPrt` 지연(Lazy) 구축 | **완료 (ALL PASS)** |
 | **약제팀 `ZT411` 골든 이미지 로컬 정책 반영** | • 원격 드라이버 서버(`\\172.23.2.130\driver`) 접근 완전 제거<br>• **기존 PC 추출 드라이버(`PrintBrm`/`ExportedDrivers`) + `.dat`/`.reg` 인쇄 기본 설정 복원 최우선**(`-PreExistingDrivers`/`-PreferExportedFirst`)<br>• 부득이한 경우에만 모든 골든 이미지 공통 로컬 경로(`C:\Users\admin\드라이버(win10_x64)\AMIS 3.0 장비\ZT411 (약국용 신형라벨프린터)\ZD8-6-5-26125\ZDesigner.inf`, `zd86526125-certified.exe`, `.drx`/`.drs`)로 대체 복원(`ZD410`/`ZD411`·`PrnInst.exe` 엄격 제외)<br>• 대체 복원 또는 백업 설정 미확인 시 요약 팝업·배너·도우미에서 **인쇄 기본 설정 마무리 필요** 경고 자동 표시 | **완료 (검증 PASS)** |
 | **재귀 코드 리뷰 Round 1~3 완료** | • **Round 1:** 부트스트랩 `"%%SELF%%"`·이중 삭제 방지, 코어 활성 NIC DNS·원자적 백업·USB 자식→부모 재인식·`Set-Printer` try/catch, GUI `Show-AsanMessageBox`·레이아웃 압축·탭 4 비동기 미리보기 전환<br>• **Round 2 (`#2~#11`):** 중복 가드 제거, 원자적 백업 `_OLD_` 데이터 유실 방어, WSD 전역 3단계 및 `UMB\UMB` 누락 수정, `Provider=%Token%` 간접 참조 해석, Case A 공유 연결 가드, `PollTimer` 영구 잠금 해제·`FormClosing` 재진입 차단, 탭 2 `BtnSpecInstall`/`BtnSpecProps` `-RegisterBusy`, 탭 4 미리보기 `Ok` 캐싱·예외 복구·`RetiredPreviews` Dispose·150ms 디바운스·이탈/종료 선중단, `verify_static` AST `MessageBox`·`$previewScript` 검사 강화<br>• **Round 3 (`[FIX-NOW]` 0건 확인):** ZT411 선설치/USB 폴백 시 백업 우선순위 역전 및 안내 누락 경로 봉쇄, `Find-LocalSpecialInstaller` 재귀 `ZD410|ZD411` 완전 차단 + `zd8` 우선, `smoke_test_local` 플레이스홀더 모드 마스킹 검증 보강 | **완료 (`[FIX-NOW]` 0건)** |
-| **자동 검증 스위트 고도화** | `verify_static.ps1` **6/6 PASS** (Core=73/GUI=56, AST `MessageBox`·`$previewScript`·`src/`↔`dist/` SHA-256 동기화 포함), `smoke_test_local.ps1` **3/3 PASS** (병원 실환경 Win 11 `NetStatus=Online` · 레이아웃 오류 0건 · `exit 99`) | **완료 (ALL PASS)** |
+| **코어 모듈 5분할 (`01a`~`01e`) + 문서 동기화** | 약 4,900줄의 `src/01_core.ps1`을 `01a_ctx_win32.ps1` / `01b_net_diag.ps1` / `01c_driver_inf.ps1` / `01d_backup_restore.ps1` / `01e_special_report_snapshot.ps1`로 **비공백 코드 0줄 차이 무손실 분할**(단일 `.bat` 배포 유지), `build_single_bat`·`verify_static` 9모듈 및 `src/` 미등록 파일 감지 추가, `README.md` ZT411 골든 이미지 로컬 정책·`E2E_TEST_CHECKLIST_v16.md` `%TEMP%` 자가 삭제 안내 동기화 | **완료 (무손실 검증 PASS)** |
+| **자동 검증 스위트 고도화** | `verify_static.ps1` **6/6 PASS** (9모듈·Core=73/GUI=56, AST `MessageBox`·`$previewScript`·`src/` 미등록 파일·`src/`↔`dist/` SHA-256 동기화 포함), `smoke_test_local.ps1` **3/3 PASS** (병원 Win 11 `Online` 및 집 PC `secrets.local.json` 실암호 주입 `Offline` 모두 레이아웃 오류 0건 · `exit 99`) | **완료 (ALL PASS)** |
 
 ---
 
@@ -49,12 +43,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\smoke_test_local.p
 
 ## 3. 우선순위별 다음 작업 및 재개 지점
 
-1. **[1순위 · 즉시 수행 가능] 병원 현장 E2E 통합 테스트 (`v1.0.0-beta.3`)**
-   * 직장 PC에서 위 2절 순서대로 `secrets.local.json` 생성 후 로컬 빌드한 `dist\Asan_Printer_Manager.bat`으로 Win 10 ↔ Win 11 테스트 PC(또는 VM)에서 `docs/E2E_TEST_CHECKLIST_v16.md` (`TC-01`~`TC-22`, 특히 `TC-01` `%TEMP%` 자가 정리, `TC-17B` 약제팀 ZT411 기존 복원 우선/골든 이미지 폴백 및 인쇄 기본 설정 경고, `TC-17C` USB 재인식, `TC-18B` LPT1/LPT2, `TC-22` 버그 리포트)를 수행합니다.
+1. **[1순위 · 즉시 수행 가능 (직장/병원 PC)] 병원 현장 E2E 통합 테스트 (`v1.0.0-beta.3`)**
+   * 직장 PC에서 `git pull --ff-only` 후 위 2절 순서대로 `secrets.local.json` 생성 → 로컬 빌드한 `dist\Asan_Printer_Manager.bat`으로 Win 10 ↔ Win 11 테스트 PC(또는 VM)에서 `docs/E2E_TEST_CHECKLIST_v16.md` (`TC-01`~`TC-22`, 특히 `TC-01` `%TEMP%` 자가 정리, `TC-17B` 약제팀 ZT411 기존 복원 우선/골든 이미지 폴백 및 인쇄 기본 설정 경고, `TC-17C` USB 재인식, `TC-18B` LPT1/LPT2, `TC-22` 버그 리포트)를 수행합니다.
    * 이슈 발견 시 소단위 패치 후 **`v1.0.0`** 정식 버전으로 승격합니다.
-2. **[2순위 · 유지보수 선택] `src/01_core.ps1` 모듈 소분리**
-   * 현재 `01_core.ps1`이 약 4,900줄이므로 현장 E2E 안정화 이후 `01a_ctx_win32.ps1` / `01b_net_diag.ps1` / `01c_driver_inf.ps1` / `01d_backup_restore.ps1` / `01e_special_report_snapshot.ps1`로 분리해 가독성을 높일 수 있습니다. *(단일 `dist/Asan_Printer_Manager.bat` 배포 구조 유지)*
-3. **[3순위 · 보류/선택] 관리번호 DB 연동 (`.xlsx` 자체 파싱)**
+2. **[2순위 · 보류/선택] 관리번호 DB 연동 (`.xlsx` 자체 파싱)**
    * 필요 시 용도(조회/폴더명/리포트)와 DRM 해제 샘플 `.xlsx` 공유 후 `.NET ZipFile + XmlDocument`로 외부 의존성 없이 구현.
 
 ---
@@ -65,7 +57,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\smoke_test_local.p
 ```powershell
 git pull --ff-only
 ```
-* Antigravity IDE에서 반드시 **`asan-printer-manager-v16`(저장소 루트) 폴더를 워크스페이스로 직접 열기** (`AGENTS.md` 자동 로드).
+* Antigravity IDE에서 반드시 **`asan-printer-manager`(저장소 루트) 폴더를 워크스페이스로 직접 열기** (`AGENTS.md` 자동 로드).
 
 ### 매 세션 종료 시 (Antigravity 자동 수행 원칙)
 1. 코드 변경 시 `scripts/` 3단계 검증(`build_single_bat.ps1` → `verify_static.ps1` → `smoke_test_local.ps1`) 모두 PASS 확인
@@ -76,6 +68,11 @@ git pull --ff-only
 
 ## 5. 세션별 작업 로그 (최신순)
 
+* **2026-11-25 21:10 (집 PC / 원격 이력 동기화 · 코어 모듈 5분할 무손실 완료 · 운영 문서 동기화):**
+  * **완료 작업:** 원격 강제 푸시 이력 동기화(`git fetch --prune --prune-tags` + `git reset --hard origin/main` + 로컬 `.git` 과거 평문 객체 `reflog expire`/`gc --prune=now` 정리) → 집 PC `secrets.local.json` 실암호 3종 주입 3단계 검증 사전 확인 → 2순위 작업인 `src/01_core.ps1`(4,902줄)을 5개 코어 모듈(`01a_ctx_win32.ps1` 328줄, `01b_net_diag.ps1` 1,669줄, `01c_driver_inf.ps1` 742줄, `01d_backup_restore.ps1` 1,353줄, `01e_special_report_snapshot.ps1` 806줄)로 무손실 분할하고 `build_single_bat.ps1`·`verify_static.ps1`·`smoke_test_local.ps1` 갱신(`verify_static`에 `src/` 미등록 파일 잔존 감지 추가) → `README.md`(구형 ZT411 `zd51177412`/`C:\ZD5-1-17-7412` 안내를 최신 골든 이미지 로컬 정책 `zd86526125`/`ZDesigner.inf`으로 동기화, 9모듈 트리 반영), `docs/E2E_TEST_CHECKLIST_v16.md`(`TC-01` `%TEMP%` 자가 정리 파일명 보강), `AGENTS.md`(2·4절 모듈 경로 갱신, 3절 원문 보존), `CHANGELOG.md`, `HANDOFF.md` 최신화.
+  * **무손실 교차 검증:** 분할 전(`464,991B`, 9,374줄) ↔ 분할 후(`464,983B`, 9,370줄) 비교 결과 경계 빈 줄 4개(8B) 외 **비공백 8,441줄 100% 일치(`ExactDiffs=0`, 코드/주석/문자열 변화 0바이트)**.
+  * **검증 결과:** `build_single_bat`(464,983B, `secrets.local.json` 3종 암호 주입, SHA-256 `59325E97...`), `verify_static` **6/6 PASS**(9모듈, Core=73/GUI=56, SrcEncIssues=0, BarePreview=0), `smoke_test_local` **3/3 PASS**(집 PC Win 11 `Offline`, 레이아웃 오류 0, `exit 99`).
+  * **다음 재개 지점:** 직장 PC에서 `git pull --ff-only` → `secrets.local.json` 1회 생성 후 실제 배포용 `dist\Asan_Printer_Manager.bat` 로컬 빌드 → 병원 현장 E2E 통합 테스트(`docs/E2E_TEST_CHECKLIST_v16.md` `TC-01`~`TC-22`) 수행 후 **`v1.0.0`** 정식 승격.
 * **2026-11-25 16:20 (직장 PC / Round 2·3 완료 · ZT411 정책 확정 · 평문 이력 소거 · 세션 마감):**
   * **완료 작업:** 재귀 코드 리뷰 Round 2 `[FIX-NOW]` #2~#11 전량 반영 + ZT411 원격 서버(`172.23.2.130`) 접근 제거 및 골든 이미지 로컬 경로(`C:\Users\admin\드라이버(win10_x64)\AMIS 3.0 장비\ZT411 (약국용 신형라벨프린터)\ZD8-6-5-26125\ZDesigner.inf`) 폴백·기존 PC 복원 우선·인쇄 기본 설정 마무리 경고 구현 → Round 3 재귀 감사 지적 3건(ZT411 선설치/USB 폴백 우선순위 역전, `ZD410|ZD411` 재귀 누수, BOM 정규화) 수정 및 재확인 **`[FIX-NOW]` 0건** 달성 + 초기 커밋 평문 암호 및 구형 `dist/*.bat` 전체 Git 이력 소거·강제 푸시 완료.
   * **수정/추가된 파일 (10개):** `src/01_core.ps1`, `src/02_gui_shell_tab1.ps1`, `src/03_gui_tab2.ps1`, `src/04_gui_tab3_tab4_main.ps1`, `scripts/verify_static.ps1`, `scripts/smoke_test_local.ps1`, `docs/E2E_TEST_CHECKLIST_v16.md`, `CHANGELOG.md`, `HANDOFF.md`, `.editorconfig`.
