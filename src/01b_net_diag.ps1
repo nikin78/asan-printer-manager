@@ -1663,8 +1663,8 @@ function Get-LocalPrinterDiagnostics {
             $reason         = $wsd.Reason
         } elseif ($OfflineMode) {
             $statusCode = 'OfflineUnverified'
-            $statusText = '오프라인 대기'
-            $reason     = '오프라인 상태라 연결 확인을 건너뛰었습니다. 새 PC에서 사내망 연결 시 자동으로 확인합니다.'
+            $statusText = '네트워크 미확인'
+            $reason     = '사내망에 연결되지 않아 프린터 응답을 확인하지 못했습니다. 새 PC에서 사내망 연결 시 자동으로 확인합니다.'
         } elseif ($portKind -eq 'TCPIP') {
             $chk = Test-TcpIpPrinterHealth -HostAddress $hostAddress -Protocol $protocol -PortNumber ([int]$portNumber) -SkipAliveFilter:$spec.SkipAliveFilter
             $statusCode = $chk.Status

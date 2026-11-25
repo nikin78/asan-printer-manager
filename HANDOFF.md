@@ -1,7 +1,7 @@
 # 작업 인수인계서 (HANDOFF) — 집 ↔ 직장 PC 양방향 공용
 
-> **최종 갱신:** 2026-11-26 03:41 (집 PC — 저작권 로고 제거 · 고시인성 UI/UX 개편 · 구 PC Win 10/11 공용 대응 · 상용 UX 라이팅 전면 정비 · 3단계 검증 및 5화면 시각 감사 PASS)  
-> **현재 개발 버전:** `v1.0.0-beta.3` (안 A 비밀 분리 + P0 전면 안정화 + ZT411 골든 이미지 로컬 정책 + 재귀 리뷰 Round 1~4 + 코어 5모듈 소분리 + 고시인성 UI/UX·Win 10/11 구 PC 공용 대응 완료)  
+> **최종 갱신:** 2026-11-26 04:10 (집 PC — 비활성 버튼 점선/사유 툴팁 · 오류 자동 리포트 안내(온·오프라인) · 사내망 네트워크 표기 직관화 · 재귀 UX 보강 · 3단계 검증 및 시각 감사 PASS)  
+> **현재 개발 버전:** `v1.0.0-beta.3` (안 A 비밀 분리 + P0 전면 안정화 + ZT411 골든 이미지 로컬 정책 + 재귀 리뷰 Round 1~4 + 코어 5모듈 소분리 + 고시인성 UI/UX·비활성 사유 툴팁·자동 오류 리포트 안내 완료)  
 > **GitHub 비공개 저장소:** https://github.com/nikin78/asan-printer-manager  
 > **자동 규칙 파일:** `AGENTS.md` *(Antigravity IDE가 저장소 루트 오픈 시 자동 로드)*  
 > **로컬 빌드 산출물:** `dist/Asan_Printer_Manager.bat` *(`.gitignore` 처리 — 각 PC에서 `secrets.local.json`으로 로컬 빌드 후 사내 경로/USB 배포)*
@@ -70,6 +70,14 @@ git pull --ff-only
 
 ## 5. 세션별 작업 로그 (최신순)
 
+* **2026-11-26 04:10 (집 PC / 비활성 버튼 점선·사유 툴팁 · 작업 오류 자동 리포트 안내 · 네트워크 표기 직관화 · 재귀 UX 보강):**
+  * **완료 작업:**
+    1. **비활성 버튼 직관성 & 사유 툴팁 (`02_gui_shell_tab1.ps1`):** WinForms 비활성 `GrayText` 한계를 GDI+ `Add_Paint`로 대체해 점선 테두리·연한 무채색·비굵은 글씨로 즉시 구분되게 개선하고, 비활성 컨트롤 툴팁 미발동 한계를 부모 컨테이너 `MouseMove`/`GetChildAtPoint` 라우팅(`Register-DisabledTooltipTree`) + `Set-ButtonTipState`로 해결해 전 탭 모든 비활성 버튼에 실시간 사유 툴팁 제공.
+    2. **전 작업 오류 자동 리포트 구성 안내 (`02`~`04`):** `Invoke-ErrorWithAutoReportPrompt`를 환경 진단·스캔·백업·복원·공유 인증·SIP-30M·USB 재인식·표준 설정·스풀러 초기화·서버 정리/삭제 전체 오류 경로에 통합(사내망 연결 시 서버 리포트함 전송, 사내망 미연결 시 로컬 `C:\_AsanPrtOffline\_Reports` 저장 + 폴더 열기 안내; `Show-BugReportDialog`도 온/오프라인 자동 적응).
+    3. **네트워크 상태 표기 직관화 (`01b`, `02`, `03`, `04`):** `오프라인` → `사내망 미연결` / `사내망 연결 · 서버 미응답` / `사내망 · 서버 연결됨` 및 `네트워크 미확인` 상태로 통일 + 배지 상세 툴팁 추가.
+    4. **재귀 UX 개선:** 전 탭 표 잘린 셀 전체 내용 `ToolTipText`, 탭 2 `1단계` 드롭다운 선택 즉시 로드(`SelectionChangeCommitted`)·`3단계` 배지·접힌 도우미 건수 표시, 탭 4 행 더블클릭 즉시 로드·검색어 `지우기` 버튼, `SID 복사` 즉각 피드백(`복사됨` 1.5초 표시 + 하단 상태 바 안내), 하단 상태 바 실행/오류 색상 구분 적용.
+  * **검증 결과:** `build_single_bat` (529,392B, 10,584줄, `secrets.local.json` 실암호 3종 주입, SHA-256 `28E48F9F...`), `verify_static` **6/6 PASS** (`Core=73/GUI=64`, `UndefinedCalls=0`, `GuiInWork=0`, `ScriptVarsInWork=0`, `CoreToGui=0`, `SrcEncIssues=0`), `smoke_test_local` **3/3 PASS** (`DisabledReasons` 등록 검증 포함, `RuntimeErrors=0`, `LayoutIssues(1040×720 & 960×640)=0`, `exit 99`), 4화면(`Tab1 사내망 미연결`, `Tab2`, `Tab4`, `Tab2 960×640`) 실제 렌더링 시각 감사 완료.
+  * **다음 재개 지점:** 직장 PC에서 `git pull --ff-only` → `secrets.local.json` 1회 생성 후 `dist\Asan_Printer_Manager.bat` 로컬 빌드 → 병원 현장 E2E 통합 테스트(`docs/E2E_TEST_CHECKLIST_v16.md` `TC-01`~`TC-22`) 수행 후 **`v1.0.0`** 정식 승격.
 * **2026-11-26 03:41 (집 PC / 저작권 로고 제거 · 고시인성 UI/UX 개편 · 구 PC Win 10/11 공용 로직 · 상용 UX 라이팅 정비):**
   * **완료 작업:**
     1. **저작권 로고 완전 제거:** `02_gui_shell_tab1.ps1`에서 병원 공식 로고 PNG(`AsanLogoB64`) 제거 → 순수 GDI+로 직접 그리는 자체 프린터 심볼 배지(`New-AsanPrinterBadgeImage`)·앱 아이콘으로 대체(산출물 약 4.4KB 경량화).

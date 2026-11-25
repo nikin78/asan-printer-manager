@@ -42,6 +42,10 @@ $script:Ui = @{
     BtnClearLog        = $null
     LogExpanded        = $false
     ButtonStyles       = @{}
+    DisabledReasons    = @{}
+    LastDisabledBtn    = $null
+    LastDisabledHost   = $null
+    SidFlashTimer      = $null
     BusyControls       = [System.Collections.Generic.List[System.Windows.Forms.Control]]::new()
     OnEnvRefreshed     = [System.Collections.Generic.List[scriptblock]]::new()
     OnRestoreCompleted = [System.Collections.Generic.List[scriptblock]]::new()
@@ -113,9 +117,9 @@ $script:Theme = @{
     InkPrimary     = [System.Drawing.Color]::FromArgb(20, 34, 35)
     InkSecondary   = [System.Drawing.Color]::FromArgb(47, 66, 68)
     InkMuted       = [System.Drawing.Color]::FromArgb(80, 99, 101)
-    DisabledBg     = [System.Drawing.Color]::FromArgb(228, 235, 235)
-    DisabledFg     = [System.Drawing.Color]::FromArgb(132, 150, 151)
-    DisabledBorder = [System.Drawing.Color]::FromArgb(200, 212, 212)
+    DisabledBg     = [System.Drawing.Color]::FromArgb(241, 243, 243)
+    DisabledFg     = [System.Drawing.Color]::FromArgb(148, 160, 162)
+    DisabledBorder = [System.Drawing.Color]::FromArgb(192, 204, 204)
     LogBg          = [System.Drawing.Color]::FromArgb(22, 34, 35)
     LogFg          = [System.Drawing.Color]::FromArgb(226, 236, 235)
 }
@@ -299,11 +303,89 @@ function Apply-ButtonVisualState {
     } else {
         $Button.BackColor = $script:Theme.DisabledBg
         $Button.ForeColor = $script:Theme.DisabledFg
-        $Button.FlatAppearance.BorderSize         = 1
+        $Button.FlatAppearance.BorderSize         = 0
         $Button.FlatAppearance.BorderColor        = $script:Theme.DisabledBorder
         $Button.FlatAppearance.MouseOverBackColor = $script:Theme.DisabledBg
         $Button.FlatAppearance.MouseDownBackColor = $script:Theme.DisabledBg
         $Button.Cursor = [System.Windows.Forms.Cursors]::Default
+    }
+    $Button.Invalidate()
+}
+
+function Set-ButtonTipState {
+    param(
+        [System.Windows.Forms.Button]$Button,
+        [bool]$Enabled,
+        [string]$DisabledReason = ''
+    )
+    if (-not $Button -or $Button.IsDisposed) { return }
+    if ($Enabled) {
+        if ($script:Ui.DisabledReasons.ContainsKey($Button)) { $script:Ui.DisabledReasons.Remove($Button) }
+        if ($script:Ui.LastDisabledBtn -eq $Button -and $script:Ui.LastDisabledHost -and $script:Ui.ToolTip) {
+            try { $script:Ui.ToolTip.Hide($script:Ui.LastDisabledHost) } catch {}
+            $script:Ui.LastDisabledBtn  = $null
+            $script:Ui.LastDisabledHost = $null
+        }
+    } elseif (-not [string]::IsNullOrWhiteSpace($DisabledReason)) {
+        $script:Ui.DisabledReasons[$Button] = $DisabledReason
+    }
+    if ($Button.Enabled -ne $Enabled) {
+        $Button.Enabled = $Enabled
+    }
+}
+
+function Register-DisabledTooltipTree {
+    param([System.Windows.Forms.Control]$Root)
+    if (-not $Root -or $Root.IsDisposed) { return }
+
+    $hasChildBtn = $false
+    foreach ($ch in $Root.Controls) {
+        if ($ch -is [System.Windows.Forms.Button]) { $hasChildBtn = $true }
+        if ($ch.Controls.Count -gt 0) {
+            Register-DisabledTooltipTree -Root $ch
+        }
+    }
+
+    if ($hasChildBtn) {
+        $Root.Add_MouseMove({
+            param($sender, $e)
+            if (-not $script:Ui.ToolTip) { return }
+            $hit = $sender.GetChildAtPoint($e.Location)
+            if ($hit -and ($hit -is [System.Windows.Forms.Button]) -and (-not $hit.Enabled)) {
+                $reason = ''
+                if ($script:Ui.DisabledReasons.ContainsKey($hit)) {
+                    $reason = [string]$script:Ui.DisabledReasons[$hit]
+                } elseif ($script:AsyncState.IsBusy) {
+                    $reason = '현재 다른 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.'
+                }
+                if (-not [string]::IsNullOrWhiteSpace($reason)) {
+                    if ($script:Ui.LastDisabledBtn -ne $hit) {
+                        if ($script:Ui.LastDisabledHost) {
+                            try { $script:Ui.ToolTip.Hide($script:Ui.LastDisabledHost) } catch {}
+                        }
+                        try {
+                            $script:Ui.ToolTip.Show($reason, $sender, ($hit.Left + 6), ($hit.Bottom + 4), 7000)
+                            $script:Ui.LastDisabledBtn  = $hit
+                            $script:Ui.LastDisabledHost = $sender
+                        } catch {}
+                    }
+                    return
+                }
+            }
+            if ($script:Ui.LastDisabledBtn -and $script:Ui.LastDisabledHost) {
+                try { $script:Ui.ToolTip.Hide($script:Ui.LastDisabledHost) } catch {}
+                $script:Ui.LastDisabledBtn  = $null
+                $script:Ui.LastDisabledHost = $null
+            }
+        })
+        $Root.Add_MouseLeave({
+            param($sender, $e)
+            if ($script:Ui.LastDisabledHost -eq $sender -and $script:Ui.ToolTip) {
+                try { $script:Ui.ToolTip.Hide($sender) } catch {}
+                $script:Ui.LastDisabledBtn  = $null
+                $script:Ui.LastDisabledHost = $null
+            }
+        })
     }
 }
 
@@ -323,47 +405,48 @@ function New-StyledButton {
     $bdSz  = 0
     $hover = $script:Theme.AsanDeep
     $font  = $script:FontBold
+    $disF  = $script:FontBase
 
     switch ($Variant) {
         'Primary' {
             $bg = $script:Theme.AsanGreen; $fg = [System.Drawing.Color]::White
             $bd = $script:Theme.AsanGreen; $bdSz = 1; $hover = $script:Theme.AsanDeep
-            $font = $script:FontBold
+            $font = $script:FontBold; $disF = $script:FontBase
         }
         'Secondary' {
             $bg = $script:Theme.CardBg; $fg = $script:Theme.InkPrimary
             $bd = $script:Theme.BorderBtn; $bdSz = 1; $hover = $script:Theme.AsanMint
-            $font = $script:FontBold
+            $font = $script:FontBold; $disF = $script:FontBase
         }
         'HeaderUtil' {
             $bg = $script:Theme.HeaderUtilBg; $fg = [System.Drawing.Color]::White
             $bd = $script:Theme.HeaderUtilBord; $bdSz = 1; $hover = $script:Theme.HeaderUtilHov
-            $font = $script:FontSmallB
+            $font = $script:FontSmallB; $disF = $script:FontSmall
         }
         'SoftTeal' {
             $bg = $script:Theme.AsanMint; $fg = $script:Theme.AsanDeep
             $bd = $script:Theme.AsanMintBorder; $bdSz = 1; $hover = $script:Theme.AsanMintHover
-            $font = $script:FontBold
+            $font = $script:FontBold; $disF = $script:FontBase
         }
         'Orange' {
             $bg = $script:Theme.AsanOrange; $fg = [System.Drawing.Color]::White
             $bd = $script:Theme.AsanOrange; $bdSz = 1; $hover = $script:Theme.AsanOrangeDeep
-            $font = $script:FontBold
+            $font = $script:FontBold; $disF = $script:FontBase
         }
         'SoftOrange' {
             $bg = $script:Theme.AsanOrangeTint; $fg = $script:Theme.AsanOrangeText
             $bd = $script:Theme.AsanOrangeBord; $bdSz = 1; $hover = [System.Drawing.Color]::FromArgb(255, 226, 189)
-            $font = $script:FontBold
+            $font = $script:FontBold; $disF = $script:FontBase
         }
         'Danger' {
             $bg = $script:Theme.DangerRed; $fg = [System.Drawing.Color]::White
             $bd = $script:Theme.DangerRed; $bdSz = 1; $hover = $script:Theme.DangerRedDeep
-            $font = $script:FontBold
+            $font = $script:FontBold; $disF = $script:FontBase
         }
         'DangerOutline' {
             $bg = [System.Drawing.Color]::FromArgb(255, 244, 243); $fg = $script:Theme.DangerRedDeep
             $bd = $script:Theme.DangerRedBord; $bdSz = 1; $hover = $script:Theme.DangerRedTint
-            $font = $script:FontBold
+            $font = $script:FontBold; $disF = $script:FontBase
         }
         default {
             $hover = $bg
@@ -378,16 +461,38 @@ function New-StyledButton {
     $btn.UseVisualStyleBackColor = $false
 
     $script:Ui.ButtonStyles[$btn] = @{
-        Bg         = $bg
-        Fg         = $fg
-        Border     = $bd
-        BorderSize = $bdSz
-        Hover      = $hover
+        Bg           = $bg
+        Fg           = $fg
+        Border       = $bd
+        BorderSize   = $bdSz
+        Hover        = $hover
+        Font         = $font
+        DisabledFont = $disF
     }
     Apply-ButtonVisualState -Button $btn
     $btn.Add_EnabledChanged({
         param($sender, $e)
         Apply-ButtonVisualState -Button $sender
+    })
+    # WinForms 기본 GrayText(#6D6D6D)를 대체해 비활성 상태를 점선 테두리·연한 무채색으로 직관적 표시
+    $btn.Add_Paint({
+        param($sender, $e)
+        if ($sender.Enabled) { return }
+        $g  = $e.Graphics
+        $rc = New-Object System.Drawing.Rectangle(0, 0, $sender.Width, $sender.Height)
+        $br = New-Object System.Drawing.SolidBrush($script:Theme.DisabledBg)
+        $g.FillRectangle($br, $rc)
+        $br.Dispose()
+
+        $pen = New-Object System.Drawing.Pen($script:Theme.DisabledBorder, 1)
+        $pen.DashStyle = [System.Drawing.Drawing2D.DashStyle]::Dash
+        $g.DrawRectangle($pen, 0, 0, ($sender.Width - 1), ($sender.Height - 1))
+        $pen.Dispose()
+
+        $drawFont = $script:FontBase
+        if ($sender.Font -and $sender.Font.Size -lt 8.8) { $drawFont = $script:FontSmall }
+        $flags = [System.Windows.Forms.TextFormatFlags]::HorizontalCenter -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor [System.Windows.Forms.TextFormatFlags]::EndEllipsis -bor [System.Windows.Forms.TextFormatFlags]::SingleLine
+        [System.Windows.Forms.TextRenderer]::DrawText($g, $sender.Text, $drawFont, $rc, $script:Theme.DisabledFg, $flags)
     })
 
     if ($RegisterBusy) { $script:Ui.BusyControls.Add($btn) }
@@ -428,6 +533,7 @@ function New-StyledGrid {
     $dgv.ColumnHeadersHeight         = 32
     $dgv.RowTemplate.Height          = 30
     $dgv.Font                        = $script:FontBase
+    $dgv.ShowCellToolTips            = $true
     $dgv.AutoSizeColumnsMode         = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::None
 
     $dgv.ColumnHeadersDefaultCellStyle.BackColor = $script:Theme.GridHeadBg
@@ -491,19 +597,28 @@ function Add-UiLog {
 }
 
 # ============================================================================
-# [C3 Fix] 전 탭 조건부 버튼 활성 상태 중앙 동기화
+# [C3 Fix] 전 탭 조건부 버튼 활성 상태 + 비활성 사유 툴팁 중앙 동기화
 # ============================================================================
 function Sync-AllUiButtonStates {
     $busy     = [bool]$script:AsyncState.IsBusy
     $net      = $script:AppState.NetworkInfo
     $isOnline = ($null -ne $net -and $net.Status -eq 'Online' -and -not [string]::IsNullOrWhiteSpace([string]$net.PrtBakDir))
+    $busyMsg  = '현재 작업이 진행 중입니다. 완료 후 다시 시도해 주세요.'
 
-    # 탭 1: 서버 백업 버튼은 온라인일 때만 활성 (비활성 색상은 EnabledChanged 자동 동기화)
+    # 탭 1: 서버 백업 버튼은 사내망·서버 연결 시에만 활성
     if ($script:Tab1Ui -and $script:Tab1Ui.BtnBackupServer -and -not $script:Tab1Ui.BtnBackupServer.IsDisposed) {
-        $script:Tab1Ui.BtnBackupServer.Enabled = ((-not $busy) -and $isOnline)
+        $r1 = $busyMsg
+        if (-not $busy) {
+            if ($net -and $net.Status -eq 'IntranetOnly') {
+                $r1 = '사내망은 연결되었으나 백업 서버가 응답하지 않습니다. ZIP 파일로 저장을 이용해 주세요.'
+            } else {
+                $r1 = '병원 사내망에 연결되지 않아 서버 백업을 사용할 수 없습니다. 네트워크를 연결하거나 ZIP 파일로 저장을 이용해 주세요.'
+            }
+        }
+        Set-ButtonTipState -Button $script:Tab1Ui.BtnBackupServer -Enabled ((-not $busy) -and $isOnline) -DisabledReason $r1
     }
 
-    # 탭 2: 백업 로드 여부, 선택 개수, 실패 건수, SIP-30M 2단계 조건 정확 반영
+    # 탭 2: 백업 로드 여부, 선택 개수, 실패 건수, 특수장비 조건 + 사유 툴팁 동기화
     if ($script:Tab2Ui -and $script:Tab2Ui.DgvRestore -and -not $script:Tab2Ui.DgvRestore.IsDisposed) {
         $hasServer = ((@($script:Tab2Ui.ComboBackupEntries)).Count -gt 0)
         $hasLoaded = (-not [string]::IsNullOrWhiteSpace([string]$script:Tab2Ui.LoadedSourcePath))
@@ -512,35 +627,109 @@ function Sync-AllUiButtonStates {
         foreach ($r in $script:Tab2Ui.DgvRestore.Rows) {
             if ($r.Cells[0].Value -eq $true) { $selCnt++ }
         }
-        $hasSip2    = ($null -ne $script:Tab2Ui.CurrentSpecInfo -and [bool]$script:Tab2Ui.CurrentSpecInfo.Info.HasStep2)
-        $hasSpec    = ($null -ne $script:Tab2Ui.CurrentSpecInfo)
-        $hasSpecExe = ($hasSpec -and $script:Tab2Ui.CurrentSpecInfo.Info.Installer -and $script:Tab2Ui.CurrentSpecInfo.Info.Installer.Found -and -not [string]::IsNullOrWhiteSpace([string]$script:Tab2Ui.CurrentSpecInfo.Info.Installer.ExePath))
+        $hasSip2     = ($null -ne $script:Tab2Ui.CurrentSpecInfo -and [bool]$script:Tab2Ui.CurrentSpecInfo.Info.HasStep2)
+        $hasSpec     = ($null -ne $script:Tab2Ui.CurrentSpecInfo)
+        $selSpecType = ''
+        if ($hasSpec -and $script:Tab2Ui.CurrentSpecInfo.Row) { $selSpecType = [string]$script:Tab2Ui.CurrentSpecInfo.Row.SpecialType }
+        $hasSpecExe  = ($hasSpec -and $script:Tab2Ui.CurrentSpecInfo.Info.Installer -and $script:Tab2Ui.CurrentSpecInfo.Info.Installer.Found -and -not [string]::IsNullOrWhiteSpace([string]$script:Tab2Ui.CurrentSpecInfo.Info.Installer.ExePath))
+        $hasSpecDir  = ($hasSpec -and $script:Tab2Ui.CurrentSpecInfo.Info.Installer -and $script:Tab2Ui.CurrentSpecInfo.Info.Installer.Found -and -not [string]::IsNullOrWhiteSpace([string]$script:Tab2Ui.CurrentSpecInfo.Info.Installer.Folder))
 
-        if ($script:Tab2Ui.BtnLoadServer)   { $script:Tab2Ui.BtnLoadServer.Enabled   = ((-not $busy) -and $hasServer) }
-        if ($script:Tab2Ui.BtnRunDeferred)  { $script:Tab2Ui.BtnRunDeferred.Enabled  = ((-not $busy) -and $hasLoaded) }
-        if ($script:Tab2Ui.BtnStartRestore) { $script:Tab2Ui.BtnStartRestore.Enabled = ((-not $busy) -and $hasLoaded -and ($selCnt -gt 0)) }
-        if ($script:Tab2Ui.BtnRetryFailed)  { $script:Tab2Ui.BtnRetryFailed.Enabled  = ((-not $busy) -and $hasLoaded -and $hasFail) }
-        if ($script:Tab2Ui.BtnSpecInstall)  { $script:Tab2Ui.BtnSpecInstall.Enabled  = ((-not $busy) -and $hasSpecExe) }
-        if ($script:Tab2Ui.BtnSpecStep2)    { $script:Tab2Ui.BtnSpecStep2.Enabled    = ((-not $busy) -and $hasSip2) }
-        if ($script:Tab2Ui.BtnSpecProps)    { $script:Tab2Ui.BtnSpecProps.Enabled    = ((-not $busy) -and $hasSpec) }
+        if ($script:Tab2Ui.BtnLoadServer) {
+            $rLoad = $busyMsg
+            if (-not $busy) {
+                if (-not $isOnline) { $rLoad = '사내 백업 서버에 연결되지 않아 목록을 불러올 수 없습니다. ZIP 파일 열기를 이용해 주세요.' }
+                else { $rLoad = '서버에 저장된 백업 폴더가 없습니다.' }
+            }
+            Set-ButtonTipState -Button $script:Tab2Ui.BtnLoadServer -Enabled ((-not $busy) -and $hasServer) -DisabledReason $rLoad
+        }
+        if ($script:Tab2Ui.BtnRunDeferred) {
+            $rDef = $busyMsg
+            if (-not $busy) { $rDef = '먼저 1단계에서 서버 백업이나 ZIP 파일을 불러와 주세요.' }
+            Set-ButtonTipState -Button $script:Tab2Ui.BtnRunDeferred -Enabled ((-not $busy) -and $hasLoaded) -DisabledReason $rDef
+        }
+        if ($script:Tab2Ui.BtnStartRestore) {
+            $rStart = $busyMsg
+            if (-not $busy) {
+                if (-not $hasLoaded) { $rStart = '먼저 1단계에서 복원할 백업을 불러와 주세요.' }
+                else { $rStart = '2단계 목록에서 복원할 프린터를 1대 이상 체크해 주세요.' }
+            }
+            Set-ButtonTipState -Button $script:Tab2Ui.BtnStartRestore -Enabled ((-not $busy) -and $hasLoaded -and ($selCnt -gt 0)) -DisabledReason $rStart
+        }
+        if ($script:Tab2Ui.BtnRetryFailed) {
+            $rRetry = $busyMsg
+            if (-not $busy) {
+                if (-not $hasLoaded) { $rRetry = '먼저 1단계에서 복원할 백업을 불러와 주세요.' }
+                else { $rRetry = '복원에 실패한 프린터가 없어 다시 시도할 항목이 없습니다.' }
+            }
+            Set-ButtonTipState -Button $script:Tab2Ui.BtnRetryFailed -Enabled ((-not $busy) -and $hasLoaded -and $hasFail) -DisabledReason $rRetry
+        }
+        if ($script:Tab2Ui.BtnSpecInstall) {
+            $rInst = $busyMsg
+            if (-not $busy) {
+                if (-not $hasSpec) { $rInst = '감지된 특수 장비가 없습니다.' }
+                elseif ($selSpecType -eq 'EPSON_TMT88_LPT') { $rInst = 'EPSON TM-T88VI는 드라이버를 설치하지 않고 LPT1 직결로 사용하는 장비입니다.' }
+                else { $rInst = '이 PC의 로컬 드라이버 폴더에서 해당 장비의 설치 파일을 찾지 못했습니다.' }
+            }
+            Set-ButtonTipState -Button $script:Tab2Ui.BtnSpecInstall -Enabled ((-not $busy) -and $hasSpecExe) -DisabledReason $rInst
+        }
+        if ($script:Tab2Ui.BtnSpecStep2) {
+            $rS2 = $busyMsg
+            if (-not $busy) { $rS2 = 'SIP-30M 진료카드 발급기를 선택했을 때만 사용할 수 있는 마무리 기능입니다.' }
+            Set-ButtonTipState -Button $script:Tab2Ui.BtnSpecStep2 -Enabled ((-not $busy) -and $hasSip2) -DisabledReason $rS2
+        }
+        if ($script:Tab2Ui.BtnSpecFolder) {
+            $rDir = '이 장비의 로컬 설치 폴더를 찾지 못했습니다.'
+            if (-not $hasSpec) { $rDir = '감지된 특수 장비가 없습니다.' }
+            Set-ButtonTipState -Button $script:Tab2Ui.BtnSpecFolder -Enabled $hasSpecDir -DisabledReason $rDir
+        }
+        if ($script:Tab2Ui.BtnSpecProps) {
+            $rPrp = $busyMsg
+            if (-not $busy) { $rPrp = '감지된 특수 장비가 없습니다.' }
+            Set-ButtonTipState -Button $script:Tab2Ui.BtnSpecProps -Enabled ((-not $busy) -and $hasSpec) -DisabledReason $rPrp
+        }
     }
 
-    # 탭 3: 선택된 프린터 행 유무에 따라 선택 전용 버튼 활성 상태 동기화
+    # 탭 3: 선택된 프린터 행 유무에 따라 선택 전용 버튼 활성 상태 및 사유 툴팁 동기화
     if ($script:Tab3Ui -and $script:Tab3Ui.DgvVerify -and -not $script:Tab3Ui.DgvVerify.IsDisposed) {
         $hasSel3 = ($script:Tab3Ui.DgvVerify.SelectedRows.Count -gt 0)
-        if ($script:Tab3Ui.BtnSingleTest) { $script:Tab3Ui.BtnSingleTest.Enabled = ((-not $busy) -and $hasSel3) }
-        if ($script:Tab3Ui.BtnProps)      { $script:Tab3Ui.BtnProps.Enabled      = ((-not $busy) -and $hasSel3) }
-        if ($script:Tab3Ui.BtnPrefs)      { $script:Tab3Ui.BtnPrefs.Enabled      = ((-not $busy) -and $hasSel3) }
-        if ($script:Tab3Ui.BtnSetDefault) { $script:Tab3Ui.BtnSetDefault.Enabled = ((-not $busy) -and $hasSel3) }
+        $rSel3   = $busyMsg
+        if (-not $busy) { $rSel3 = '먼저 위 목록에서 프린터를 하나 선택해 주세요.' }
+        if ($script:Tab3Ui.BtnSingleTest) { Set-ButtonTipState -Button $script:Tab3Ui.BtnSingleTest -Enabled ((-not $busy) -and $hasSel3) -DisabledReason $rSel3 }
+        if ($script:Tab3Ui.BtnProps)      { Set-ButtonTipState -Button $script:Tab3Ui.BtnProps      -Enabled ((-not $busy) -and $hasSel3) -DisabledReason $rSel3 }
+        if ($script:Tab3Ui.BtnPrefs)      { Set-ButtonTipState -Button $script:Tab3Ui.BtnPrefs      -Enabled ((-not $busy) -and $hasSel3) -DisabledReason $rSel3 }
+        if ($script:Tab3Ui.BtnSetDefault) { Set-ButtonTipState -Button $script:Tab3Ui.BtnSetDefault -Enabled ((-not $busy) -and $hasSel3) -DisabledReason $rSel3 }
     }
 
-    # 탭 4: 5일 경과 수 및 행 선택 상태 반영
+    # 탭 4: 5일 경과 수, 검색어, 행 선택 상태 및 사유 툴팁 동기화
     if ($script:Tab4Ui -and $script:Tab4Ui.DgvServer -and -not $script:Tab4Ui.DgvServer.IsDisposed) {
-        $old5   = (@($script:AppState.ServerBackups | Where-Object { $_.IsOld5Days })).Count
-        $hasSel = ($script:Tab4Ui.DgvServer.SelectedRows.Count -gt 0)
-        if ($script:Tab4Ui.BtnCleanOld5)  { $script:Tab4Ui.BtnCleanOld5.Enabled  = ((-not $busy) -and $isOnline -and ($old5 -gt 0)) }
-        if ($script:Tab4Ui.BtnLoadToTab2) { $script:Tab4Ui.BtnLoadToTab2.Enabled = ((-not $busy) -and $hasSel) }
-        if ($script:Tab4Ui.BtnDeleteOne)  { $script:Tab4Ui.BtnDeleteOne.Enabled  = ((-not $busy) -and $isOnline -and $hasSel) }
+        $old5      = (@($script:AppState.ServerBackups | Where-Object { $_.IsOld5Days })).Count
+        $hasSel    = ($script:Tab4Ui.DgvServer.SelectedRows.Count -gt 0)
+        $hasSearch = ($script:Tab4Ui.TxtSearch -and -not [string]::IsNullOrWhiteSpace($script:Tab4Ui.TxtSearch.Text))
+
+        if ($script:Tab4Ui.BtnClearSearch) {
+            Set-ButtonTipState -Button $script:Tab4Ui.BtnClearSearch -Enabled $hasSearch -DisabledReason '입력된 검색어가 없습니다.'
+        }
+        if ($script:Tab4Ui.BtnCleanOld5) {
+            $rOld = $busyMsg
+            if (-not $busy) {
+                if (-not $isOnline) { $rOld = '사내 백업 서버에 연결되지 않아 정리할 수 없습니다.' }
+                else { $rOld = '5일 이상 지난 서버 백업이 없어 정리할 항목이 없습니다.' }
+            }
+            Set-ButtonTipState -Button $script:Tab4Ui.BtnCleanOld5 -Enabled ((-not $busy) -and $isOnline -and ($old5 -gt 0)) -DisabledReason $rOld
+        }
+        if ($script:Tab4Ui.BtnLoadToTab2) {
+            $rL2 = $busyMsg
+            if (-not $busy) { $rL2 = '먼저 위 목록에서 불러올 백업 폴더를 선택해 주세요.' }
+            Set-ButtonTipState -Button $script:Tab4Ui.BtnLoadToTab2 -Enabled ((-not $busy) -and $hasSel) -DisabledReason $rL2
+        }
+        if ($script:Tab4Ui.BtnDeleteOne) {
+            $rDel = $busyMsg
+            if (-not $busy) {
+                if (-not $isOnline) { $rDel = '사내 백업 서버에 연결되지 않아 삭제할 수 없습니다.' }
+                else { $rDel = '먼저 위 목록에서 삭제할 백업 폴더를 선택해 주세요.' }
+            }
+            Set-ButtonTipState -Button $script:Tab4Ui.BtnDeleteOne -Enabled ((-not $busy) -and $isOnline -and $hasSel) -DisabledReason $rDel
+        }
     }
 }
 
@@ -548,9 +737,15 @@ function Set-UiBusyState {
     param(
         [bool]$IsBusy,
         [string]$StatusText = '',
-        [switch]$Indeterminate
+        [switch]$Indeterminate,
+        [switch]$IsError
     )
     $script:AsyncState.IsBusy = $IsBusy
+    if ($script:Ui.LastDisabledHost -and $script:Ui.ToolTip) {
+        try { $script:Ui.ToolTip.Hide($script:Ui.LastDisabledHost) } catch {}
+        $script:Ui.LastDisabledBtn  = $null
+        $script:Ui.LastDisabledHost = $null
+    }
     foreach ($ctrl in $script:Ui.BusyControls) {
         if ($ctrl -and -not $ctrl.IsDisposed) {
             $ctrl.Enabled = (-not $IsBusy)
@@ -576,8 +771,17 @@ function Set-UiBusyState {
             $script:Ui.PrgBar.Value = 0
         }
     }
-    if (-not [string]::IsNullOrWhiteSpace($StatusText) -and $script:Ui.LblProgressText) {
-        $script:Ui.LblProgressText.Text = $StatusText
+    if ($script:Ui.LblProgressText -and -not $script:Ui.LblProgressText.IsDisposed) {
+        if (-not [string]::IsNullOrWhiteSpace($StatusText)) {
+            $script:Ui.LblProgressText.Text = $StatusText
+        }
+        if ($IsError) {
+            $script:Ui.LblProgressText.ForeColor = $script:Theme.DangerRedDeep
+        } elseif ($IsBusy) {
+            $script:Ui.LblProgressText.ForeColor = $script:Theme.AsanDeep
+        } else {
+            $script:Ui.LblProgressText.ForeColor = $script:Theme.InkSecondary
+        }
     }
 }
 
@@ -722,10 +926,11 @@ function Invoke-AsanAsyncTask {
         $script:AsyncState.PollTimer.Start()
     }
     catch {
+        $startErr = $_.Exception.Message
         Stop-ActiveAsyncRunspace
-        Set-UiBusyState -IsBusy $false -StatusText '작업 시작 실패'
-        Add-UiLog -Message "비동기 작업 기동 오류: $($_.Exception.Message)" -Level 'ERROR'
-        [void](Show-AsanMessageBox -Text "작업을 시작할 수 없습니다:`r`n$($_.Exception.Message)" -Caption '실행 오류' -Buttons 'OK' -Icon 'Error')
+        Set-UiBusyState -IsBusy $false -StatusText '작업 시작 실패' -IsError
+        Add-UiLog -Message "비동기 작업 기동 오류: $startErr" -Level 'ERROR'
+        Invoke-ErrorWithAutoReportPrompt -Caption '실행 오류' -Message "작업을 시작할 수 없습니다:`r`n$startErr" -Category 'UI/프로그램 버그' -ErrorDetail $startErr
     }
 }
 
@@ -814,8 +1019,43 @@ function Show-WppRemediationDialog {
 }
 
 # ============================================================================
-# [버그/오류 리포트 팝업] DialogResult 기반 클로저 안전 + _PRTBAK\_REPORTS 전송
+# [자동 오류 리포트 안내 + 버그 리포트 팝업] 온·오프라인 자동 분기 + 클로저 안전
 # ============================================================================
+function Invoke-ErrorWithAutoReportPrompt {
+    param(
+        [string]$Caption = '작업 오류',
+        [string]$Message = '작업 중 예기치 않은 오류가 발생했습니다.',
+        [string]$Category = 'UI/프로그램 버그',
+        [string]$ErrorDetail = '',
+        [string]$TargetPrinter = ''
+    )
+    $net      = $script:AppState.NetworkInfo
+    $isOnline = ($null -ne $net -and $net.Status -eq 'Online' -and -not [string]::IsNullOrWhiteSpace([string]$net.PrtBakDir))
+    $netLabel = '사내망 미연결'
+    if ($net) {
+        if ($net.Status -eq 'Online') { $netLabel = '사내망·서버 연결됨' }
+        elseif ($net.Status -eq 'IntranetOnly') { $netLabel = '사내망 연결됨 (서버 응답 없음)' }
+    }
+
+    if ($isOnline) {
+        $promptTail = "오류 진단 리포트를 자동으로 구성해 사내 리포트함으로 보낼까요?`r`nPC 환경과 작업 로그가 자동 첨부되며 비밀번호는 안전하게 가려집니다."
+    } else {
+        $promptTail = "현재 사내 백업 서버에 연결되어 있지 않습니다.`r`n오류 진단 리포트를 자동으로 구성해 이 PC의 로컬 폴더(C:\_AsanPrtOffline\_Reports)에 저장할까요?`r`n비밀번호는 안전하게 가려지며, 나중에 파일만 담당자에게 전달해 주시면 됩니다."
+    }
+
+    $fullMsg = "$Message`r`n`r`n$promptTail"
+    $ans = Show-AsanMessageBox -Text $fullMsg -Caption $Caption -Buttons 'YesNo' -Icon 'Error'
+    if ($ans -eq [System.Windows.Forms.DialogResult]::Yes) {
+        $autoSum = @(
+            "발생 시각: $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))",
+            "오류 분류: $Category",
+            "네트워크 상태: $netLabel",
+            "오류 내용: $ErrorDetail"
+        ) -join "`r`n"
+        Show-BugReportDialog -DefaultCategory $Category -DefaultPrinter $TargetPrinter -ErrorSummary $autoSum
+    }
+}
+
 function Show-BugReportDialog {
     param(
         [string]$DefaultCategory = '복원/드라이버 오류',
@@ -828,9 +1068,13 @@ function Show-BugReportDialog {
         return
     }
 
+    $netNow   = $script:AppState.NetworkInfo
+    $isOnline = ($null -ne $netNow -and $netNow.Status -eq 'Online' -and -not [string]::IsNullOrWhiteSpace([string]$netNow.PrtBakDir))
+
     $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text            = '오류 리포트 보내기'
-    $dlg.Size            = New-Object System.Drawing.Size(560, 420)
+    if ($isOnline) { $dlg.Text = '오류 리포트 보내기' }
+    else { $dlg.Text = '오류 리포트 로컬 저장' }
+    $dlg.Size            = New-Object System.Drawing.Size(570, 430)
     $dlg.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterParent
     $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
     $dlg.MaximizeBox     = $false
@@ -840,11 +1084,20 @@ function Show-BugReportDialog {
     $dlg.Padding         = New-Object System.Windows.Forms.Padding(14)
 
     $lblGuide = New-Object System.Windows.Forms.Label
-    $lblGuide.Text      = 'PC 환경, 프린터·포트 상태, 작업 로그를 모아 서버 리포트함으로 전송합니다. 비밀번호는 자동으로 가려지며, 오프라인일 때는 PC에 저장됩니다.'
-    $lblGuide.Dock      = [System.Windows.Forms.DockStyle]::Top
-    $lblGuide.Height    = 40
-    $lblGuide.ForeColor = $script:Theme.InkSecondary
-    $lblGuide.Font      = $script:FontSmall
+    if ($isOnline) {
+        $lblGuide.Text      = 'PC 환경, 프린터·포트 상태, 작업 로그를 모아 사내 서버 리포트함으로 전송합니다. 비밀번호는 자동으로 가려집니다.'
+        $lblGuide.BackColor = $script:Theme.AsanMint
+        $lblGuide.ForeColor = $script:Theme.AsanDeep
+    } else {
+        $lblGuide.Text      = '현재 사내 백업 서버에 연결되어 있지 않아 이 PC(C:\_AsanPrtOffline\_Reports)에 리포트를 저장합니다. 비밀번호는 자동으로 가려지며, 저장 후 파일만 담당자에게 전달해 주세요.'
+        $lblGuide.BackColor = $script:Theme.AsanOrangeTint
+        $lblGuide.ForeColor = $script:Theme.AsanOrangeText
+    }
+    $lblGuide.Dock        = [System.Windows.Forms.DockStyle]::Top
+    $lblGuide.Height      = 46
+    $lblGuide.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $lblGuide.Padding     = New-Object System.Windows.Forms.Padding(8, 5, 8, 5)
+    $lblGuide.Font        = $script:FontSmallB
 
     # DPI 125~150% 라벨-입력창 겹침 방지 TableLayoutPanel
     $pnlFields = New-Object System.Windows.Forms.TableLayoutPanel
@@ -919,7 +1172,9 @@ function Show-BugReportDialog {
     $btnCan.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
     $btnCan.Margin       = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
 
-    $btnSend = New-StyledButton -Text '리포트 전송' -Width 126 -Height 32 -Variant 'Orange'
+    $sendBtnText = '서버로 리포트 전송'
+    if (-not $isOnline) { $sendBtnText = '로컬 폴더에 저장' }
+    $btnSend = New-StyledButton -Text $sendBtnText -Width 146 -Height 32 -Variant 'Orange'
     $btnSend.DialogResult = [System.Windows.Forms.DialogResult]::OK
 
     $flpRight.Controls.Add($btnCan)
@@ -1041,8 +1296,11 @@ function Show-BugReportDialog {
                 $fbDetail = "`r`n• 서버 전송 실패 사유: $($data.FallbackNote)"
                 Add-UiLog -Message "서버 리포트 전송 실패 사유: $($data.FallbackNote)" -Level 'WARN'
             }
-            Add-UiLog -Message "오프라인/로컬 리포트 저장 완료: $($data.SavedPath)" -Level 'WARN'
-            [void](Show-AsanMessageBox -Text "서버 연결이 불가하여 로컬 오프라인 리포트 폴더에 저장했습니다.$fbDetail`r`n`r`n• 저장 경로: $($data.SavedPath)`r`n• 추후 파일만 개발 담당자에게 전달해 주세요." -Caption '로컬 리포트 저장 완료' -Buttons 'OK' -Icon 'Information')
+            Add-UiLog -Message "로컬 리포트 저장 완료: $($data.SavedPath)" -Level 'WARN'
+            $openRep = Show-AsanMessageBox -Text "사내 서버에 연결되지 않아 이 PC의 오프라인 리포트 폴더에 저장했습니다.$fbDetail`r`n`r`n저장 경로: $($data.SavedPath)`r`n나중에 해당 폴더의 파일을 담당자에게 전달해 주세요.`r`n`r`n저장된 폴더를 바로 열어 확인하시겠습니까?" -Caption '로컬 리포트 저장 완료' -Buttons 'YesNo' -Icon 'Information'
+            if ($openRep -eq [System.Windows.Forms.DialogResult]::Yes) {
+                Open-FolderInExplorerSafe -FolderPath $data.SavedPath
+            }
         }
     }
 
@@ -1060,26 +1318,30 @@ function Update-HeaderAndWppUi {
     if ($net) { $ipText = $net.IPAddress }
     $script:Ui.LblPcIp.Text = "$($env:COMPUTERNAME)  $ipText"
 
+    $tip = $script:Ui.ToolTip
     if (-not $net) {
-        $script:Ui.LblNetBadge.Text      = ' ● 연결 확인 중 '
+        $script:Ui.LblNetBadge.Text      = ' ● 네트워크 확인 중 '
         $script:Ui.LblNetBadge.BackColor = $script:Theme.InkMuted
-        $script:Ui.LblServerPath.Text    = '서버 연결 확인 중'
+        $script:Ui.LblServerPath.Text    = '사내망 및 서버 연결 확인 중'
         $script:Ui.PnlWppBanner.Visible  = $false
         return
     }
 
     if ($net.Status -eq 'Online') {
-        $script:Ui.LblNetBadge.Text      = ' ● 서버 연결됨 '
+        $script:Ui.LblNetBadge.Text      = ' ● 사내망 · 서버 연결됨 '
         $script:Ui.LblNetBadge.BackColor = $script:Theme.BadgeOnlineBg
-        $script:Ui.LblServerPath.Text    = "백업 서버  $($global:AsanCtx.ServerIP)"
+        $script:Ui.LblServerPath.Text    = "백업 서버  $($global:AsanCtx.ServerIP) 연결됨"
+        if ($tip) { $tip.SetToolTip($script:Ui.LblNetBadge, "병원 사내망과 백업 서버($($global:AsanCtx.ServerIP))에 정상 연결되어 있습니다.") }
     } elseif ($net.Status -eq 'IntranetOnly') {
-        $script:Ui.LblNetBadge.Text      = ' ▲ 서버 응답 없음 '
+        $script:Ui.LblNetBadge.Text      = ' ▲ 사내망 연결 · 서버 미응답 '
         $script:Ui.LblNetBadge.BackColor = $script:Theme.AsanOrange
-        $script:Ui.LblServerPath.Text    = '서버 응답 없음 · ZIP 백업/복원 가능'
+        $script:Ui.LblServerPath.Text    = '사내망 연결됨 · 백업 서버 응답 없음 · ZIP 백업 가능'
+        if ($tip) { $tip.SetToolTip($script:Ui.LblNetBadge, "병원 사내망은 연결되었으나 백업 서버($($global:AsanCtx.ServerIP))가 응답하지 않습니다. ZIP 파일 백업·복원은 사용할 수 있습니다.") }
     } else {
-        $script:Ui.LblNetBadge.Text      = ' ■ 오프라인 '
+        $script:Ui.LblNetBadge.Text      = ' ■ 사내망 미연결 '
         $script:Ui.LblNetBadge.BackColor = $script:Theme.DangerRed
-        $script:Ui.LblServerPath.Text    = '오프라인 · ZIP 백업/복원 가능'
+        $script:Ui.LblServerPath.Text    = '사내망 미연결 · 네트워크 없이 ZIP 백업·복원 가능'
+        if ($tip) { $tip.SetToolTip($script:Ui.LblNetBadge, "병원 사내망 네트워크에 연결되지 않았습니다. 랜선·고정 IP·사내 DNS($($global:AsanCtx.InternalDnsIP))를 확인하거나 ZIP 파일 백업·복원을 이용해 주세요.") }
     }
 
     $wpp = $net.WppStatus
@@ -1133,6 +1395,7 @@ function Invoke-EnvironmentRefreshAsync {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data) {
             Add-UiLog -Message "환경 진단 실패: $err" -Level 'ERROR'
+            Invoke-ErrorWithAutoReportPrompt -Caption '환경 진단 오류' -Message "PC 환경과 네트워크를 확인하는 중 오류가 발생했습니다:`r`n$err" -Category 'UI/프로그램 버그' -ErrorDetail ([string]$err)
             return
         }
         $script:AppState.OsCaption     = $data.OsCaption
@@ -1239,7 +1502,7 @@ function Initialize-MainGuiShell {
     $tip.SetToolTip($btnRefresh, '네트워크와 서버 연결 상태를 다시 확인합니다 (단축키 F5)')
 
     $lblNetBadge = New-Object System.Windows.Forms.Label
-    $lblNetBadge.Text      = ' ● 연결 확인 중 '
+    $lblNetBadge.Text      = ' ● 네트워크 확인 중 '
     $lblNetBadge.ForeColor = [System.Drawing.Color]::White
     $lblNetBadge.BackColor = $script:Theme.InkMuted
     $lblNetBadge.Font      = $script:FontSmallB
@@ -1304,7 +1567,17 @@ function Initialize-MainGuiShell {
     $flpHdrMeta.Controls.AddRange(@($lblPcIp, $lblOs, $lblServerPath))
 
     $flpHdrRight2 = New-RightFlowStrip -TopPadding 2 -RightPadding 0
-    $btnCopySid = New-StyledButton -Text 'SID 복사' -Width 68 -Height 22 -Variant 'Secondary'
+    $sidTimer = New-Object System.Windows.Forms.Timer
+    $sidTimer.Interval = 1500
+    $sidTimer.Add_Tick({
+        if ($script:Ui.SidFlashTimer) { $script:Ui.SidFlashTimer.Stop() }
+        if ($script:Ui.BtnCopySid -and -not $script:Ui.BtnCopySid.IsDisposed) {
+            $script:Ui.BtnCopySid.Text = 'SID 복사'
+        }
+    })
+    $script:Ui.SidFlashTimer = $sidTimer
+
+    $btnCopySid = New-StyledButton -Text 'SID 복사' -Width 72 -Height 22 -Variant 'Secondary'
     $btnCopySid.Font   = $script:FontSmallB
     $btnCopySid.Margin = New-Object System.Windows.Forms.Padding(6, 0, 0, 0)
     $btnCopySid.Add_Click({
@@ -1312,6 +1585,17 @@ function Initialize-MainGuiShell {
             try {
                 [System.Windows.Forms.Clipboard]::SetText($script:AppState.LocalSid)
                 Add-UiLog -Message "현재 PC Machine SID가 클립보드에 복사되었습니다: $($script:AppState.LocalSid)" -Level 'INFO'
+                if ($script:Ui.LblProgressText -and (-not $script:AsyncState.IsBusy)) {
+                    $script:Ui.LblProgressText.Text      = '현재 PC의 Machine SID를 클립보드에 복사했습니다.'
+                    $script:Ui.LblProgressText.ForeColor = $script:Theme.AsanDeep
+                }
+                if ($script:Ui.BtnCopySid -and -not $script:Ui.BtnCopySid.IsDisposed) {
+                    $script:Ui.BtnCopySid.Text = '복사됨'
+                }
+                if ($script:Ui.SidFlashTimer) {
+                    $script:Ui.SidFlashTimer.Stop()
+                    $script:Ui.SidFlashTimer.Start()
+                }
             } catch {}
         }
     })
@@ -1575,7 +1859,7 @@ function Initialize-MainGuiShell {
                     $logLvl   = 'ERROR'
                 }
 
-                Set-UiBusyState -IsBusy $false -StatusText $doneText
+                Set-UiBusyState -IsBusy $false -StatusText $doneText -IsError:(-not $okFlag)
                 Add-UiLog -Message "=== $doneText ===" -Level $logLvl
 
                 if ($cbRef) {
@@ -1647,6 +1931,10 @@ function Initialize-MainGuiShell {
         if ($script:AsyncState.PollTimer) {
             try { $script:AsyncState.PollTimer.Dispose() } catch {}
             $script:AsyncState.PollTimer = $null
+        }
+        if ($script:Ui.SidFlashTimer) {
+            try { $script:Ui.SidFlashTimer.Stop(); $script:Ui.SidFlashTimer.Dispose() } catch {}
+            $script:Ui.SidFlashTimer = $null
         }
         # [보안] 종료 시 사내 백업 서버 SMB 세션을 즉시 끊어 교체 PC에 관리자 접근이 남지 않도록 차단
         try { Disconnect-AllHostSessions -HostName $global:AsanCtx.ServerIP } catch {}
@@ -1723,7 +2011,11 @@ function Update-Tab1NetworkState {
             $script:Tab1Ui.PnlBanner.BackColor       = $script:Theme.AsanOrangeTint
             $script:Tab1Ui.PnlBannerAccent.BackColor = $script:Theme.AsanOrange
             $script:Tab1Ui.LblBanner.ForeColor       = $script:Theme.AsanOrangeText
-            $script:Tab1Ui.LblBanner.Text            = '사내 서버에 연결되지 않았습니다. ZIP 파일로 저장을 눌러 백업해 주세요.'
+            if ($script:AppState.IsWin11) {
+                $script:Tab1Ui.LblBanner.Text        = "사내망 또는 백업 서버에 연결되지 않았습니다. 백업은 ZIP 파일로 저장, 새 PC 복원은 '2. 새 PC 복원' 탭을 이용해 주세요."
+            } else {
+                $script:Tab1Ui.LblBanner.Text        = '사내망 또는 백업 서버에 연결되지 않았습니다. 아래 ZIP 파일로 저장을 눌러 백업해 주세요.'
+            }
         }
     }
 }
@@ -1776,6 +2068,9 @@ function Render-Tab1PrinterGrid {
             )
             $row     = $dgv.Rows[$rowIdx]
             $row.Tag = $p
+            $row.Cells[4].ToolTipText = $portDisplay
+            $row.Cells[5].ToolTipText = [string]$p.DriverName
+            $row.Cells[6].ToolTipText = [string]$p.Reason
 
             if ($p.IsDefault) {
                 $row.Cells[0].Style.ForeColor = $script:Theme.AsanGreen
@@ -1813,7 +2108,11 @@ function Render-Tab1PrinterGrid {
                 $script:Tab1Ui.PnlBanner.BackColor       = $script:Theme.AsanOrangeTint
                 $script:Tab1Ui.PnlBannerAccent.BackColor = $script:Theme.AsanOrange
                 $script:Tab1Ui.LblBanner.ForeColor       = $script:Theme.AsanOrangeText
-                $script:Tab1Ui.LblBanner.Text            = "오프라인 상태에서 백업 대상 ${validTotal}대를 확인했습니다. 아래 ZIP 파일로 저장을 눌러 주세요."
+                if ($script:AppState.IsWin11) {
+                    $script:Tab1Ui.LblBanner.Text        = "사내망 미연결 상태로 프린터 ${validTotal}대를 확인했습니다. 백업은 ZIP 파일로 저장, 새 PC 복원은 '2. 새 PC 복원' 탭을 이용해 주세요."
+                } else {
+                    $script:Tab1Ui.LblBanner.Text        = "사내망 미연결 상태로 백업 대상 ${validTotal}대를 확인했습니다. 아래 ZIP 파일로 저장을 눌러 주세요."
+                }
             } elseif ($cntWarn -gt 0) {
                 $script:Tab1Ui.PnlBanner.BackColor       = $script:Theme.AsanOrangeTint
                 $script:Tab1Ui.PnlBannerAccent.BackColor = $script:Theme.AsanOrange
@@ -1997,7 +2296,7 @@ function Invoke-Tab1ScanAsync {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data) {
             Add-UiLog -Message "프린터 사전 진단 실패: $err" -Level 'ERROR'
-            [void](Show-AsanMessageBox -Text "프린터 진단 중 오류가 발생했습니다:`r`n$err" -Caption '진단 오류' -Buttons 'OK' -Icon 'Error')
+            Invoke-ErrorWithAutoReportPrompt -Caption '진단 오류' -Message "프린터 진단 중 오류가 발생했습니다:`r`n$err" -Category '백업 오류' -ErrorDetail ([string]$err)
             return
         }
         $script:AppState.DiagnosedPrinters = @($data.Printers)
@@ -2128,10 +2427,7 @@ function Start-Tab1BackupExecution {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data -or -not $data.BackupResult) {
             Add-UiLog -Message "백업 실패: $err" -Level 'ERROR'
-            $repAns = Show-AsanMessageBox -Text "백업 작업 중 오류가 발생했습니다:`r`n$err`r`n`r`n이 오류 내용을 서버 리포트함(_PRTBAK\_REPORTS)으로 전송하시겠습니까?" -Caption '백업 실패' -Buttons 'YesNo' -Icon 'Error'
-            if ($repAns -eq [System.Windows.Forms.DialogResult]::Yes) {
-                Show-BugReportDialog -DefaultCategory '백업 오류' -ErrorSummary ([string]$err)
-            }
+            Invoke-ErrorWithAutoReportPrompt -Caption '백업 실패' -Message "백업 작업 중 오류가 발생했습니다:`r`n$err" -Category '백업 오류' -ErrorDetail ([string]$err)
             return
         }
 

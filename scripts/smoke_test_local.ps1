@@ -468,6 +468,7 @@ Initialize-Tab1BackupUi
 Initialize-Tab2RestoreUi
 Initialize-Tab3VerifyUi
 Initialize-Tab4ServerUi
+Register-DisabledTooltipTree -Root `$script:Ui.Form
 Sync-AllUiButtonStates
 
 `$script:Ui.TabMain.Add_SelectedIndexChanged({
@@ -559,6 +560,9 @@ Sync-AllUiButtonStates
                 if (-not `$sewooLocked)      { `$script:SmokeErrors.Add('SEWOO_TE201 체크박스 잠금(ReadOnly+False) 미작동') }
                 if (-not `$script:Tab2Ui.HelperExpanded) { `$script:SmokeErrors.Add('특수장비 감지 시 도우미 패널 자동 펼침 미작동') }
                 if (-not `$script:Tab2Ui.BtnStartRestore.Enabled) { `$script:SmokeErrors.Add('선택 항목 있음에도 복원 시작 버튼 비활성') }
+                if (`$script:Tab2Ui.BtnRetryFailed.Enabled -or (-not `$script:Ui.DisabledReasons.ContainsKey(`$script:Tab2Ui.BtnRetryFailed))) {
+                    `$script:SmokeErrors.Add('비활성 버튼 사유 툴팁(BtnRetryFailed) 미등록')
+                }
 
                 # 탭 3으로 이동 (자동 Invoke-Tab3RefreshAsync 트리거)
                 `$script:SmokeStage = 3

@@ -94,8 +94,16 @@ function Set-Tab2HelperVisibility {
         $script:Tab2Ui.PnlHelper.Visible = $Expanded
     }
     if ($script:Tab2Ui.BtnToggleHelper) {
-        if ($Expanded) { $script:Tab2Ui.BtnToggleHelper.Text = '도우미 접기' }
-        else { $script:Tab2Ui.BtnToggleHelper.Text = '특수·공유 도우미 열기' }
+        if ($Expanded) {
+            $script:Tab2Ui.BtnToggleHelper.Text = '도우미 접기'
+        } else {
+            $pendingCnt = (@($script:AppState.AuthFailedHosts)).Count + (@($script:Tab2Ui.SpecialRows)).Count
+            if ($pendingCnt -gt 0) {
+                $script:Tab2Ui.BtnToggleHelper.Text = "특수·공유 도우미 ($pendingCnt)"
+            } else {
+                $script:Tab2Ui.BtnToggleHelper.Text = '특수·공유 도우미 열기'
+            }
+        }
     }
     if ($Expanded -and $SelectTabIndex -ge 0 -and $script:Tab2Ui.TabHelper -and $SelectTabIndex -lt $script:Tab2Ui.TabHelper.TabPages.Count) {
         $script:Tab2Ui.TabHelper.SelectedIndex = $SelectTabIndex
@@ -229,6 +237,9 @@ function Render-Tab2RestoreGrid {
             )
             $gridRow     = $dgv.Rows[$rIdx]
             $gridRow.Tag = $p
+            $gridRow.Cells[5].ToolTipText = $portDisp
+            $gridRow.Cells[6].ToolTipText = [string]$p.DriverName
+            $gridRow.Cells[7].ToolTipText = [string]$p.Reason
 
             if ($p.IsDefault) {
                 $gridRow.Cells[1].Style.ForeColor = $script:Theme.AsanGreen
@@ -463,7 +474,7 @@ function Load-Tab2BackupSourceAsync {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data) {
             Add-UiLog -Message "백업 로드 실패: $err" -Level 'ERROR'
-            [void](Show-AsanMessageBox -Text "백업을 불러오지 못했습니다:`r`n$err" -Caption '불러오기 오류' -Buttons 'OK' -Icon 'Error')
+            Invoke-ErrorWithAutoReportPrompt -Caption '백업 불러오기 오류' -Message "백업을 불러오지 못했습니다:`r`n$err" -Category '복원/드라이버 오류' -ErrorDetail ([string]$err)
             return
         }
 
@@ -483,7 +494,7 @@ function Load-Tab2BackupSourceAsync {
         $brmTxt = 'PrintBrm 없음'
         if ($meta.HasBrm) { $brmTxt = 'PrintBrm 포함' }
         $modeTxt = '서버 백업'
-        if ($meta.IsZip) { $modeTxt = '오프라인 ZIP' }
+        if ($meta.IsZip) { $modeTxt = '로컬 ZIP 파일' }
         $osPart = ''
         if ($bd.PSObject.Properties.Name -contains 'SourceOsName' -and -not [string]::IsNullOrWhiteSpace([string]$bd.SourceOsName)) {
             $osPart = " · $($bd.SourceOsName)"
@@ -642,10 +653,7 @@ function Start-Tab2RestoreExecution {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data) {
             Add-UiLog -Message "복원 엔진 오류: $err" -Level 'ERROR'
-            $repAns = Show-AsanMessageBox -Text "복원 중 오류가 발생했습니다:`r`n$err`r`n`r`n이 오류 내용을 서버 리포트함(_PRTBAK\_REPORTS)으로 전송하시겠습니까?" -Caption '복원 오류' -Buttons 'YesNo' -Icon 'Error'
-            if ($repAns -eq [System.Windows.Forms.DialogResult]::Yes) {
-                Show-BugReportDialog -DefaultCategory '복원/드라이버 오류' -ErrorSummary ([string]$err)
-            }
+            Invoke-ErrorWithAutoReportPrompt -Caption '복원 오류' -Message "복원 작업 중 오류가 발생했습니다:`r`n$err" -Category '복원/드라이버 오류' -ErrorDetail ([string]$err)
             return
         }
 
@@ -741,8 +749,14 @@ function Start-Tab2RestoreExecution {
         }
 
         if ($failCnt -gt 0) {
+            $netNow   = $script:AppState.NetworkInfo
+            $srvReady = ($null -ne $netNow -and $netNow.Status -eq 'Online' -and -not [string]::IsNullOrWhiteSpace([string]$netNow.PrtBakDir))
             $sumLines.Add("")
-            $sumLines.Add("실패한 항목의 진단 로그를 서버 리포트함으로 보내시겠습니까?")
+            if ($srvReady) {
+                $sumLines.Add("실패한 항목의 진단 리포트를 자동으로 구성해 사내 리포트함으로 보낼까요?")
+            } else {
+                $sumLines.Add("현재 사내 서버에 연결되어 있지 않습니다. 실패 항목의 진단 리포트를 이 PC의 로컬 폴더(C:\_AsanPrtOffline\_Reports)에 저장할까요?")
+            }
             $repAns = Show-AsanMessageBox -Text ($sumLines -join "`r`n") -Caption '복원 결과 요약' -Buttons 'YesNo' -Icon 'Warning'
             if ($repAns -eq [System.Windows.Forms.DialogResult]::Yes) {
                 $firstFailPrt = [string](@($data.Failures)[0].PrinterName)
@@ -812,6 +826,7 @@ function Invoke-Tab2HostAuthActionAsync {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data -or -not $data.AuthResult) {
             Add-UiLog -Message "호스트 인증/초기화 오류: $err" -Level 'ERROR'
+            Invoke-ErrorWithAutoReportPrompt -Caption '공유 인증 오류' -Message "공유 PC 인증 또는 스풀러 초기화 중 오류가 발생했습니다:`r`n$err" -Category '공유 인증/SID 충돌' -ErrorDetail ([string]$err)
             return
         }
 
@@ -947,7 +962,7 @@ function Invoke-Tab2Sip30mStep2Async {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data) {
             Add-UiLog -Message "SIP-30M 2단계 마무리 오류: $err" -Level 'ERROR'
-            [void](Show-AsanMessageBox -Text "SIP-30M 마무리 중 오류가 발생했습니다:`r`n$err" -Caption 'SIP-30M 오류' -Buttons 'OK' -Icon 'Error')
+            Invoke-ErrorWithAutoReportPrompt -Caption 'SIP-30M 설정 오류' -Message "SIP-30M 설정 마무리 중 오류가 발생했습니다:`r`n$err" -Category '특수/바코드 프린터' -TargetPrinter 'id카드' -ErrorDetail ([string]$err)
             return
         }
         $icon = [System.Windows.Forms.MessageBoxIcon]::Warning
@@ -973,7 +988,7 @@ function Invoke-Tab2UsbReenumAsync {
         param($ok, $data, $err, $cbState)
         if (-not $ok -or -not $data) {
             Add-UiLog -Message "USB 바코드 재인식 오류: $err" -Level 'ERROR'
-            [void](Show-AsanMessageBox -Text "USB 재인식 중 오류가 발생했습니다:`r`n$err" -Caption 'USB 재인식 오류' -Buttons 'OK' -Icon 'Error')
+            Invoke-ErrorWithAutoReportPrompt -Caption 'USB 재인식 오류' -Message "USB 바코드 다시 인식 중 오류가 발생했습니다:`r`n$err" -Category '특수/바코드 프린터' -ErrorDetail ([string]$err)
             return
         }
         $icon = [System.Windows.Forms.MessageBoxIcon]::Information
@@ -1034,6 +1049,16 @@ function Initialize-Tab2RestoreUi {
     $cmbBackups.Size          = New-Object System.Drawing.Size(290, 24)
     $cmbBackups.Font          = $script:FontBase
     $cmbBackups.Margin        = New-Object System.Windows.Forms.Padding(0, 2, 6, 0)
+    $cmbBackups.Add_SelectionChangeCommitted({
+        if ($script:AsyncState.IsBusy) { return }
+        $idx = $script:Tab2Ui.CmbServerBackups.SelectedIndex
+        if ($idx -ge 0 -and $idx -lt $script:Tab2Ui.ComboBackupEntries.Count) {
+            $pickedPath = [string]$script:Tab2Ui.ComboBackupEntries[$idx].FullPath
+            if ($pickedPath -ine [string]$script:Tab2Ui.LoadedSourcePath) {
+                Load-Tab2BackupSourceAsync -SourcePath $pickedPath
+            }
+        }
+    })
     $script:Ui.BusyControls.Add($cmbBackups)
 
     $btnLoadSrv = New-StyledButton -Text '불러오기' -Width 84 -Height 26 -Variant 'SoftTeal' -RegisterBusy
@@ -1422,13 +1447,22 @@ function Initialize-Tab2RestoreUi {
     $pnlAction.BackColor     = [System.Drawing.Color]::Transparent
     $pnlAction.Padding       = New-Object System.Windows.Forms.Padding(0, 6, 0, 0)
 
-    $btnStart = New-StyledButton -Text '선택 항목 복원하기' -Width 176 -Height 34 -Variant 'Primary' -RegisterBusy
-    $btnStart.Margin  = New-Object System.Windows.Forms.Padding(0, 0, 10, 0)
+    $lblStep3 = New-Object System.Windows.Forms.Label
+    $lblStep3.Text      = ' 3단계 '
+    $lblStep3.Font      = $script:FontSmallB
+    $lblStep3.BackColor = $script:Theme.AsanGreen
+    $lblStep3.ForeColor = [System.Drawing.Color]::White
+    $lblStep3.AutoSize  = $true
+    $lblStep3.Padding   = New-Object System.Windows.Forms.Padding(4, 3, 4, 3)
+    $lblStep3.Margin    = New-Object System.Windows.Forms.Padding(0, 7, 8, 0)
+
+    $btnStart = New-StyledButton -Text '선택 항목 복원하기' -Width 166 -Height 34 -Variant 'Primary' -RegisterBusy
+    $btnStart.Margin  = New-Object System.Windows.Forms.Padding(0, 0, 8, 0)
     $btnStart.Enabled = $false
     $btnStart.Add_Click({ Start-Tab2RestoreExecution })
 
-    $btnRetry = New-StyledButton -Text '실패 항목 다시 시도' -Width 152 -Height 34 -Variant 'Orange' -RegisterBusy
-    $btnRetry.Margin  = New-Object System.Windows.Forms.Padding(0, 0, 14, 0)
+    $btnRetry = New-StyledButton -Text '실패 항목 다시 시도' -Width 148 -Height 34 -Variant 'Orange' -RegisterBusy
+    $btnRetry.Margin  = New-Object System.Windows.Forms.Padding(0, 0, 12, 0)
     $btnRetry.Enabled = $false
     $btnRetry.Add_Click({ Start-Tab2RestoreExecution -RetryFailedOnly })
 
@@ -1439,7 +1473,7 @@ function Initialize-Tab2RestoreUi {
     $lblHint.AutoSize  = $true
     $lblHint.Margin    = New-Object System.Windows.Forms.Padding(0, 10, 0, 0)
 
-    $pnlAction.Controls.AddRange(@($btnStart, $btnRetry, $lblHint))
+    $pnlAction.Controls.AddRange(@($lblStep3, $btnStart, $btnRetry, $lblHint))
 
     # Dock Z-Order: Fill(0) -> Bottom(Inner) -> Bottom(Outer) -> Top(Inner) -> Top(Mid) -> Top(Outer)
     $parent.Controls.Add($dgv)

@@ -22,6 +22,7 @@ $script:Tab3Ui = @{
 
 $script:Tab4Ui = @{
     TxtSearch            = $null
+    BtnClearSearch       = $null
     BtnRefreshSrv        = $null
     BtnCleanOld5         = $null
     LblSrvSummary        = $null
@@ -83,6 +84,8 @@ function Render-Tab3VerifyGrid {
             )
             $row     = $dgv.Rows[$rIdx]
             $row.Tag = $p
+            $row.Cells[3].ToolTipText = [string]$p.PortName
+            $row.Cells[6].ToolTipText = [string]$p.DriverName
 
             if ($p.IsDefault) {
                 $row.Cells[0].Style.ForeColor = $script:Theme.AsanGreen
@@ -145,6 +148,7 @@ function Invoke-Tab3RefreshAsync {
         param($ok, $data, $err, $cbState)
         if (-not $ok) {
             Add-UiLog -Message "검증 목록 조회 실패: $err" -Level 'ERROR'
+            Invoke-ErrorWithAutoReportPrompt -Caption '프린터 조회 오류' -Message "설치된 프린터 상태를 조회하는 중 오류가 발생했습니다:`r`n$err" -Category 'UI/프로그램 버그' -ErrorDetail ([string]$err)
             return
         }
         $script:Tab3Ui.InstalledList = @($data)
@@ -262,7 +266,7 @@ function Initialize-Tab3VerifyUi {
         $done = {
             param($ok, $data, $err, $cbState)
             if (-not $ok -or -not $data) {
-                [void](Show-AsanMessageBox -Text "일괄 수정 오류: $err" -Caption '오류' -Buttons 'OK' -Icon 'Error')
+                Invoke-ErrorWithAutoReportPrompt -Caption '표준 설정 수정 오류' -Message "표준 설정 일괄 수정 중 오류가 발생했습니다:`r`n$err" -Category '복원/드라이버 오류' -ErrorDetail ([string]$err)
                 return
             }
             $script:Tab3Ui.InstalledList = @($data.Printers)
@@ -293,7 +297,7 @@ function Initialize-Tab3VerifyUi {
         $done = {
             param($ok, $data, $err, $cbState)
             if (-not $ok -or -not $data) {
-                [void](Show-AsanMessageBox -Text "스풀러 초기화 오류: $err" -Caption '오류' -Buttons 'OK' -Icon 'Error')
+                Invoke-ErrorWithAutoReportPrompt -Caption '인쇄 대기열 초기화 오류' -Message "인쇄 스풀러 초기화 중 오류가 발생했습니다:`r`n$err" -Category '복원/드라이버 오류' -ErrorDetail ([string]$err)
                 return
             }
             $script:Tab3Ui.InstalledList = @($data.Printers)
@@ -477,6 +481,7 @@ function Render-Tab4ServerGrid {
             )
             $row     = $dgv.Rows[$rIdx]
             $row.Tag = $e
+            $row.Cells[5].ToolTipText = [string]$e.FullPath
 
             if ($e.MatchRank -eq 1) {
                 $row.DefaultCellStyle.BackColor = $script:Theme.AsanMint
@@ -495,9 +500,13 @@ function Render-Tab4ServerGrid {
     $net      = $script:AppState.NetworkInfo
     $isOnline = ($null -ne $net -and $net.Status -eq 'Online' -and -not [string]::IsNullOrWhiteSpace([string]$net.PrtBakDir))
     if ($isOnline) {
-        $script:Tab4Ui.LblSrvSummary.Text = "서버 백업 총 $($all.Count)건 중 ${shown}건 표시 · 5일 지난 백업 ${old5}건"
+        if (-not [string]::IsNullOrWhiteSpace($filter) -and $shown -eq 0) {
+            $script:Tab4Ui.LblSrvSummary.Text = "검색어 '$filter'와 일치하는 서버 백업이 없습니다. (전체 $($all.Count)건)"
+        } else {
+            $script:Tab4Ui.LblSrvSummary.Text = "서버 백업 총 $($all.Count)건 중 ${shown}건 표시 · 5일 지난 백업 ${old5}건"
+        }
     } else {
-        $script:Tab4Ui.LblSrvSummary.Text = '백업 서버에 연결되지 않았습니다. 네트워크 확인 후 상단 새로고침을 눌러 주세요.'
+        $script:Tab4Ui.LblSrvSummary.Text = '사내망 또는 백업 서버에 연결되지 않았습니다. 네트워크 확인 후 상단 새로고침을 눌러 주세요.'
     }
 
     if ($script:Tab4Ui.BtnCleanOld5) {
@@ -694,18 +703,29 @@ function Initialize-Tab4ServerUi {
     $lblSearch.Margin   = New-Object System.Windows.Forms.Padding(0, 6, 6, 0)
 
     $txtSearch = New-Object System.Windows.Forms.TextBox
-    $txtSearch.Size   = New-Object System.Drawing.Size(220, 24)
-    $txtSearch.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 0)
+    $txtSearch.Size   = New-Object System.Drawing.Size(210, 24)
+    $txtSearch.Margin = New-Object System.Windows.Forms.Padding(0, 2, 6, 0)
     $txtSearch.Add_TextChanged({
         Render-Tab4ServerGrid
         Request-Tab4PreviewDebounced
     })
 
-    $btnRefSrv = New-StyledButton -Text '목록 새로고침' -Width 116 -Height 28 -Variant 'Secondary' -RegisterBusy
+    $btnClearSearch = New-StyledButton -Text '지우기' -Width 62 -Height 28 -Variant 'Secondary'
+    $btnClearSearch.Font    = $script:FontSmallB
+    $btnClearSearch.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 8, 0)
+    $btnClearSearch.Enabled = $false
+    $btnClearSearch.Add_Click({
+        if ($script:Tab4Ui.TxtSearch) {
+            $script:Tab4Ui.TxtSearch.Clear()
+            $script:Tab4Ui.TxtSearch.Focus()
+        }
+    })
+
+    $btnRefSrv = New-StyledButton -Text '목록 새로고침' -Width 114 -Height 28 -Variant 'Secondary' -RegisterBusy
     $btnRefSrv.Margin = New-Object System.Windows.Forms.Padding(0, 1, 0, 0)
     $btnRefSrv.Add_Click({ Invoke-EnvironmentRefreshAsync })
 
-    $pnlTopLeft.Controls.AddRange(@($lblSearch, $txtSearch, $btnRefSrv))
+    $pnlTopLeft.Controls.AddRange(@($lblSearch, $txtSearch, $btnClearSearch, $btnRefSrv))
 
     $flpTopRight = New-RightFlowStrip -TopPadding 4 -RightPadding 0
     $btnClean5 = New-StyledButton -Text '5일 지난 백업 정리' -Width 176 -Height 28 -Variant 'DangerOutline' -RegisterBusy
@@ -735,7 +755,7 @@ function Initialize-Tab4ServerUi {
         $done = {
             param($ok, $data, $err, $cbState)
             if (-not $ok -or -not $data) {
-                [void](Show-AsanMessageBox -Text "정리 중 오류 발생: $err" -Caption '정리 실패' -Buttons 'OK' -Icon 'Error')
+                Invoke-ErrorWithAutoReportPrompt -Caption '백업 정리 오류' -Message "5일 지난 서버 백업 정리 중 오류가 발생했습니다:`r`n$err" -Category '백업 오류' -ErrorDetail ([string]$err)
                 return
             }
             $script:Tab4Ui.PreviewCache.Clear()
@@ -788,6 +808,15 @@ function Initialize-Tab4ServerUi {
         if (-not $script:Tab4Ui.SuppressPreviewEvent) {
             Request-Tab4PreviewDebounced
             Sync-AllUiButtonStates
+        }
+    })
+    $dgv.Add_CellDoubleClick({
+        param($sender, $e)
+        if ($e.RowIndex -lt 0 -or $script:AsyncState.IsBusy) { return }
+        $sel = Get-Tab4SelectedBackupEntry
+        if ($sel) {
+            $script:Ui.TabMain.SelectedIndex = 1
+            Load-Tab2BackupSourceAsync -SourcePath $sel.FullPath
         }
     })
 
@@ -889,7 +918,7 @@ function Initialize-Tab4ServerUi {
         $done = {
             param($ok, $data, $err, $cbState)
             if (-not $ok) {
-                [void](Show-AsanMessageBox -Text "삭제 실패: $err" -Caption '삭제 오류' -Buttons 'OK' -Icon 'Error')
+                Invoke-ErrorWithAutoReportPrompt -Caption '백업 삭제 오류' -Message "선택한 서버 백업을 삭제하는 중 오류가 발생했습니다:`r`n$err" -Category '백업 오류' -ErrorDetail ([string]$err)
                 return
             }
             $script:Tab4Ui.PreviewCache.Clear()
@@ -982,8 +1011,9 @@ function Initialize-Tab4ServerUi {
     })
     $script:Tab4Ui.PreviewTimer = $prevTimer
 
-    $script:Tab4Ui.TxtSearch     = $txtSearch
-    $script:Tab4Ui.BtnRefreshSrv = $btnRefSrv
+    $script:Tab4Ui.TxtSearch      = $txtSearch
+    $script:Tab4Ui.BtnClearSearch = $btnClearSearch
+    $script:Tab4Ui.BtnRefreshSrv  = $btnRefSrv
     $script:Tab4Ui.BtnCleanOld5  = $btnClean5
     $script:Tab4Ui.LblSrvSummary = $lblSrvSum
     $script:Tab4Ui.DgvServer     = $dgv
@@ -1008,6 +1038,7 @@ function Start-AsanPrinterManagerApp {
     Initialize-Tab2RestoreUi
     Initialize-Tab3VerifyUi
     Initialize-Tab4ServerUi
+    Register-DisabledTooltipTree -Root $script:Ui.Form
     Sync-AllUiButtonStates
 
     # 탭 전환 시 지연 로드 처리 (탭 1 최초 진입 자동 스캔 / 탭 4 이탈 시 미리보기 중단 / 탭 3 자동 갱신 / 탭 4 미리보기 갱신)
@@ -1061,6 +1092,7 @@ function Start-AsanPrinterManagerApp {
         if ($script:Tab4Ui.PreviewTimer) { try { $script:Tab4Ui.PreviewTimer.Dispose() } catch {}; $script:Tab4Ui.PreviewTimer = $null }
         try { Clear-RetiredTab4Previews } catch {}
         if ($script:AsyncState.PollTimer) { try { $script:AsyncState.PollTimer.Dispose() } catch {}; $script:AsyncState.PollTimer = $null }
+        if ($script:Ui.SidFlashTimer) { try { $script:Ui.SidFlashTimer.Dispose() } catch {}; $script:Ui.SidFlashTimer = $null }
         if ($script:Ui.BadgeImage) { try { $script:Ui.BadgeImage.Dispose() } catch {}; $script:Ui.BadgeImage = $null }
         if ($script:Ui.ToolTip) { try { $script:Ui.ToolTip.Dispose() } catch {}; $script:Ui.ToolTip = $null }
         if ($script:Ui.AppIcon) { try { $script:Ui.AppIcon.Dispose() } catch {}; $script:Ui.AppIcon = $null }
