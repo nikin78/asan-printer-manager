@@ -1,7 +1,7 @@
 # 작업 인수인계서 (HANDOFF) — 집 ↔ 직장 PC 양방향 공용
 
-> **최종 갱신:** 2026-11-26 04:48 (집 PC — 전 탭 여백·패딩 통일 `New-PaddedTextBoxPanel` 적용 + 공용 GUI 디자인 스킬 전역 설치·동기화 규칙 반영)  
-> **현재 개발 버전:** `v1.0.0-beta.3` (안 A 비밀 분리 + P0 전면 안정화 + ZT411 골든 이미지 로컬 정책 + 재귀 리뷰 Round 1~4 + 코어 5모듈 소분리 + 고시인성 UI/UX·비활성 사유 툴팁·자동 오류 리포트·전 탭 여백 통일 완료)  
+> **최종 갱신:** 2026-11-26 05:50 (집 PC — 세션 마감: `README.md` 사용자 매뉴얼·명세 전면 개편 + 비식별 GUI 캡처 5종 `docs/images/` 첨부 + 오늘 전체 작업 정리 및 GitHub 동기화)  
+> **현재 개발 버전:** `v1.0.0-beta.3` (안 A 비밀 분리 + P0 전면 안정화 + ZT411 골든 이미지 로컬 정책 + 재귀 리뷰 Round 1~4 + 코어 5모듈 소분리 + 고시인성 UI/UX·비활성 사유 툴팁·자동 오류 리포트·전 탭 여백 통일·공용 디자인 스킬·README 시각 매뉴얼 완료)  
 > **GitHub 비공개 저장소:** https://github.com/nikin78/asan-printer-manager  
 > **자동 규칙 파일:** `AGENTS.md` *(Antigravity IDE가 저장소 루트 오픈 시 자동 로드)*  
 > **로컬 빌드 산출물:** `dist/Asan_Printer_Manager.bat` *(`.gitignore` 처리 — 각 PC에서 `secrets.local.json`으로 로컬 빌드 후 사내 경로/USB 배포)*
@@ -21,7 +21,8 @@
 | **재귀 코드 리뷰 Round 4 (17건 패치 + 검증 사각지대 해소)** | • **P0 현장 치명 결함 수정:** WOW64 32비트 진입 시 UAC 승격 100% 실패(`Sysnative\cmd.exe`→`System32\cmd.exe`), 신규 TCP/IP 포트 생성 `HRESULT 0x80070057`(`Add-PrinterPort -SNMP 0` 제거), `신도리코`→`RICOH` 오탐 및 Zebra `203dpi`/`52병동` 교차 매칭 차단, `DriverStore` 중복 INF `break` 누락·`_x86_`/`_arm64_` 제외<br>• **보안·안정성 보강:** `%TEMP%\AsanPrinterMgr_*.ps1` 로드 직후 즉시 삭제, `EnumPrintSharesEx` `try/finally` 버퍼 해제, `Get-SmbMapping` 드라이브 매핑 정리, 백업 서버 `WriteDomainCredential` 이중 가드, `Test-UncSharePrinterAlive` 오류 코드 구분·재시도, WSD 1단계 완료 시 조기 종료, `PrintBrm -b` 0바이트 검증·`_OLD_` 원자 롤백·GUID 임시폴더 격리, 스풀러 중지 실패/USB 바코드 양방향 보호/`.reg` 실패 전파, `Get-BackupEffectiveWriteTime` fail-closed, `Protect-ReportSensitiveText` JSON 이스케이프 마스킹<br>• **검증 사각지대 해소:** `build_single_bat` `-AllowPlaceholderBuild` 버그·`CHANGE_ME_` 차단, `verify_static` 부트스트랩 추출 원라이너 실실행·`CoreToGui=0`·`ScriptVarsInWork=0` 검사 추가, `smoke_test_local` Round 4 회귀 단위테스트 + `960×640` WPP 동시 노출 감사 추가 | **완료 (ALL PASS)** |
 | **고시인성 아산 그린·오렌지 UI/UX · 상용 UX 라이팅 · 구 PC Win 10/11 공용 지원** | • **저작권 로고 제외:** 병원 공식 로고 PNG를 완전 제거하고 자체 GDI+ 벡터 프린터 심볼 배지·앱 아이콘만 사용<br>• **가시성 전면 강화:** 딥 아산 그린(`#005658`) 헤더 + 2px 아산 오렌지 라인 + 딥 틸(`#0B4F51`) 흰 글씨 표 헤더 + 선명한 테두리 버튼 + 5색 상태 구분(`정상` 그린 / `WSD 전환` 스카이시안 / `특수 장비` 퍼플 / `확인 필요` 오렌지 / `인증 오류` 레드) + `1단계`/`2단계` 배지 + 툴팁(`ToolTip`)<br>• **구 PC Win 10/11 공용 로직:** 백업 JSON/리포트에 `SourceOsName`/`SourceOsBuild`/`SourceIsWin11` 저장 및 탭 2 표시, 기동 시 서버 자동 매칭 백업 유무로 백업/복원 탭 지능 선택 + 탭 1 최초 진입 지연 자동 스캔 추가, `(Win 10)`/`(Win 11)` 고정 표기 제거<br>• **상용 UX 라이팅 정비:** `※`/`★`/`▶`/`[...]`/괄호 단문 표기 제거 및 직관적 동사형 버튼·친절한 안내 문구(`~해 주세요`) 적용 | **완료 (시각·자동 PASS)** |
 | **자동 검증 스위트 고도화** | `verify_static.ps1` **6/6 PASS** (9모듈·Core=73/GUI=65, 부트스트랩 추출 실실행·`CoreToGui=0`·`ScriptVarsInWork=0`·AST `MessageBox`·`$previewScript`·`src/` 미등록 파일·`src/`↔`dist/` SHA-256 동기화), `smoke_test_local.ps1` **3/3 PASS** (Round 4 회귀 단위테스트 + `DisabledReasons` 검증 + `1040×720`/`960×640`+WPP 레이아웃 오류 0건 · `exit 99`) | **완료 (ALL PASS)** |
-| **전 탭 여백·패딩 통일 & 공용 GUI 디자인 스킬 전역화** | • WinForms 테두리 텍스트박스 붙음 현상을 `New-PaddedTextBoxPanel` 래퍼로 전 탭 해소(WPP·버그 리포트·하단 로그·탭 2 주의사항/도우미·탭 4 미리보기)<br>• 전 탭 그리드 헤더 `34px`/행 `32px`/셀 패딩 `(8,2,8,2)` 확대 및 `1040×720` 가로 스크롤 방지 열 폭 최적화, 상단 배너(`40px`+`4px` 포인트 바)·`1단계` 카드(`65px`)·`960×640`+WPP 동적 압축 조율<br>• `.agents/skills/asan-desktop-ui/`에 여백 통일 규격·패턴 반영 및 본 PC 전역 스킬(`~/.gemini/config/skills/asan-desktop-ui`) 설치 + `AGENTS.md` §5 지속 동기화 규칙 명문화 | **완료 (시각·자동 PASS)** |
+| **전 탭 여백·패딩 통일 & 공용 GUI 디자인 스킬 전역화** | • WinForms 테두리 텍스트박스 붙음 현상을 `New-PaddedTextBoxPanel` 래퍼로 전 탭 해소(WPP·버그 리포트·하단 로그·탭 2 주의사항/도우미·탭 4 미리보기)<br>• 전 탭 그리드 헤더 `34px`(`WrapMode=False`)/행 `32px`/셀 패딩 `(8,2,8,2)` 확대 및 `1040×720` 가로 스크롤 방지 열 폭 최적화, 상단 배너(`40px`+`4px` 포인트 바)·`1단계` 카드(`65px`)·`960×640`+WPP 동적 압축 조율<br>• `.agents/skills/asan-desktop-ui/`에 여백 통일 규격·패턴 반영 및 본 PC 전역 스킬(`~/.gemini/config/skills/asan-desktop-ui`) 설치 + `AGENTS.md` §5 지속 동기화 규칙 명문화 | **완료 (시각·자동 PASS)** |
+| **GitHub `README.md` 사용자 매뉴얼·시각자료 전면 개편** | • 비식별 예시 데이터(`W52-NURSE01`, 더미 SID)로 실제 GUI 5화면(`docs/images/tab1_backup.png`, `tab1_offline.png`, `tab2_restore.png`, `tab3_verify.png`, `tab4_server.png`) 제작 및 픽셀 검수<br>• Mermaid 전체 PC 교체 워크플로우 다이어그램, 탭별 가이드, 네트워크 배지·비활성 툴팁·자동 오류 리포트·단축키 안내, WPP/SID/특수 프린터 5종 최신 버튼명 기준 현장 체크리스트·명세 전면 개편 | **완료 (검수 PASS)** |
 
 ---
 
@@ -44,11 +45,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\smoke_test_local.p
 
 ---
 
-## 3. 우선순위별 다음 작업 및 재개 지점
+## 3. 우선순위별 다음 작업 및 재개 지점 (다른 PC 에이전트 바로 이어받기용)
 
-1. **[1순위 · 즉시 수행 가능 (직장/병원 PC)] 병원 현장 E2E 통합 테스트 (`v1.0.0-beta.3`)**
-   * 직장 PC에서 `git pull --ff-only` 후 위 2절 순서대로 `secrets.local.json` 생성 → 로컬 빌드한 `dist\Asan_Printer_Manager.bat`으로 Win 10 ↔ Win 11 테스트 PC(또는 VM)에서 `docs/E2E_TEST_CHECKLIST_v16.md` (`TC-01`~`TC-22`, 특히 `TC-01` `%TEMP%` 자가 정리, `TC-17B` 약제팀 ZT411 기존 복원 우선/골든 이미지 폴백 및 인쇄 기본 설정 경고, `TC-17C` USB 재인식, `TC-18B` LPT1/LPT2, `TC-22` 버그 리포트)를 수행합니다.
-   * 이슈 발견 시 소단위 패치 후 **`v1.0.0`** 정식 버전으로 승격합니다.
+> **바로 이어받을 현재 상태:** 코드·UI/UX·여백·공용 디자인 스킬·`README.md` 시각 매뉴얼까지 로컬 검증(`build_single_bat` + `verify_static` 6/6 + `smoke_test_local` 3/3) 100% 통과 상태로 `main`에 푸시되어 있습니다. 남은 핵심 작업은 **병원 실환경 E2E 검증 및 `v1.0.0` 정식 릴리스 승격**입니다.
+
+1. **[1순위 · 직장/병원 PC 즉시 수행] 로컬 빌드 1회 세팅 & 병원 현장 E2E 통합 테스트 (`v1.0.0-beta.3`)**
+   * 직장 PC에서 `git pull --ff-only` 실행 후 2절 안내대로 `secrets.local.json`을 1회 생성하고 `scripts/` 3단계(`build_single_bat.ps1` → `verify_static.ps1` → `smoke_test_local.ps1`)를 통과시켜 현장 배포용 `dist\Asan_Printer_Manager.bat`을 생성합니다.
+   * *(선택 · 직장 PC 1회)* 다른 아산병원 툴에서도 공용 GUI 디자인 스킬을 자동 사용하려면 `.agents\skills\asan-desktop-ui` 폴더를 `$env:USERPROFILE\.gemini\config\skills\asan-desktop-ui`로 복사합니다.
+   * Win 10/11 구 PC ↔ Win 11 새 PC(또는 테스트 VM)에서 `docs/E2E_TEST_CHECKLIST_v16.md` (`TC-01`~`TC-22`)를 수행합니다.
+     * 중점 검증: `TC-01` `%TEMP%` 자가 정리, `TC-04`/`05` 사내망 연결·미연결 UI 및 비활성 사유 툴팁, `TC-17B` 약제팀 ZT411 기존 복원 우선/골든 로컬 폴백 및 인쇄 기본 설정 경고, `TC-17C` USB 자동 재인식, `TC-18B` TM-T88VI LPT1/LPT2, `TC-22` 온·오프라인 자동 오류 리포트 전송/로컬 저장.
+   * 실환경 이슈 발견 시 소단위 패치 후 **`VERSION` · `src/01a_ctx_win32.ps1`(`AppVersion`) · `CHANGELOG.md` · `README.md`**를 **`v1.0.0`** 정식 버전으로 승격합니다.
 2. **[2순위 · 보류/선택] 관리번호 DB 연동 (`.xlsx` 자체 파싱)**
    * 필요 시 용도(조회/폴더명/리포트)와 DRM 해제 샘플 `.xlsx` 공유 후 `.NET ZipFile + XmlDocument`로 외부 의존성 없이 구현.
 
@@ -71,6 +77,18 @@ git pull --ff-only
 
 ## 5. 세션별 작업 로그 (최신순)
 
+* **2026-11-26 05:50 (집 PC / 세션 최종 마감 — `README.md` 사용자 매뉴얼·시각자료 전면 개편 및 오늘 작업 총정리):**
+  * **오늘 세션 완료 작업 총괄 (`6d379e8` ~ 본 커밋):**
+    1. 코어 `01_core.ps1` 5모듈 무손실 소분리(`01a`~`01e`) 및 `AGENTS.md` §3-5 최신화.
+    2. 재귀 코드 리뷰 Round 4 심층 버그 17건 패치 + `verify_static`/`smoke_test_local` 사각지대 해소(Stage 4 `DoEvents()` 타이머 재진입 버그 포함).
+    3. 저작권 로고 완전 제거(자체 GDI+ 프린터 심볼), 고시인성 아산 그린·오렌지 UI/UX 개편, 구 PC Win 10/11 공용 로직(`SourceOsName`, 스마트 탭 선택), 상용 한국어 UX 라이팅 전면 정비.
+    4. 비활성 버튼 점선·사유 툴팁(`Register-DisabledTooltipTree`), 작업 오류 온·오프라인 자동 리포트 구성(`Invoke-ErrorWithAutoReportPrompt`), 네트워크 표기 직관화(`사내망 · 서버 연결됨` / `사내망 연결 · 서버 미응답` / `사내망 미연결`), 재귀 UX 보강.
+    5. 전 탭 칸·텍스트 여백 통일(`New-PaddedTextBoxPanel`, 그리드 `34px/32px`·`WrapMode=False`·`1040×720` 가로 스크롤 0건, 탭 3 배너 통일, `960×640`+WPP 동적 압축).
+    6. 타 아산병원 툴 재사용용 공용 Antigravity GUI 디자인 스킬(`.agents/skills/asan-desktop-ui/`) 제작, 집 PC 전역 설치(`~/.gemini/config/skills/asan-desktop-ui`) 및 `AGENTS.md` §5 지속 동기화 규칙 반영.
+    7. GitHub `README.md` 사용자 매뉴얼·명세 전면 개편 + 비식별 실제 GUI 캡처 5종(`docs/images/tab1_backup.png`, `tab1_offline.png`, `tab2_restore.png`, `tab3_verify.png`, `tab4_server.png`) 및 Mermaid 워크플로우 다이어그램 첨부.
+  * **금번 세션 주요 수정/추가 파일:** `src/00_bootstrap.bat`, `src/01a_ctx_win32.ps1`~`01e_special_report_snapshot.ps1`, `src/02_gui_shell_tab1.ps1`, `src/03_gui_tab2.ps1`, `src/04_gui_tab3_tab4_main.ps1`, `scripts/build_single_bat.ps1`, `scripts/verify_static.ps1`, `scripts/smoke_test_local.ps1`, `.agents/skills/asan-desktop-ui/*`, `docs/images/*.png`, `AGENTS.md`, `README.md`, `CHANGELOG.md`, `HANDOFF.md`.
+  * **검증 상태:** `build_single_bat` (`533,438B`, `10,649줄`, `secrets.local.json` 실암호 3종 주입, SHA-256 `BE49F90A...`) · `verify_static` **6/6 PASS**(`SrcEncIssues=0`) · `smoke_test_local` **3/3 PASS**(`LayoutIssues=0`, `exit 99`) · `docs/images/*.png` 5종 비식별 시각 검수 완료.
+  * **다음 재개 지점:** 직장 PC에서 `git pull --ff-only` → `secrets.local.json` 1회 생성 & 로컬 빌드 → 병원 현장 E2E 통합 테스트(`docs/E2E_TEST_CHECKLIST_v16.md` `TC-01`~`TC-22`) 수행 → 이슈 없으면 `v1.0.0` 정식 승격.
 * **2026-11-26 04:48 (집 PC / 전 탭 여백·패딩 통일 `New-PaddedTextBoxPanel` 적용 · 공용 디자인 스킬 전역 설치 및 지속 동기화 규칙 반영):**
   * **완료 작업:**
     1. **공용 GUI 디자인 스킬 전역 설치 및 지속 동기화 규칙화:** `.agents/skills/asan-desktop-ui/`를 본 PC 전역 Antigravity 스킬 디렉터리(`~/.gemini/config/skills/asan-desktop-ui`)에 설치하고, `SKILL.md`·`references/winforms_ps51_patterns.md`에 **여백·패딩 통일 규격(3-1절)**, `New-PaddedTextBoxPanel` 패턴, `1040×720` 그리드 가로 스크롤 방지 폭 기준(`<= 930px`)을 추가. `AGENTS.md` §5에 향후 GUI 변경 시 저장소·전역 스킬 동시 최신화 규칙 명문화.
