@@ -34,7 +34,7 @@
   * `build_single_bat.ps1` — `src/` 9개 모듈을 순수 `CRLF` · `UTF-8 No BOM`으로 `dist/Asan_Printer_Manager.bat` 생성
   * `verify_static.ps1` — 6대 자동 정적 검증 (인코딩/CRLF, 마커·추출, PS 5.1 AST 파서, 제약 스캔, C# 5.0 `Add-Type`, 함수 교차참조 & 자식 Runspace 실주입)
   * `smoke_test_local.ps1` — 비파괴 로컬 스모크 테스트 (Zero-USB-Write 추출, 코어 진단·단위테스트, 실제 `-STA` WinForms GUI 4탭 순회 & `1040×720`/`960×640` 레이아웃 감사 & `exit 99`)
-* **문서 (`docs/` & 루트):** `HANDOFF.md`(최신 인계서), `CHANGELOG.md`, `README.md`, `docs/antigravity_ide_v16_0.md`(초기 마스터 명세), `docs/E2E_TEST_CHECKLIST_v16.md`
+* **문서 (`docs/` & 루트) 및 공용 UI 스킬 (`.agents/skills/`):** `HANDOFF.md`(최신 인계서), `CHANGELOG.md`, `README.md`, `docs/antigravity_ide_v16_0.md`(초기 마스터 명세), `docs/E2E_TEST_CHECKLIST_v16.md`, `.agents/skills/asan-desktop-ui/SKILL.md`(타 아산병원 툴 공용 GUI 디자인 시스템 스킬 + `references/winforms_ps51_patterns.md`)
 
 ---
 

@@ -1,6 +1,6 @@
 # 작업 인수인계서 (HANDOFF) — 집 ↔ 직장 PC 양방향 공용
 
-> **최종 갱신:** 2026-11-26 04:10 (집 PC — 비활성 버튼 점선/사유 툴팁 · 오류 자동 리포트 안내(온·오프라인) · 사내망 네트워크 표기 직관화 · 재귀 UX 보강 · 3단계 검증 및 시각 감사 PASS)  
+> **최종 갱신:** 2026-11-26 04:22 (집 PC — 타 아산병원 툴 재사용 공용 GUI 디자인 스킬 `.agents/skills/asan-desktop-ui/` 제작 및 GitHub 동기화)  
 > **현재 개발 버전:** `v1.0.0-beta.3` (안 A 비밀 분리 + P0 전면 안정화 + ZT411 골든 이미지 로컬 정책 + 재귀 리뷰 Round 1~4 + 코어 5모듈 소분리 + 고시인성 UI/UX·비활성 사유 툴팁·자동 오류 리포트 안내 완료)  
 > **GitHub 비공개 저장소:** https://github.com/nikin78/asan-printer-manager  
 > **자동 규칙 파일:** `AGENTS.md` *(Antigravity IDE가 저장소 루트 오픈 시 자동 로드)*  
@@ -70,6 +70,8 @@ git pull --ff-only
 
 ## 5. 세션별 작업 로그 (최신순)
 
+* **2026-11-26 04:22 (집 PC / 아산병원 툴 공용 GUI 디자인 시스템 Antigravity 스킬 제작):**
+  * **완료 작업:** 다른 아산병원 현장 운영 툴을 Antigravity IDE에서 바이브 코딩할 때 디자인·UX 통일성을 자동으로 유지할 수 있도록 Antigravity 표준 점진적 공개(Progressive Disclosure) 스킬 패키지 `.agents/skills/asan-desktop-ui/SKILL.md`(저작권 로고 금지·고시인성 컬러/타이포 토큰·4영역 셸·비활성 점선/사유 툴팁·상용 UX 라이팅·네트워크/OS 표기·온/오프라인 오류 자동 리포트·시각 감사 철칙) 및 `.agents/skills/asan-desktop-ui/references/winforms_ps51_patterns.md`(PS 5.1 WinForms 실전 코드 템플릿)를 제작하고 `AGENTS.md`·`HANDOFF.md`에 반영.
 * **2026-11-26 04:10 (집 PC / 비활성 버튼 점선·사유 툴팁 · 작업 오류 자동 리포트 안내 · 네트워크 표기 직관화 · 재귀 UX 보강):**
   * **완료 작업:**
     1. **비활성 버튼 직관성 & 사유 툴팁 (`02_gui_shell_tab1.ps1`):** WinForms 비활성 `GrayText` 한계를 GDI+ `Add_Paint`로 대체해 점선 테두리·연한 무채색·비굵은 글씨로 즉시 구분되게 개선하고, 비활성 컨트롤 툴팁 미발동 한계를 부모 컨테이너 `MouseMove`/`GetChildAtPoint` 라우팅(`Register-DisabledTooltipTree`) + `Set-ButtonTipState`로 해결해 전 탭 모든 비활성 버튼에 실시간 사유 툴팁 제공.
