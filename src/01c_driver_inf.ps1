@@ -17,9 +17,9 @@ function Get-DetectedVendors {
     if ($Text -match '(?i)Canon|캐논')                                  { $list.Add('CANON') }
     if ($Text -match '(?i)Epson|엡손')                                  { $list.Add('EPSON') }
     if ($Text -match '(?i)Brother|브라더')                              { $list.Add('BROTHER') }
-    if ($Text -match '(?i)Ricoh|리코|Savin|Lanier')                     { $list.Add('RICOH') }
+    if ($Text -match '(?i)Ricoh|(?<!신도)리코|Savin|Lanier')            { $list.Add('RICOH') }
     if ($Text -match '(?i)Konica|Minolta|코니카')                       { $list.Add('KONICA') }
-    if ($Text -match '(?i)Fuji|Xerox|제록스')                           { $list.Add('XEROX') }
+    if ($Text -match '(?i)Fuji(?!tsu)|Xerox|제록스')                    { $list.Add('XEROX') }
     if ($Text -match '(?i)Sindoh|신도리코')                             { $list.Add('SINDOH') }
     if ($Text -match '(?i)Zebra|ZDesigner|ZD410|ZD411|ZT410|ZT411|ZBRN') { $list.Add('ZEBRA') }
     if ($Text -match '(?i)Bixolon|빅솔론|SLP-TX|TX220|TX-220')           { $list.Add('BIXOLON') }
@@ -55,7 +55,7 @@ function Get-ModelStems {
     param([string[]]$Tokens)
     $stems = [System.Collections.Generic.List[string]]::new()
     foreach ($t in @($Tokens)) {
-        if ($t -notmatch '\d') { continue }
+        if ($t -notmatch '^[a-z0-9]+$' -or $t -notmatch '\d' -or $t -match '^\d+(?:dpi|bit)$') { continue }
         $clean = $t.ToLowerInvariant() -replace '^sl', ''
         if ($clean.Length -ge 3 -and -not $stems.Contains($clean)) { $stems.Add($clean) }
 
@@ -142,7 +142,7 @@ function Get-InfDisplayNames {
     foreach ($rawLine in ($InfText -split "`r?`n")) {
         $line = $rawLine.Trim()
         if (-not $line -or $line.StartsWith(';')) { continue }
-        $secM = [regex]::Match($line, '^\s*\[([^\]]+)\]\s*$')
+        $secM = [regex]::Match($line, '^\s*\[([^\]]+)\]\s*(?:;.*)?$')
         if ($secM.Success) { $section = $secM.Groups[1].Value.Trim(); continue }
         if ($section -match '(?i)^strings(?:\.([0-9a-f]+))?$') {
             $langTag = ''
@@ -171,7 +171,12 @@ function Get-InfDisplayNames {
         $dirM = [regex]::Match($line, '^\s*"([^"]+)"\s*=')
         if ($dirM.Success) {
             $v = $dirM.Groups[1].Value.Trim()
-            if ($v -and -not $directNames.Contains($v)) { $directNames.Add($v) }
+            if ($v -match '^%([^%]+)%$') {
+                $qk = $matches[1].Trim().ToLowerInvariant()
+                if ($qk -and -not $tokenRefs.Contains($qk)) { $tokenRefs.Add($qk) }
+            } elseif ($v -and -not $directNames.Contains($v)) {
+                $directNames.Add($v)
+            }
         }
         $tokM = [regex]::Match($line, '^\s*%([^%]+)%\s*=')
         if ($tokM.Success) {
@@ -215,7 +220,7 @@ function Build-InfIndexCache {
         foreach ($rawL in ($text -split "`r?`n")) {
             $ln = $rawL.Trim()
             if (-not $ln -or $ln.StartsWith(';')) { continue }
-            $sm = [regex]::Match($ln, '^\s*\[([^\]]+)\]\s*$')
+            $sm = [regex]::Match($ln, '^\s*\[([^\]]+)\]\s*(?:;.*)?$')
             if ($sm.Success) { $curSec = $sm.Groups[1].Value.Trim(); continue }
             if ($curSec -match '(?i)^strings(?:\.([0-9a-f]+))?$') {
                 $lTag = ''
@@ -282,13 +287,13 @@ function Get-DriverStorePrinterInfFiles {
         $prefix = [IO.Path]::GetFileNameWithoutExtension($orig)
         $dirs   = @(Get-ChildItem -LiteralPath $repoDir -Directory -Filter "$prefix.inf_*" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
         foreach ($sub in $dirs) {
+            if ([Environment]::Is64BitOperatingSystem -and $sub.Name -match '(?i)_(x86|arm64)_') { continue }
             $cand = Join-Path $sub.FullName $orig
             if (Test-Path -LiteralPath $cand) {
                 $key = $cand.ToLowerInvariant()
                 if (-not $seen.ContainsKey($key)) {
                     $seen[$key] = $true
                     $infList.Add((Get-Item -LiteralPath $cand))
-                    break
                 }
             }
         }
@@ -383,7 +388,12 @@ function Score-DriverDisplayName {
         $tNorm = Normalize-Text $t
         if ($dnNorm.Contains($tNorm)) {
             $tokHits++
-            if ($t -match '\d') { $dScore += 160; $digitHit = $true } else { $dScore += 40 }
+            if ($t -match '^[a-z0-9]+$' -and $t -match '\d' -and $t -notmatch '^\d+(?:dpi|bit)$') {
+                $dScore += 160
+                $digitHit = $true
+            } else {
+                $dScore += 40
+            }
         }
     }
 
@@ -498,14 +508,20 @@ function Resolve-BestDriverForPrinter {
 
     $preferPcl6       = (-not $ExcludeFromPcl6)
     $isWantedInboxGen = ($WantedDriverName -match $global:AsanCtx.MicrosoftInboxGenericRegex)
+    $wantedOwnStems   = @(Get-ModelStems -Tokens (Get-SignificantTokens $WantedDriverName))
+    $isPureGeneric    = ($WantedDriverName -match '(?i)^(Microsoft IPP Class Driver|Microsoft Point and Print|Microsoft Enhanced Point and Print|Generic\s*/\s*Text Only|Microsoft PCL6 Class Driver|Microsoft PS Class Driver)$')
 
     $searchTarget = $WantedDriverName
-    if ($isWantedInboxGen -or [string]::IsNullOrWhiteSpace($WantedDriverName)) {
+    if ([string]::IsNullOrWhiteSpace($WantedDriverName) -or ($isWantedInboxGen -and ($isPureGeneric -or $wantedOwnStems.Count -eq 0))) {
         if (-not [string]::IsNullOrWhiteSpace($ModelHint)) { $searchTarget = $ModelHint }
         else { $searchTarget = $PrinterName }
+    } elseif ($isWantedInboxGen -and -not [string]::IsNullOrWhiteSpace($ModelHint)) {
+        $searchTarget = "$WantedDriverName $ModelHint"
     }
 
-    $wantedVendor    = Get-DetectedVendor -Text "$WantedDriverName $ModelHint $PrinterName"
+    $wantedVendor = Get-DetectedVendor -Text $WantedDriverName
+    if (-not $wantedVendor) { $wantedVendor = Get-DetectedVendor -Text $ModelHint }
+    if (-not $wantedVendor) { $wantedVendor = Get-DetectedVendor -Text $PrinterName }
     $isSamsung       = ($wantedVendor -eq 'SAMSUNG')
     $origProto       = Get-DriverProtocolTag -DriverName $WantedDriverName
     $wantedNorm      = Normalize-Text $WantedDriverName

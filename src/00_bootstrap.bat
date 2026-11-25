@@ -32,7 +32,7 @@ if not errorlevel 1 goto RUN_STAGED_NOW
 
 rem Encode ORIGINAL_SELF as URL-safe Base64 ([A-Za-z0-9_-], safe across CMD metacharacters & UAC)
 set "ASAN_PARENT_CLEANUP="
-"%PS_EXE%" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $b64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($env:ORIGINAL_SELF)).Replace('+','-').Replace('/','_').TrimEnd('='); $q=[char]34; $cmdLine=$q+$q+$env:STAGED_SELF+$q+' __STAGED__ '+$b64+$q; Start-Process -FilePath $env:CMD_EXE -Verb RunAs -ArgumentList @('/d','/c',$cmdLine) | Out-Null"
+"%PS_EXE%" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $b64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($env:ORIGINAL_SELF)).Replace('+','-').Replace('/','_').TrimEnd('='); $q=[char]34; $cmdLine=$q+$q+$env:STAGED_SELF+$q+' __STAGED__ '+$b64+$q; $nativeCmd=Join-Path $env:SystemRoot 'System32\cmd.exe'; Start-Process -FilePath $nativeCmd -Verb RunAs -ArgumentList @('/d','/c',$cmdLine) | Out-Null"
 if errorlevel 1 (
     if exist "%STAGED_SELF%" del /f /q "%STAGED_SELF%" >nul 2>&1
     goto ERR_UAC

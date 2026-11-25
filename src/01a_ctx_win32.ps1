@@ -4,6 +4,17 @@ try { [Console]::InputEncoding  = [System.Text.Encoding]::UTF8 } catch {}
 $ErrorActionPreference = 'Stop'
 Import-Module PrintManagement -ErrorAction SilentlyContinue
 
+# [보안] PS 5.1이 스크립트 전체를 메모리에 로드한 직후 %TEMP% 임시 추출 .ps1을 즉시 제거해 평문 디스크 노출 시간 최소화
+try {
+    if ($PSCommandPath -and ([IO.Path]::GetFileName($PSCommandPath) -match '^AsanPrinterMgr_\d+_\d+\.ps1$')) {
+        $tmpRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\')
+        $curDir  = [IO.Path]::GetFullPath([IO.Path]::GetDirectoryName($PSCommandPath)).TrimEnd('\')
+        if ($curDir -ieq $tmpRoot) {
+            Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+} catch {}
+
 # ============================================================================
 # [Module 01] Runspace 스레드 안전 전역 컨텍스트 ($global:AsanCtx)
 # ============================================================================
@@ -293,9 +304,9 @@ namespace AsanWin32
             int rc = NetShareEnum(serverUnc, 1, out bufPtr, 0xFFFFFFFF, out entriesRead, out totalEntries, ref resumeHandle);
             res.Win32Error = rc;
 
-            if ((rc == 0 || rc == 234) && bufPtr != IntPtr.Zero)
+            try
             {
-                try
+                if ((rc == 0 || rc == 234) && bufPtr != IntPtr.Zero)
                 {
                     int structSize = Marshal.SizeOf(typeof(SHARE_INFO_1));
                     long baseAddr = bufPtr.ToInt64();
@@ -310,7 +321,10 @@ namespace AsanWin32
                         }
                     }
                 }
-                finally
+            }
+            finally
+            {
+                if (bufPtr != IntPtr.Zero)
                 {
                     NetApiBufferFree(bufPtr);
                 }

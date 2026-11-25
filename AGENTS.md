@@ -49,7 +49,7 @@
    * WinForms 대화상자·비동기 콜백에서 로컬 변수 클로저 캡처 금지 (`DialogResult`, `$sender.Tag`, `$script:AsyncState.CallbackState`만 사용).
    * JSON 직렬화 전 문자열 배열 빈 값/`$null` 필터링.
    * 인라인 `Add-Type` C# 코드는 **C# 5.0**만 사용 (`$"..."`, `?.`, `nameof`, 식 본문 멤버 금지).
-5. **Runspace 격리 규칙:** 비동기 `$work = { ... }` 블록에서 호출하는 모든 내부 함수는 반드시 `src/01_core.ps1`의 `$script:CoreFunctionNames` 스냅샷 **이전**에 정의하고 `Verb-Noun` 형식(`^[A-Za-z]+-[A-Za-z0-9]+$`)을 지킬 것.
+5. **Runspace 격리 규칙:** 비동기 `$work = { ... }` 블록에서 호출하는 모든 내부 함수는 반드시 코어 모듈(`src/01a_ctx_win32.ps1`~`01e_special_report_snapshot.ps1`) 중 `src/01e_special_report_snapshot.ps1`의 `$script:CoreFunctionNames` 스냅샷 **이전**에 정의하고 `Verb-Noun` 형식(`^[A-Za-z]+-[A-Za-z0-9]+$`)을 지킬 것.
 6. **고정 상수 임의 변경 금지:** 백업 서버 `172.25.152.232`, 사내 DNS `10.71.1.5`, 공유 후보 `\\172.25.152.232\백업 작업` / `백업폴더`(하위 `_PRTBAK`), 기본 계정 `admin` + 공용 암호 3종(Git 소스에는 `@('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')` 유지, 로컬 `secrets.local.json`에서 빌드 주입), 로컬 PRT 경로(`스캔유틸|ScannerFileUtility|ScanUtility` 제외), `C:\_AsanPrtOffline`, `$global:AsanCtx`.
 7. **IPv4 대역 하드코딩 금지:** 병원망은 `172.*`, `10.*` 외 `19*.*`도 사용하므로 특정 사설 대역만 허용하지 말 것.
 8. **현장 안전 규칙:**

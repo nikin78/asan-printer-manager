@@ -37,7 +37,8 @@ function Invoke-PrinterBackupEngine {
 
     $folderId          = Get-BackupFolderId -PcIp $PcIp
     $safeHost          = Get-SafeFileName -Text $env:COMPUTERNAME
-    $localTemp         = Join-Path $global:AsanCtx.WorkBaseDir "Work_Bak_$PID"
+    $runGuid           = [Guid]::NewGuid().ToString('N').Substring(0, 8)
+    $localTemp         = Join-Path $global:AsanCtx.WorkBaseDir "Work_Bak_${PID}_$runGuid"
     $backupNotes       = [System.Collections.Generic.List[object]]::new()
     $cleanTwainFolders = [string[]]@($TwainFolders | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
 
@@ -50,11 +51,24 @@ function Invoke-PrinterBackupEngine {
         $brmOk   = $false
         if (Test-Path -LiteralPath $global:AsanCtx.PrintBrmExe) {
             $brmRes = Invoke-NativeCommand -FilePath $global:AsanCtx.PrintBrmExe -Arguments @('-b', '-f', $brmFile)
-            if (Test-Path -LiteralPath $brmFile) { $brmOk = $true }
-            elseif ($brmRes.ExitCode -ne 0) {
-                $brmErrShort = ([string]$brmRes.Output -replace '\s+', ' ').Trim()
-                if ($brmErrShort.Length -gt 180) { $brmErrShort = $brmErrShort.Substring(0, 180) + '...' }
-                $backupNotes.Add([pscustomobject]@{ Level = 'Warning'; Target = 'PrintBrm'; Message = "PrintBrm 백업 종료코드=$($brmRes.ExitCode): $brmErrShort" })
+            $brmLen = 0
+            if (Test-Path -LiteralPath $brmFile) {
+                try { $brmLen = (Get-Item -LiteralPath $brmFile -ErrorAction Stop).Length } catch { $brmLen = 0 }
+            }
+            if ($brmLen -gt 0) {
+                $brmOk = $true
+                if ($brmRes.ExitCode -ne 0) {
+                    $brmErrShort = ([string]$brmRes.Output -replace '\s+', ' ').Trim()
+                    if ($brmErrShort.Length -gt 180) { $brmErrShort = $brmErrShort.Substring(0, 180) + '...' }
+                    $backupNotes.Add([pscustomobject]@{ Level = 'Warning'; Target = 'PrintBrm'; Message = "PrintBrm 일부 경고(ExitCode=$($brmRes.ExitCode)): $brmErrShort" })
+                }
+            } else {
+                if (Test-Path -LiteralPath $brmFile) { Remove-Item -LiteralPath $brmFile -Force -ErrorAction SilentlyContinue }
+                if ($brmRes.ExitCode -ne 0) {
+                    $brmErrShort = ([string]$brmRes.Output -replace '\s+', ' ').Trim()
+                    if ($brmErrShort.Length -gt 180) { $brmErrShort = $brmErrShort.Substring(0, 180) + '...' }
+                    $backupNotes.Add([pscustomobject]@{ Level = 'Warning'; Target = 'PrintBrm'; Message = "PrintBrm 백업 종료코드=$($brmRes.ExitCode): $brmErrShort" })
+                }
             }
         }
         if (-not $brmOk) {
@@ -270,9 +284,11 @@ function Invoke-PrinterBackupEngine {
                             if ($dstLen -gt 0 -and $dstLen -eq $srcLen) {
                                 $usbCopyPath = $candUsbZip
                             } else {
-                                $backupNotes.Add([pscustomobject]@{ Level = 'Warning'; Target = 'USB 동시 복사'; Message = "USB ZIP 복사본 크기가 불일치합니다 ($candUsbZip) — 로컬 C:\_AsanPrtOffline ZIP을 사용하세요." })
+                                if (Test-Path -LiteralPath $candUsbZip) { Remove-Item -LiteralPath $candUsbZip -Force -ErrorAction SilentlyContinue }
+                                $backupNotes.Add([pscustomobject]@{ Level = 'Warning'; Target = 'USB 동시 복사'; Message = "USB ZIP 복사본 크기가 불일치하여 불완전 파일을 삭제했습니다 ($candUsbZip) — 로컬 C:\_AsanPrtOffline ZIP을 사용하세요." })
                             }
                         } catch {
+                            if (Test-Path -LiteralPath $candUsbZip) { Remove-Item -LiteralPath $candUsbZip -Force -ErrorAction SilentlyContinue }
                             $backupNotes.Add([pscustomobject]@{ Level = 'Warning'; Target = 'USB 동시 복사'; Message = "USB 동시 복사 실패($($_.Exception.Message)) — 로컬 C:\_AsanPrtOffline ZIP을 사용하세요." })
                         }
                     }
@@ -309,7 +325,8 @@ function Invoke-PrinterBackupEngine {
             if ([IO.Path]::GetDirectoryName($stageFull).TrimEnd('\') -ine $baseFull) {
                 throw "안전 가드 차단: 스테이징 경로가 _PRTBAK 직계 하위가 아닙니다 ($stageFull)."
             }
-            $swapped = $false
+            $swapped    = $false
+            $movedToOld = $false
             try {
                 if (Test-Path -LiteralPath $stageFull) { Remove-Item -LiteralPath $stageFull -Recurse -Force -ErrorAction SilentlyContinue }
                 New-Item -ItemType Directory -Path $stageFull -Force | Out-Null
@@ -320,11 +337,12 @@ function Invoke-PrinterBackupEngine {
                     try {
                         if (Test-Path -LiteralPath $oldFull) { Remove-Item -LiteralPath $oldFull -Recurse -Force -ErrorAction SilentlyContinue }
                         [IO.Directory]::Move($targetFull, $oldFull)
+                        $movedToOld = $true
                         try {
                             [IO.Directory]::Move($stageFull, $targetFull)
                             $swapped = $true
                         } catch {
-                            try { if (-not (Test-Path -LiteralPath $targetFull) -and (Test-Path -LiteralPath $oldFull)) { [IO.Directory]::Move($oldFull, $targetFull) } } catch {}
+                            try { if (-not (Test-Path -LiteralPath $targetFull) -and (Test-Path -LiteralPath $oldFull)) { [IO.Directory]::Move($oldFull, $targetFull); $movedToOld = $false } } catch {}
                             throw
                         }
                     } catch {
@@ -347,8 +365,13 @@ function Invoke-PrinterBackupEngine {
                 if (-not $swapped) { throw '서버 백업 폴더 원자적 전환 실패' }
             }
             finally {
-                # [데이터 유실 방지] target 부재 시 _OLD_->target 롤백 1회 시도, 전환 성공+target 실존 시에만 _OLD_ 삭제
-                if ((-not (Test-Path -LiteralPath $targetFull)) -and (Test-Path -LiteralPath $oldFull)) {
+                # [데이터 유실 방지] 교체 실패 + _OLD_ 보존 시 부분 생성된 target을 정리하고 _OLD_ 정상 백업 롤백
+                if ((-not $swapped) -and $movedToOld -and (Test-Path -LiteralPath $oldFull)) {
+                    try {
+                        if (Test-Path -LiteralPath $targetFull) { Remove-Item -LiteralPath $targetFull -Recurse -Force -ErrorAction Stop }
+                        [IO.Directory]::Move($oldFull, $targetFull)
+                    } catch {}
+                } elseif ((-not (Test-Path -LiteralPath $targetFull)) -and (Test-Path -LiteralPath $oldFull)) {
                     try { [IO.Directory]::Move($oldFull, $targetFull) } catch {}
                 }
                 if ($swapped -and (Test-Path -LiteralPath $targetFull) -and (Test-Path -LiteralPath $oldFull)) {
@@ -631,13 +654,27 @@ function Ensure-RestoredPortSafe {
     $pName = $FallbackName
     if ($PortObj -and $PortObj.Name) { $pName = [string]$PortObj.Name }
 
-    $exist = @(Get-PrinterPort -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq $pName }) | Select-Object -First 1
-    if ($exist) { return [pscustomobject]@{ Success = $true; PortName = [string]$exist.Name; Reason = $null; AuthFailedHost = $null } }
-
     $kind = 'LOCAL'
     if ($OverrideKind) { $kind = $OverrideKind }
     elseif ($PortObj -and $PortObj.Kind) { $kind = [string]$PortObj.Kind }
     elseif ($pName -match '^\\\\') { $kind = 'LOCAL_UNC' }
+
+    $exist = @(Get-PrinterPort -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq $pName }) | Select-Object -First 1
+    if ($exist) {
+        if ($kind -eq 'LOCAL_UNC' -or $pName.StartsWith('\\')) {
+            $hmEx = [regex]::Match($pName, '^\\\\([^\\]+)\\')
+            if ($hmEx.Success) {
+                $hostEx = $hmEx.Groups[1].Value
+                $authEx = Connect-SharedHostSmart -HostName $hostEx
+                if (-not $authEx.Success) {
+                    $failHEx = $null
+                    if ($authEx.Status -eq 'AuthOrSidConflict') { $failHEx = $hostEx }
+                    return [pscustomobject]@{ Success = $false; PortName = [string]$exist.Name; Reason = $authEx.Reason; AuthFailedHost = $failHEx }
+                }
+            }
+        }
+        return [pscustomobject]@{ Success = $true; PortName = [string]$exist.Name; Reason = $null; AuthFailedHost = $null }
+    }
 
     try {
         if ($kind -eq 'TCPIP') {
@@ -645,12 +682,13 @@ function Ensure-RestoredPortSafe {
             if ($OverrideHostIp) { $hostIp = $OverrideHostIp }
             elseif ($PortObj -and $PortObj.HostAddress) { $hostIp = [string]$PortObj.HostAddress }
 
+            # [중요] Add-PrinterPort -SNMP 0 은 -SNMPCommunity 누락 시 0x80070057 오류 발생 -> -SNMP 생략(기본 비활성) 후 6단계에서 SNMP Enabled=0 재보장
             if ($PortObj -and [string]$PortObj.Protocol -eq 'LPR' -and -not [string]::IsNullOrWhiteSpace([string]$PortObj.Queue)) {
-                $params = @{ Name = $pName; LprHostAddress = $hostIp; LprQueueName = [string]$PortObj.Queue; SNMP = [uint32]0; ErrorAction = 'Stop' }
+                $params = @{ Name = $pName; LprHostAddress = $hostIp; LprQueueName = [string]$PortObj.Queue; ErrorAction = 'Stop' }
                 if ($PortObj.ByteCount) { $params.LprByteCounting = $true }
                 Add-PrinterPort @params
             } else {
-                $params = @{ Name = $pName; PrinterHostAddress = $hostIp; SNMP = [uint32]0; ErrorAction = 'Stop' }
+                $params = @{ Name = $pName; PrinterHostAddress = $hostIp; ErrorAction = 'Stop' }
                 if ($PortObj -and $PortObj.PortNumber -and [uint32]$PortObj.PortNumber -gt 0) { $params.PortNumber = [uint32]$PortObj.PortNumber }
                 Add-PrinterPort @params
             }
@@ -722,7 +760,8 @@ function Import-RewrittenPrinterRegFile {
             $safeNewPath = $newPath.Replace('$', '$$')
             $rewritten   = [regex]::Replace($regContent, $escapedOld, $safeNewPath, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
             if (-not (Test-Path -LiteralPath $global:AsanCtx.WorkBaseDir)) { New-Item -ItemType Directory -Path $global:AsanCtx.WorkBaseDir -Force | Out-Null }
-            $tempRewrittenReg = Join-Path $global:AsanCtx.WorkBaseDir "Rewritten_$PID.reg"
+            $regGuid = [Guid]::NewGuid().ToString('N').Substring(0, 8)
+            $tempRewrittenReg = Join-Path $global:AsanCtx.WorkBaseDir "Rewritten_${PID}_$regGuid.reg"
             [IO.File]::WriteAllText($tempRewrittenReg, $rewritten, [Text.Encoding]::Unicode)
             $importTarget = $tempRewrittenReg
         } catch {
@@ -763,7 +802,12 @@ function Invoke-AsanStandardPolicyAtomic {
         $prtMap[[string]$p.Name] = $p
     }
 
-    [void](Stop-SpoolerSafe)
+    $spoolerStopped = Stop-SpoolerSafe
+    if (-not $spoolerStopped) {
+        Start-Sleep -Milliseconds 700
+        $spoolerStopped = Stop-SpoolerSafe
+    }
+    $failedRegImports = [System.Collections.Generic.List[string]]::new()
 
     try {
         $tcpRegRoot = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors\Standard TCP/IP Port\Ports'
@@ -777,12 +821,29 @@ function Invoke-AsanStandardPolicyAtomic {
         if (Test-Path -LiteralPath $prtRegRoot) {
             Get-ChildItem -LiteralPath $prtRegRoot -ErrorAction SilentlyContinue | ForEach-Object {
                 $pName = $_.PSChildName
+                $regProps = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue
+                $drvForSpec  = ''
+                $portForSpec = ''
                 $pInfo = $prtMap[$pName]
                 if ($pInfo) {
-                    $spec = Get-SpecialPrinterProfile -PrinterName $pName -DriverName ([string]$pInfo.DriverName) -PortName ([string]$pInfo.PortName)
-                    if ($spec.IsSpecial -and ([string]$pInfo.PortName -match '(?i)^USB')) { return }
+                    $drvForSpec  = [string]$pInfo.DriverName
+                    $portForSpec = [string]$pInfo.PortName
                 }
-                $attr = (Get-ItemProperty -LiteralPath $_.PSPath -Name 'Attributes' -ErrorAction SilentlyContinue).Attributes
+                if ($regProps) {
+                    if ([string]::IsNullOrWhiteSpace($drvForSpec) -and $regProps.PSObject.Properties.Name -contains 'Printer Driver') {
+                        $drvForSpec = [string]$regProps.'Printer Driver'
+                    }
+                    if ([string]::IsNullOrWhiteSpace($portForSpec) -and $regProps.PSObject.Properties.Name -contains 'Port') {
+                        $portForSpec = [string]$regProps.Port
+                    }
+                }
+                $spec = Get-SpecialPrinterProfile -PrinterName $pName -DriverName $drvForSpec -PortName $portForSpec
+                if ($spec.IsSpecial -and ($portForSpec -match '(?i)^USB')) { return }
+
+                $attr = $null
+                if ($regProps -and $regProps.PSObject.Properties.Name -contains 'Attributes') {
+                    $attr = $regProps.Attributes
+                }
                 if ($null -ne $attr) {
                     $rawInt64 = [int64]$attr
                     $curUInt  = [uint32]($rawInt64 -band [int64]0xFFFFFFFF)
@@ -796,12 +857,17 @@ function Invoke-AsanStandardPolicyAtomic {
         foreach ($regItem in @($PendingRegImports)) {
             $regOk = Import-RewrittenPrinterRegFile -PrinterName $regItem.PrinterName -OriginalPrinterName $regItem.OriginalPrinterName -RegFullPath $regItem.RegFullPath
             if (-not $regOk) {
+                $failedRegImports.Add([string]$regItem.PrinterName)
                 Write-ProgressSafe -Percent 88 -Message "[경고] 특수장비 레지스트리 설정(.reg) 주입 실패: $($regItem.PrinterName)"
             }
         }
     }
     finally {
         Ensure-SpoolerRunning
+    }
+    return [pscustomobject]@{
+        SpoolerStopped   = $spoolerStopped
+        FailedRegImports = $failedRegImports.ToArray()
     }
 }
 
@@ -836,7 +902,8 @@ function Invoke-PrinterRestoreEngine {
 
     if (-not (Test-Path -LiteralPath $global:AsanCtx.WorkBaseDir)) { New-Item -ItemType Directory -Path $global:AsanCtx.WorkBaseDir -Force | Out-Null }
 
-    $localTemp          = Join-Path $global:AsanCtx.WorkBaseDir "Work_Res_$PID"
+    $resGuid            = [Guid]::NewGuid().ToString('N').Substring(0, 8)
+    $localTemp          = Join-Path $global:AsanCtx.WorkBaseDir "Work_Res_${PID}_$resGuid"
     $isZip              = ($SourcePath -match '(?i)\.zip$')
     $restoreLog         = [System.Collections.Generic.List[object]]::new()
     $failures           = [System.Collections.Generic.List[object]]::new()
@@ -867,7 +934,8 @@ function Invoke-PrinterRestoreEngine {
         if ($isZip) {
             [System.IO.Compression.ZipFile]::ExtractToDirectory($SourcePath, $localTemp)
         } else {
-            $rc = (Invoke-NativeCommand -FilePath 'robocopy.exe' -Arguments @($SourcePath, $localTemp, '/E', '/R:2', '/W:1')).ExitCode
+            $cleanSrcDir = $SourcePath.TrimEnd('\')
+            $rc = (Invoke-NativeCommand -FilePath 'robocopy.exe' -Arguments @($cleanSrcDir, $localTemp, '/E', '/R:2', '/W:1')).ExitCode
             if ($rc -ge 8) { throw "백업 서버 다운로드 실패 (robocopy ExitCode=$rc)" }
         }
 
@@ -983,8 +1051,24 @@ function Invoke-PrinterRestoreEngine {
                 }
             }
 
+            # PrintBrm으로 큐 없이 드라이버만 유입된 Win 10 구형 세우테크 / 무드라이버 TM-T88 고아 드라이버도 함께 격리
+            $hasSelectedUsbTm88 = (@($SelectedRows | Where-Object {
+                $_.Selected -and ($_.PrinterName -match '(?i)TM-?T88|TMT88' -or $_.DriverName -match '(?i)TM-?T88|TMT88') -and ($_.SpecialType -ne 'EPSON_TMT88_LPT')
+            })).Count -gt 0
+            $remainingDrvs = @(Get-Printer -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.DriverName })
+            foreach ($dCheck in @(Get-PrinterDriver -ErrorAction SilentlyContinue)) {
+                $dn = [string]$dCheck.Name
+                if ([string]::IsNullOrWhiteSpace($dn)) { continue }
+                if ($preExistingDrivers.ContainsKey($dn.ToLowerInvariant())) { continue }
+                if ($remainingDrvs -contains $dn) { continue }
+                if ($dn -match '(?i)SLK-TE|LK-TE|Sewoo|POS\s*PRINTER') {
+                    if (-not $sewooDriversToClean.Contains($dn)) { $sewooDriversToClean.Add($dn) }
+                } elseif ((-not $hasSelectedUsbTm88) -and ($dn -match '(?i)TM-?T88|TMT88')) {
+                    if (-not $sewooDriversToClean.Contains($dn)) { $sewooDriversToClean.Add($dn) }
+                }
+            }
+
             if ($sewooDriversToClean.Count -gt 0) {
-                $remainingDrvs = @(Get-Printer -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.DriverName })
                 foreach ($sdName in $sewooDriversToClean) {
                     if ($remainingDrvs -notcontains $sdName) {
                         foreach ($dObj in @(Get-PrinterDriver -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $sdName })) {
@@ -1038,7 +1122,7 @@ function Invoke-PrinterRestoreEngine {
             }
             # ZT411 USB: 기존 PC 백업(PrintBrm/ExportedDrivers) 최우선 — 모두 없는 부득이한 경우에만 골든 이미지 로컬 INF 폴백 등록
             $brmAddedZtDrv = (@(Get-PrinterDriver -ErrorAction SilentlyContinue | Where-Object {
-                $_.Name -match '(?i)ZT41[01]' -and (-not $preExistingDrivers.ContainsKey(([string]$_.Name).ToLowerInvariant()))
+                $_.Name -match '(?i)ZT41[01]' -and ($SkipPrintBrm -or (-not $preExistingDrivers.ContainsKey(([string]$_.Name).ToLowerInvariant())))
             })).Count -gt 0
             if ($hasSelectedZt411Usb -and (-not $registeredZebraBackup) -and (-not $brmAddedZtDrv)) {
                 $ztLocalFallback = Find-LocalSpecialInstaller -SpecialType 'ZEBRA_ZT411' -SkipRemoteProbe
@@ -1249,6 +1333,20 @@ function Invoke-PrinterRestoreEngine {
                 continue
             }
 
+            if ($pRes.PortName -match '^\\\\([^\\]+)\\') {
+                $candHC   = $matches[1]
+                $candKeyC = $candHC.ToLowerInvariant()
+                if ($seenAuth.ContainsKey($candKeyC)) {
+                    $warnMsgC = "공유 호스트($candHC) 인증/SID 충돌로 복원 중단 — 하단 인증/SID 패널에서 조치 필요"
+                    $failures.Add([pscustomobject]@{ PrinterName = $pName; PortName = $pRes.PortName; DriverName = $drvRes.DriverName; Reason = $warnMsgC; HostName = $candHC })
+                    continue
+                } elseif ($offlineUncHosts.ContainsKey($candKeyC)) {
+                    $warnMsgC = "공유 메인 PC($candHC) 미응답/연결 실패로 복원 중단 ($($offlineUncHosts[$candKeyC]))"
+                    $failures.Add([pscustomobject]@{ PrinterName = $pName; PortName = $pRes.PortName; DriverName = $drvRes.DriverName; Reason = $warnMsgC; HostName = $candHC })
+                    continue
+                }
+            }
+
             try {
                 Add-Printer -Name $pName -DriverName $drvRes.DriverName -PortName $pRes.PortName -ErrorAction Stop
                 $appliedDatC = $false
@@ -1299,10 +1397,21 @@ function Invoke-PrinterRestoreEngine {
 
         # [6/6] 원자적 아산 표준 정책 + WIA 스캐너 복원 + 기본 프린터 복원
         Write-ProgressSafe -OnProgress $OnProgress -Percent 86 -Message '[6/6] Spooler 안전 중지 후 아산 표준(SNMP/양방향/.reg) 적용 및 WIA 스캐너 복원 중...'
+        $policyRes = $null
         if ($SkipPrintBrm) {
-            Invoke-AsanStandardPolicyAtomic -PendingRegImports $pendingRegImports.ToArray()
+            $policyRes = Invoke-AsanStandardPolicyAtomic -PendingRegImports $pendingRegImports.ToArray()
         } else {
-            Invoke-AsanStandardPolicyAtomic -PreExistingPrinters $preExistingPrinters -CleanMigratedVirtuals -PendingRegImports $pendingRegImports.ToArray()
+            $policyRes = Invoke-AsanStandardPolicyAtomic -PreExistingPrinters $preExistingPrinters -CleanMigratedVirtuals -PendingRegImports $pendingRegImports.ToArray()
+        }
+        if ($policyRes) {
+            if (-not $policyRes.SpoolerStopped) {
+                $restoreLog.Add([pscustomobject]@{ Level = 'Warning'; Target = '표준 정책'; Message = 'Spooler 중지 대기 시간 초과 — [3. 출력 확인] 탭에서 SNMP/양방향 상태를 한 번 확인하세요.' })
+            }
+            foreach ($failRegPrt in @($policyRes.FailedRegImports)) {
+                $restoreLog.Add([pscustomobject]@{ Level = 'Warning'; Target = $failRegPrt; Message = '특수장비 세부 설정(.reg) 주입 실패 — 프린터 속성 > 인쇄 기본 설정을 직접 확인하세요.' })
+                $isZtFail = (@($SelectedRows | Where-Object { $_.PrinterName -eq $failRegPrt -and $_.SpecialType -eq 'ZEBRA_ZT411' })).Count -gt 0
+                if ($isZtFail -and -not $ztManualPrefsList.Contains($failRegPrt)) { $ztManualPrefsList.Add($failRegPrt) }
+            }
         }
 
         $restoredScanCnt = 0
@@ -1327,7 +1436,10 @@ function Invoke-PrinterRestoreEngine {
         $srcSpecDir = Join-Path $localTemp 'SpecialSettings'
         if (Test-Path -LiteralPath $srcSpecDir) {
             if (Test-Path -LiteralPath $persistedSpecialDir) { Remove-Item -LiteralPath $persistedSpecialDir -Recurse -Force -ErrorAction SilentlyContinue }
-            Copy-Item -LiteralPath $srcSpecDir -Destination $persistedSpecialDir -Recurse -Force -ErrorAction SilentlyContinue
+            if (-not (Test-Path -LiteralPath $persistedSpecialDir)) { New-Item -ItemType Directory -Path $persistedSpecialDir -Force -ErrorAction SilentlyContinue | Out-Null }
+            foreach ($sfItem in @(Get-ChildItem -LiteralPath $srcSpecDir -Force -ErrorAction SilentlyContinue)) {
+                Copy-Item -LiteralPath $sfItem.FullName -Destination $persistedSpecialDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
 
         Write-ProgressSafe -OnProgress $OnProgress -Percent 100 -Message '복원 파이프라인 완료!'

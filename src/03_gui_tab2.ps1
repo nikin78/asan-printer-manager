@@ -54,18 +54,29 @@ $script:Tab2Ui = @{
 # ============================================================================
 function Update-Tab2HelperHeightSafe {
     if (-not $script:Tab2Ui.PnlHelper -or $script:Tab2Ui.PnlHelper.IsDisposed -or -not $script:Tab2Ui.HelperExpanded) { return }
-    $topH = 34
+    $topH = 32
     if ($script:Tab2Ui.TabHelper -and $script:Tab2Ui.TabHelper.SelectedIndex -eq 0 -and $script:Tab2Ui.PnlAuthTop) {
         $topH = [math]::Max($topH, [int]$script:Tab2Ui.PnlAuthTop.Height)
     } elseif ($script:Tab2Ui.PnlSpecTop) {
         $topH = [math]::Max($topH, [int]$script:Tab2Ui.PnlSpecTop.Height)
     }
-    $extra = [math]::Max(0, $topH - 34)
-    $targetH = [math]::Min(182, (138 + $extra))
+    $extra   = [math]::Max(0, $topH - 32)
+    $targetH = [math]::Min(164, (132 + $extra))
+
+    # 작은 창(960x640)이나 WPP 배너 동시 표시 시 DgvRestore(>=84px) 및 도우미 TextBox(>=44px) 동시 보장
+    if ($script:Ui.TabRestore -and -not $script:Ui.TabRestore.IsDisposed) {
+        $tabH = [int]$script:Ui.TabRestore.ClientSize.Height
+        if ($tabH -gt 200) {
+            $nonGridFixed = 56 + 46 + 30 + 44 + 10  # Source + Notes + GridBar + Action + TabPadding
+            $maxHelperH   = $tabH - $nonGridFixed - 84
+            $minHelperH   = 104 + $extra
+            if ($maxHelperH -lt $minHelperH) { $maxHelperH = $minHelperH }
+            if ($targetH -gt $maxHelperH) { $targetH = $maxHelperH }
+        }
+    }
     if ($script:Tab2Ui.PnlHelper.Height -ne $targetH) {
         $script:Tab2Ui.PnlHelper.Height = $targetH
     }
-    # 작은 창(960x640)이나 WPP 배너 동시 표시 시 DgvRestore가 찌그러지지 않도록 하단 로그 자동 접기
     if ($script:Tab2Ui.DgvRestore -and -not $script:Tab2Ui.DgvRestore.IsDisposed) {
         if ($script:Tab2Ui.DgvRestore.Height -lt 95 -and $script:Ui.LogExpanded) {
             Set-FooterLogExpanded -Expanded $false
@@ -83,8 +94,8 @@ function Set-Tab2HelperVisibility {
         $script:Tab2Ui.PnlHelper.Visible = $Expanded
     }
     if ($script:Tab2Ui.BtnToggleHelper) {
-        if ($Expanded) { $script:Tab2Ui.BtnToggleHelper.Text = '도우미 패널 접기 ▼' }
-        else { $script:Tab2Ui.BtnToggleHelper.Text = '도우미 패널 펼치기 ▲' }
+        if ($Expanded) { $script:Tab2Ui.BtnToggleHelper.Text = '도우미 접기 ▼' }
+        else { $script:Tab2Ui.BtnToggleHelper.Text = '특수·공유 도우미 ▲' }
     }
     if ($Expanded -and $SelectTabIndex -ge 0 -and $script:Tab2Ui.TabHelper -and $SelectTabIndex -lt $script:Tab2Ui.TabHelper.TabPages.Count) {
         $script:Tab2Ui.TabHelper.SelectedIndex = $SelectTabIndex
@@ -154,12 +165,12 @@ function Render-Tab2NotesBanner {
     }
 
     if ($lines.Count -eq 0) {
-        $txt.BackColor = [System.Drawing.Color]::FromArgb(240, 253, 244)
-        $txt.ForeColor = [System.Drawing.Color]::FromArgb(22, 101, 52)
-        $txt.Text      = '백업 시점 특이사항 없음 — 모든 프린터가 정상 상태로 기록되어 있습니다.'
+        $txt.BackColor = $script:Theme.AsanMint
+        $txt.ForeColor = $script:Theme.AsanDeep
+        $txt.Text      = '백업 시점 특이사항 없음 — 아래 체크된 프린터를 확인한 뒤 [선택 항목 복원 시작] 버튼을 누르세요.'
     } else {
-        $txt.BackColor = [System.Drawing.Color]::FromArgb(255, 251, 235)
-        $txt.ForeColor = [System.Drawing.Color]::FromArgb(146, 64, 14)
+        $txt.BackColor = $script:Theme.AsanOrangeTint
+        $txt.ForeColor = $script:Theme.AsanOrangeText
         $txt.Text      = ($lines -join "`r`n")
     }
 }
@@ -216,25 +227,30 @@ function Render-Tab2RestoreGrid {
             $gridRow.Tag = $p
 
             # [H4 Fix] Win 11 전용 설치(세우테크) 및 LPT1 무드라이버(EPSON TM-T88) 체크박스 셀 잠금
+            $stCell = $gridRow.Cells[2]
+            $stCell.Style.Font = $script:FontBold
             if ($isLockedSpec) {
                 $gridRow.Cells[0].ReadOnly          = $true
-                $gridRow.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(254, 226, 226)
-                $gridRow.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(153, 27, 27)
+                $gridRow.DefaultCellStyle.BackColor = $script:Theme.DangerRedTint
+                $gridRow.DefaultCellStyle.ForeColor = $script:Theme.DangerRedDeep
+                $stCell.Style.BackColor             = $script:Theme.DangerRedTint
+                $stCell.Style.ForeColor             = $script:Theme.DangerRedDeep
             } elseif ($p.SpecialType -ne 'STANDARD') {
-                $gridRow.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(243, 232, 255)
-                $gridRow.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(88, 28, 135)
+                $stCell.Style.BackColor = $script:Theme.SpecialTint
+                $stCell.Style.ForeColor = $script:Theme.SpecialPurple
             } elseif ($p.StatusCode -eq 'WsdConvert') {
-                $gridRow.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(219, 234, 254)
-                $gridRow.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(30, 64, 175)
+                $stCell.Style.BackColor = [System.Drawing.Color]::FromArgb(232, 243, 243)
+                $stCell.Style.ForeColor = $script:Theme.AsanLight
             } elseif ($p.StatusCode -eq 'AuthOrSidConflict') {
-                $gridRow.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(254, 226, 226)
-                $gridRow.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(153, 27, 27)
+                $gridRow.DefaultCellStyle.BackColor = $script:Theme.DangerRedTint
+                $stCell.Style.BackColor             = $script:Theme.DangerRedTint
+                $stCell.Style.ForeColor             = $script:Theme.DangerRedDeep
             } elseif ($p.StatusCode -in @('SuspectedInactive', 'Ambiguous', 'OfflineUnverified')) {
-                $gridRow.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(254, 243, 199)
-                $gridRow.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(146, 64, 14)
+                $stCell.Style.BackColor = $script:Theme.AsanOrangeTint
+                $stCell.Style.ForeColor = $script:Theme.AsanOrangeText
             } else {
-                $gridRow.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(220, 252, 231)
-                $gridRow.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(22, 101, 52)
+                $stCell.Style.BackColor = $script:Theme.AsanMint
+                $stCell.Style.ForeColor = $script:Theme.AsanGreen
             }
         }
     }
@@ -340,13 +356,13 @@ function Update-Tab2SpecialSelection {
     $script:Tab2Ui.BtnSpecProps.Enabled   = $true
 
     if ($selRow.SpecialType -eq 'SEWOO_TE201') {
-        $script:Tab2Ui.BtnSpecInstall.Text = '1단계: Win11 전용 설치 실행'
+        $script:Tab2Ui.BtnSpecInstall.Text = '1단계: Win11 설치'
     } elseif ($selRow.SpecialType -eq 'SIP30M_IDCARD') {
-        $script:Tab2Ui.BtnSpecInstall.Text = '1단계: sip30inst 설치 실행'
+        $script:Tab2Ui.BtnSpecInstall.Text = '1단계: sip30inst'
     } elseif ($selRow.SpecialType -eq 'ZEBRA_ZT411') {
-        $script:Tab2Ui.BtnSpecInstall.Text = 'ZT411 드라이버 셋업 실행'
+        $script:Tab2Ui.BtnSpecInstall.Text = 'ZT411 셋업 실행'
     } else {
-        $script:Tab2Ui.BtnSpecInstall.Text = '전용 설치 파일 실행'
+        $script:Tab2Ui.BtnSpecInstall.Text = '전용 설치 실행'
     }
 
     Sync-AllUiButtonStates
@@ -860,11 +876,11 @@ function Show-SimpleIpPromptDialog {
 
     $flpRight = New-RightFlowStrip -TopPadding 0 -RightPadding 0
 
-    $btnCan = New-StyledButton -Text '취소' -Width 84 -Height 28 -BackColor ([System.Drawing.Color]::FromArgb(100, 116, 139))
+    $btnCan = New-StyledButton -Text '취소' -Width 84 -Height 28 -Variant 'Secondary'
     $btnCan.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
     $btnCan.Margin       = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
 
-    $btnOk = New-StyledButton -Text '확인' -Width 84 -Height 28 -BackColor ([System.Drawing.Color]::FromArgb(37, 99, 235))
+    $btnOk = New-StyledButton -Text '확인' -Width 84 -Height 28 -Variant 'Primary'
     $btnOk.DialogResult = [System.Windows.Forms.DialogResult]::OK
 
     $flpRight.Controls.Add($btnCan)
@@ -959,39 +975,56 @@ function Invoke-Tab2UsbReenumAsync {
 }
 
 # ============================================================================
-# [C2 + C4 + H4 Fix] 탭 2 컨트롤 배치 초기화 (Dock + FlowLayoutPanel + RightFlowStrip)
+# [C2 + C4 + H4 Fix] 탭 2 컨트롤 배치 초기화 — 1→2→3단계 서울아산병원 복원 UX
 # ============================================================================
 function Initialize-Tab2RestoreUi {
     $parent = $script:Ui.TabRestore
 
-    # ---------------- [1] 상단 백업 소스 선택 바 (DPI 125~150% 겹침 방지) ----------------
+    # ---------------- [1] 1단계 백업 소스 선택 카드 (화이트 카드 + 좌측 아산 그린 포인트) ----------------
+    $pnlSourceOuter = New-Object System.Windows.Forms.Panel
+    $pnlSourceOuter.Dock      = [System.Windows.Forms.DockStyle]::Top
+    $pnlSourceOuter.Height    = 56
+    $pnlSourceOuter.Padding   = New-Object System.Windows.Forms.Padding(0, 0, 0, 4)
+    $pnlSourceOuter.BackColor = [System.Drawing.Color]::Transparent
+
     $pnlSource = New-Object System.Windows.Forms.Panel
-    $pnlSource.Dock      = [System.Windows.Forms.DockStyle]::Top
-    $pnlSource.Height    = 56
-    $pnlSource.BackColor = [System.Drawing.Color]::Transparent
+    $pnlSource.Dock        = [System.Windows.Forms.DockStyle]::Fill
+    $pnlSource.BackColor   = $script:Theme.CardBg
+    $pnlSource.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+
+    $pnlSrcAccent = New-Object System.Windows.Forms.Panel
+    $pnlSrcAccent.Dock      = [System.Windows.Forms.DockStyle]::Left
+    $pnlSrcAccent.Width     = 4
+    $pnlSrcAccent.BackColor = $script:Theme.AsanGreen
+
+    $pnlSrcInner = New-Object System.Windows.Forms.Panel
+    $pnlSrcInner.Dock      = [System.Windows.Forms.DockStyle]::Fill
+    $pnlSrcInner.Padding   = New-Object System.Windows.Forms.Padding(10, 3, 8, 2)
+    $pnlSrcInner.BackColor = [System.Drawing.Color]::Transparent
 
     $flpSrcRow = New-Object System.Windows.Forms.FlowLayoutPanel
     $flpSrcRow.Dock          = [System.Windows.Forms.DockStyle]::Top
-    $flpSrcRow.Height        = 32
+    $flpSrcRow.Height        = 31
     $flpSrcRow.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
     $flpSrcRow.WrapContents  = $false
     $flpSrcRow.BackColor     = [System.Drawing.Color]::Transparent
-    $flpSrcRow.Padding       = New-Object System.Windows.Forms.Padding(0, 2, 0, 0)
+    $flpSrcRow.Padding       = New-Object System.Windows.Forms.Padding(0, 1, 0, 0)
 
     $lblSrc = New-Object System.Windows.Forms.Label
-    $lblSrc.Text     = '서버 백업:'
-    $lblSrc.Font     = $script:FontBold
-    $lblSrc.AutoSize = $true
-    $lblSrc.Margin   = New-Object System.Windows.Forms.Padding(0, 6, 6, 0)
+    $lblSrc.Text      = '① 백업 선택:'
+    $lblSrc.Font      = $script:FontBold
+    $lblSrc.ForeColor = $script:Theme.AsanGreen
+    $lblSrc.AutoSize  = $true
+    $lblSrc.Margin    = New-Object System.Windows.Forms.Padding(0, 6, 6, 0)
 
     $cmbBackups = New-Object System.Windows.Forms.ComboBox
     $cmbBackups.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $cmbBackups.Size          = New-Object System.Drawing.Size(310, 24)
+    $cmbBackups.Size          = New-Object System.Drawing.Size(295, 24)
     $cmbBackups.Font          = $script:FontBase
     $cmbBackups.Margin        = New-Object System.Windows.Forms.Padding(0, 2, 6, 0)
     $script:Ui.BusyControls.Add($cmbBackups)
 
-    $btnLoadSrv = New-StyledButton -Text '불러오기' -Width 80 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(37, 99, 235)) -RegisterBusy
+    $btnLoadSrv = New-StyledButton -Text '불러오기' -Width 82 -Height 26 -Variant 'SoftTeal' -RegisterBusy
     $btnLoadSrv.Margin = New-Object System.Windows.Forms.Padding(0, 1, 6, 0)
     $btnLoadSrv.Add_Click({
         $idx = $script:Tab2Ui.CmbServerBackups.SelectedIndex
@@ -1000,7 +1033,8 @@ function Initialize-Tab2RestoreUi {
         }
     })
 
-    $btnOpenZip = New-StyledButton -Text '오프라인 ZIP 불러오기' -Width 156 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(15, 118, 110)) -RegisterBusy
+    $btnOpenZip = New-StyledButton -Text '오프라인 ZIP 열기' -Width 138 -Height 26 -Variant 'Secondary' -RegisterBusy
+    $btnOpenZip.Font   = $script:FontSmallB
     $btnOpenZip.Margin = New-Object System.Windows.Forms.Padding(0, 1, 6, 0)
     $btnOpenZip.Add_Click({
         $ofd = New-Object System.Windows.Forms.OpenFileDialog
@@ -1015,7 +1049,8 @@ function Initialize-Tab2RestoreUi {
         $ofd.Dispose()
     })
 
-    $btnDeferred = New-StyledButton -Text '지연 검증 실행' -Width 112 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(51, 65, 85)) -RegisterBusy
+    $btnDeferred = New-StyledButton -Text '실시간 재확인' -Width 106 -Height 26 -Variant 'Secondary' -RegisterBusy
+    $btnDeferred.Font    = $script:FontSmall
     $btnDeferred.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 0, 0)
     $btnDeferred.Enabled = $false
     $btnDeferred.Add_Click({
@@ -1027,19 +1062,22 @@ function Initialize-Tab2RestoreUi {
     $flpSrcRow.Controls.AddRange(@($lblSrc, $cmbBackups, $btnLoadSrv, $btnOpenZip, $btnDeferred))
 
     $lblSourceInfo = New-Object System.Windows.Forms.Label
-    $lblSourceInfo.Text      = '서버 백업을 선택하거나 [오프라인 ZIP 불러오기]로 복원 대상을 로드하세요.'
+    $lblSourceInfo.Text      = '서버 백업을 선택하거나 [오프라인 ZIP 열기]로 복원 대상을 불러오세요. (동일 PC 백업은 자동 매칭됨)'
     $lblSourceInfo.Font      = $script:FontSmall
-    $lblSourceInfo.ForeColor = [System.Drawing.Color]::FromArgb(51, 65, 85)
+    $lblSourceInfo.ForeColor = $script:Theme.InkMuted
     $lblSourceInfo.Dock      = [System.Windows.Forms.DockStyle]::Fill
     $lblSourceInfo.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
 
-    $pnlSource.Controls.Add($lblSourceInfo)
-    $pnlSource.Controls.Add($flpSrcRow)
+    $pnlSrcInner.Controls.Add($lblSourceInfo)
+    $pnlSrcInner.Controls.Add($flpSrcRow)
+    $pnlSource.Controls.Add($pnlSrcInner)
+    $pnlSource.Controls.Add($pnlSrcAccent)
+    $pnlSourceOuter.Controls.Add($pnlSource)
 
-    # ---------------- [2] 영속 리포트(BackupNotes + 복원 경고) 배너 ----------------
+    # ---------------- [2] 영속 리포트(BackupNotes + 복원 경고) 배너 (SMK-C 최소 높이 40px 이상 준수) ----------------
     $pnlNotes = New-Object System.Windows.Forms.Panel
     $pnlNotes.Dock    = [System.Windows.Forms.DockStyle]::Top
-    $pnlNotes.Height  = 52
+    $pnlNotes.Height  = 46
     $pnlNotes.Padding = New-Object System.Windows.Forms.Padding(0, 0, 0, 4)
 
     $txtNotes = New-Object System.Windows.Forms.TextBox
@@ -1048,24 +1086,34 @@ function Initialize-Tab2RestoreUi {
     $txtNotes.ReadOnly    = $true
     $txtNotes.ScrollBars  = [System.Windows.Forms.ScrollBars]::Vertical
     $txtNotes.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $txtNotes.BackColor   = [System.Drawing.Color]::FromArgb(241, 245, 249)
-    $txtNotes.ForeColor   = [System.Drawing.Color]::FromArgb(71, 85, 105)
+    $txtNotes.BackColor   = $script:Theme.AsanMint
+    $txtNotes.ForeColor   = $script:Theme.AsanDeep
     $txtNotes.Font        = $script:FontSmall
-    $txtNotes.Text        = '백업을 불러오면 백업 시점 특이사항(WSD·비활성의심·특수장비·TWAIN 등)이 여기에 고정 표시됩니다.'
+    $txtNotes.Text        = '백업을 불러오면 주의 사항(WSD 전환 · 특수장비 · LPT1 · 공유 인증 안내 등)이 여기에 고정 표시됩니다.'
     $pnlNotes.Controls.Add($txtNotes)
 
-    # ---------------- [3] 그리드 선택 툴바 ([C2] RightFlowStrip 적용) ----------------
+    # ---------------- [3] 2단계 프린터 선택 툴바 (FlowLayoutPanel + RightFlowStrip — DPI 안전) ----------------
     $pnlGridBar = New-Object System.Windows.Forms.Panel
     $pnlGridBar.Dock   = [System.Windows.Forms.DockStyle]::Top
     $pnlGridBar.Height = 30
 
-    $pnlGridLeft = New-Object System.Windows.Forms.Panel
-    $pnlGridLeft.Dock      = [System.Windows.Forms.DockStyle]::Fill
-    $pnlGridLeft.BackColor = [System.Drawing.Color]::Transparent
+    $flpGridLeft = New-Object System.Windows.Forms.FlowLayoutPanel
+    $flpGridLeft.Dock          = [System.Windows.Forms.DockStyle]::Fill
+    $flpGridLeft.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+    $flpGridLeft.WrapContents  = $false
+    $flpGridLeft.BackColor     = [System.Drawing.Color]::Transparent
+    $flpGridLeft.Padding       = New-Object System.Windows.Forms.Padding(0, 3, 0, 0)
 
-    $btnSelAll = New-StyledButton -Text '전체 선택' -Width 74 -Height 24 -BackColor ([System.Drawing.Color]::FromArgb(100, 116, 139)) -RegisterBusy
-    $btnSelAll.Font     = $script:FontSmall
-    $btnSelAll.Location = New-Object System.Drawing.Point(0, 2)
+    $lblStep2 = New-Object System.Windows.Forms.Label
+    $lblStep2.Text      = '② 대상 선택:'
+    $lblStep2.Font      = $script:FontBold
+    $lblStep2.ForeColor = $script:Theme.AsanGreen
+    $lblStep2.AutoSize  = $true
+    $lblStep2.Margin    = New-Object System.Windows.Forms.Padding(0, 4, 8, 0)
+
+    $btnSelAll = New-StyledButton -Text '전체 선택' -Width 72 -Height 24 -Variant 'Secondary' -RegisterBusy
+    $btnSelAll.Font   = $script:FontSmall
+    $btnSelAll.Margin = New-Object System.Windows.Forms.Padding(0, 0, 4, 0)
     $btnSelAll.Add_Click({
         foreach ($r in $script:Tab2Ui.DgvRestore.Rows) {
             if ($r.Tag -and $r.Tag.SpecialType -notin @('SEWOO_TE201', 'EPSON_TMT88_LPT')) { $r.Cells[0].Value = $true }
@@ -1074,9 +1122,9 @@ function Initialize-Tab2RestoreUi {
         Update-Tab2GridSummary
     })
 
-    $btnSelHealthy = New-StyledButton -Text '정상만 선택' -Width 88 -Height 24 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105)) -RegisterBusy
-    $btnSelHealthy.Font     = $script:FontSmall
-    $btnSelHealthy.Location = New-Object System.Drawing.Point(78, 2)
+    $btnSelHealthy = New-StyledButton -Text '정상만 선택' -Width 84 -Height 24 -Variant 'Secondary' -RegisterBusy
+    $btnSelHealthy.Font   = $script:FontSmall
+    $btnSelHealthy.Margin = New-Object System.Windows.Forms.Padding(0, 0, 4, 0)
     $btnSelHealthy.Add_Click({
         foreach ($r in $script:Tab2Ui.DgvRestore.Rows) {
             if ($r.Tag) {
@@ -1088,9 +1136,9 @@ function Initialize-Tab2RestoreUi {
         Update-Tab2GridSummary
     })
 
-    $btnSelNone = New-StyledButton -Text '선택 해제' -Width 74 -Height 24 -BackColor ([System.Drawing.Color]::FromArgb(148, 163, 184)) -RegisterBusy
-    $btnSelNone.Font     = $script:FontSmall
-    $btnSelNone.Location = New-Object System.Drawing.Point(170, 2)
+    $btnSelNone = New-StyledButton -Text '선택 해제' -Width 72 -Height 24 -Variant 'Secondary' -RegisterBusy
+    $btnSelNone.Font   = $script:FontSmall
+    $btnSelNone.Margin = New-Object System.Windows.Forms.Padding(0, 0, 12, 0)
     $btnSelNone.Add_Click({
         foreach ($r in $script:Tab2Ui.DgvRestore.Rows) { $r.Cells[0].Value = $false }
         Sync-Tab2GridSelectionToState
@@ -1100,47 +1148,51 @@ function Initialize-Tab2RestoreUi {
     $lblGridSum = New-Object System.Windows.Forms.Label
     $lblGridSum.Text      = '복원 대상 선택: 0 / 0대'
     $lblGridSum.Font      = $script:FontBold
-    $lblGridSum.ForeColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
+    $lblGridSum.ForeColor = $script:Theme.InkPrimary
     $lblGridSum.AutoSize  = $true
-    $lblGridSum.Location  = New-Object System.Drawing.Point(258, 6)
+    $lblGridSum.Margin    = New-Object System.Windows.Forms.Padding(0, 4, 0, 0)
 
-    $pnlGridLeft.Controls.AddRange(@($btnSelAll, $btnSelHealthy, $btnSelNone, $lblGridSum))
+    $flpGridLeft.Controls.AddRange(@($lblStep2, $btnSelAll, $btnSelHealthy, $btnSelNone, $lblGridSum))
 
-    $flpGridRight = New-RightFlowStrip -TopPadding 2 -RightPadding 0
-    $btnToggleHelper = New-StyledButton -Text '도우미 패널 펼치기 ▲' -Width 154 -Height 24 -BackColor ([System.Drawing.Color]::FromArgb(124, 58, 237))
-    $btnToggleHelper.Font = $script:FontSmall
+    $flpGridRight = New-RightFlowStrip -TopPadding 3 -RightPadding 0
+    $btnToggleHelper = New-StyledButton -Text '특수·공유 도우미 ▲' -Width 148 -Height 24 -Variant 'SoftTeal'
+    $btnToggleHelper.Font = $script:FontSmallB
     $btnToggleHelper.Add_Click({
         Set-Tab2HelperVisibility -Expanded (-not $script:Tab2Ui.HelperExpanded)
     })
     $flpGridRight.Controls.Add($btnToggleHelper)
 
-    $pnlGridBar.Controls.Add($pnlGridLeft)
+    $pnlGridBar.Controls.Add($flpGridLeft)
     $pnlGridBar.Controls.Add($flpGridRight)
 
-    # ---------------- [4] 중앙 선택 복원 그리드 ----------------
+    # ---------------- [4] 중앙 선택 복원 그리드 (마지막 컬럼 Fill) ----------------
     $dgv = New-StyledGrid -AllowCheckEdit
     $dgv.Dock = [System.Windows.Forms.DockStyle]::Fill
 
     $colChk = New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
     $colChk.Name       = 'Selected'
     $colChk.HeaderText = '복원'
-    $colChk.Width      = 42
+    $colChk.Width      = 50
     [void]$dgv.Columns.Add($colChk)
 
     foreach ($cDef in @(
-        @{ Name = 'Default';  Header = '기본';               Width = 40 },
-        @{ Name = 'Status';   Header = '검증 상태';           Width = 108 },
-        @{ Name = 'Category'; Header = '구분';               Width = 105 },
-        @{ Name = 'Printer';  Header = '프린터 이름';         Width = 175 },
-        @{ Name = 'Port';     Header = '포트 / 전환 대상';    Width = 165 },
-        @{ Name = 'Driver';   Header = '백업 드라이버';       Width = 175 },
-        @{ Name = 'Reason';   Header = '검증 및 상세 사유';   Width = 260 }
+        @{ Name = 'Default';  Header = '기본';               Width = 48;  Fill = $false },
+        @{ Name = 'Status';   Header = '검증 상태';           Width = 108; Fill = $false },
+        @{ Name = 'Category'; Header = '구분';               Width = 104; Fill = $false },
+        @{ Name = 'Printer';  Header = '프린터 이름';         Width = 170; Fill = $false },
+        @{ Name = 'Port';     Header = '포트 / 전환 대상';    Width = 158; Fill = $false },
+        @{ Name = 'Driver';   Header = '백업 드라이버';       Width = 170; Fill = $false },
+        @{ Name = 'Reason';   Header = '검증 및 상세 사유';   Width = 180; Fill = $true }
     )) {
         $c = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
         $c.Name       = $cDef.Name
         $c.HeaderText = $cDef.Header
         $c.Width      = $cDef.Width
         $c.ReadOnly   = $true
+        if ($cDef.Fill) {
+            $c.AutoSizeMode = [System.Windows.Forms.DataGridViewAutoSizeColumnMode]::Fill
+            $c.MinimumWidth = 150
+        }
         [void]$dgv.Columns.Add($c)
     }
 
@@ -1162,17 +1214,17 @@ function Initialize-Tab2RestoreUi {
     $pnlHelper = New-Object System.Windows.Forms.Panel
     $pnlHelper.Dock    = [System.Windows.Forms.DockStyle]::Bottom
     $pnlHelper.Height  = 138
-    $pnlHelper.Padding = New-Object System.Windows.Forms.Padding(0, 4, 0, 0)
+    $pnlHelper.Padding = New-Object System.Windows.Forms.Padding(0, 6, 0, 0)
     $pnlHelper.Visible = $false
 
     $tabHelper = New-Object System.Windows.Forms.TabControl
     $tabHelper.Dock = [System.Windows.Forms.DockStyle]::Fill
-    $tabHelper.Font = $script:FontBold
+    $tabHelper.Font = $script:FontSmallB
     $tabHelper.Add_SelectedIndexChanged({ Update-Tab2HelperHeightSafe })
 
     # -- [5-A] 공유 인증 / 동일 SID 조치 탭 --
     $tpAuth = New-Object System.Windows.Forms.TabPage(' 공유 인증 / SID 조치 (0건) ')
-    $tpAuth.BackColor = [System.Drawing.Color]::FromArgb(254, 242, 242)
+    $tpAuth.BackColor = [System.Drawing.Color]::FromArgb(254, 248, 247)
     $tpAuth.Font      = $script:FontBase
     $tpAuth.Padding   = New-Object System.Windows.Forms.Padding(6)
 
@@ -1215,13 +1267,13 @@ function Initialize-Tab2RestoreUi {
     $txtAuthPass.Size                  = New-Object System.Drawing.Size(116, 24)
     $txtAuthPass.Margin                = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
 
-    $btnAuthRetry = New-StyledButton -Text '재인증 및 검증' -Width 116 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(37, 99, 235)) -RegisterBusy
-    $btnAuthRetry.Font   = $script:FontSmall
+    $btnAuthRetry = New-StyledButton -Text '재인증 및 검증' -Width 112 -Height 26 -Variant 'Primary' -RegisterBusy
+    $btnAuthRetry.Font   = $script:FontSmallB
     $btnAuthRetry.Margin = New-Object System.Windows.Forms.Padding(0, 1, 6, 2)
     $btnAuthRetry.Add_Click({ Invoke-Tab2HostAuthActionAsync })
 
-    $btnSidReset = New-StyledButton -Text '스풀러·자격증명 초기화 후 재연결' -Width 214 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(185, 28, 28)) -RegisterBusy
-    $btnSidReset.Font   = $script:FontSmall
+    $btnSidReset = New-StyledButton -Text '스풀러·자격증명 초기화 후 재연결' -Width 214 -Height 26 -Variant 'DangerOutline' -RegisterBusy
+    $btnSidReset.Font   = $script:FontSmallB
     $btnSidReset.Margin = New-Object System.Windows.Forms.Padding(0, 1, 0, 2)
     $btnSidReset.Add_Click({ Invoke-Tab2HostAuthActionAsync -WithSpoolerReset })
 
@@ -1233,8 +1285,8 @@ function Initialize-Tab2RestoreUi {
     $txtAuthInfo.ReadOnly    = $true
     $txtAuthInfo.ScrollBars  = [System.Windows.Forms.ScrollBars]::Vertical
     $txtAuthInfo.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $txtAuthInfo.BackColor   = [System.Drawing.Color]::White
-    $txtAuthInfo.ForeColor   = [System.Drawing.Color]::FromArgb(127, 29, 29)
+    $txtAuthInfo.BackColor   = $script:Theme.CardBg
+    $txtAuthInfo.ForeColor   = $script:Theme.DangerRedDeep
     $txtAuthInfo.Font        = $script:FontSmall
 
     $tpAuth.Controls.Add($txtAuthInfo)
@@ -1243,7 +1295,7 @@ function Initialize-Tab2RestoreUi {
 
     # -- [5-B] 특수 프린터 반자동 도우미 탭 (DPI 125~150% 대응 FlowLayoutPanel) --
     $tpSpec = New-Object System.Windows.Forms.TabPage(' 특수 프린터 도우미 (0건) ')
-    $tpSpec.BackColor = [System.Drawing.Color]::FromArgb(250, 245, 255)
+    $tpSpec.BackColor = [System.Drawing.Color]::FromArgb(247, 250, 250)
     $tpSpec.Font      = $script:FontBase
     $tpSpec.Padding   = New-Object System.Windows.Forms.Padding(6)
 
@@ -1263,12 +1315,12 @@ function Initialize-Tab2RestoreUi {
 
     $cmbSpec = New-Object System.Windows.Forms.ComboBox
     $cmbSpec.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $cmbSpec.Size          = New-Object System.Drawing.Size(195, 24)
+    $cmbSpec.Size          = New-Object System.Drawing.Size(176, 24)
     $cmbSpec.Margin        = New-Object System.Windows.Forms.Padding(0, 2, 6, 2)
     $cmbSpec.Add_SelectedIndexChanged({ Update-Tab2SpecialSelection })
 
-    $btnSpecInst = New-StyledButton -Text '1단계: 전용 설치 실행' -Width 146 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(124, 58, 237)) -RegisterBusy
-    $btnSpecInst.Font    = $script:FontSmall
+    $btnSpecInst = New-StyledButton -Text '1단계: 전용 설치' -Width 132 -Height 26 -Variant 'Primary' -RegisterBusy
+    $btnSpecInst.Font    = $script:FontSmallB
     $btnSpecInst.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 6, 2)
     $btnSpecInst.Enabled = $false
     $btnSpecInst.Add_Click({
@@ -1283,18 +1335,18 @@ function Initialize-Tab2RestoreUi {
         }
     })
 
-    $btnSpecStep2 = New-StyledButton -Text '2단계: SIP-30M 마무리' -Width 186 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(15, 118, 110)) -RegisterBusy
-    $btnSpecStep2.Font    = $script:FontSmall
+    $btnSpecStep2 = New-StyledButton -Text '2단계: SIP-30M 마무리' -Width 154 -Height 26 -Variant 'SoftTeal' -RegisterBusy
+    $btnSpecStep2.Font    = $script:FontSmallB
     $btnSpecStep2.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 6, 2)
     $btnSpecStep2.Enabled = $false
     $btnSpecStep2.Add_Click({ Invoke-Tab2Sip30mStep2Async })
 
-    $btnUsbReenum = New-StyledButton -Text 'USB 재인식' -Width 86 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(2, 132, 199)) -RegisterBusy
-    $btnUsbReenum.Font   = $script:FontSmall
+    $btnUsbReenum = New-StyledButton -Text 'USB 재인식' -Width 86 -Height 26 -Variant 'SoftOrange' -RegisterBusy
+    $btnUsbReenum.Font   = $script:FontSmallB
     $btnUsbReenum.Margin = New-Object System.Windows.Forms.Padding(0, 1, 6, 2)
     $btnUsbReenum.Add_Click({ Invoke-Tab2UsbReenumAsync })
 
-    $btnSpecDir = New-StyledButton -Text '폴더 열기' -Width 72 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105))
+    $btnSpecDir = New-StyledButton -Text '폴더 열기' -Width 72 -Height 26 -Variant 'Secondary'
     $btnSpecDir.Font    = $script:FontSmall
     $btnSpecDir.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 6, 2)
     $btnSpecDir.Enabled = $false
@@ -1306,7 +1358,7 @@ function Initialize-Tab2RestoreUi {
     })
 
     # [H4 Fix] 프린터 미설치 시 오류 팝업 대신 친절한 안내 표시
-    $btnSpecProps = New-StyledButton -Text '속성 열기' -Width 72 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(51, 65, 85)) -RegisterBusy
+    $btnSpecProps = New-StyledButton -Text '속성 열기' -Width 72 -Height 26 -Variant 'Secondary' -RegisterBusy
     $btnSpecProps.Font    = $script:FontSmall
     $btnSpecProps.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 0, 2)
     $btnSpecProps.Enabled = $false
@@ -1331,8 +1383,8 @@ function Initialize-Tab2RestoreUi {
     $txtSpecChk.ReadOnly    = $true
     $txtSpecChk.ScrollBars  = [System.Windows.Forms.ScrollBars]::Vertical
     $txtSpecChk.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $txtSpecChk.BackColor   = [System.Drawing.Color]::White
-    $txtSpecChk.ForeColor   = [System.Drawing.Color]::FromArgb(88, 28, 135)
+    $txtSpecChk.BackColor   = $script:Theme.CardBg
+    $txtSpecChk.ForeColor   = $script:Theme.InkPrimary
     $txtSpecChk.Font        = $script:FontSmall
 
     $tpSpec.Controls.Add($txtSpecChk)
@@ -1343,27 +1395,31 @@ function Initialize-Tab2RestoreUi {
     $tabHelper.TabPages.Add($tpSpec)
     $pnlHelper.Controls.Add($tabHelper)
 
-    # ---------------- [6] 최하단 복원 실행 액션 바 ----------------
-    $pnlAction = New-Object System.Windows.Forms.Panel
-    $pnlAction.Dock   = [System.Windows.Forms.DockStyle]::Bottom
-    $pnlAction.Height = 42
+    # ---------------- [6] 3단계 복원 실행 액션 바 (FlowLayoutPanel — DPI 안전) ----------------
+    $pnlAction = New-Object System.Windows.Forms.FlowLayoutPanel
+    $pnlAction.Dock          = [System.Windows.Forms.DockStyle]::Bottom
+    $pnlAction.Height        = 44
+    $pnlAction.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+    $pnlAction.WrapContents  = $false
+    $pnlAction.BackColor     = [System.Drawing.Color]::Transparent
+    $pnlAction.Padding       = New-Object System.Windows.Forms.Padding(0, 6, 0, 0)
 
-    $btnStart = New-StyledButton -Text '선택 항목 복원 시작' -Width 195 -Height 32 -BackColor ([System.Drawing.Color]::FromArgb(22, 163, 74)) -RegisterBusy
-    $btnStart.Location = New-Object System.Drawing.Point(0, 6)
-    $btnStart.Enabled  = $false
+    $btnStart = New-StyledButton -Text '③ 선택 항목 복원 시작' -Width 200 -Height 34 -Variant 'Primary' -RegisterBusy
+    $btnStart.Margin  = New-Object System.Windows.Forms.Padding(0, 0, 10, 0)
+    $btnStart.Enabled = $false
     $btnStart.Add_Click({ Start-Tab2RestoreExecution })
 
-    $btnRetry = New-StyledButton -Text '실패 항목만 재시도' -Width 165 -Height 32 -BackColor ([System.Drawing.Color]::FromArgb(217, 119, 6)) -RegisterBusy
-    $btnRetry.Location = New-Object System.Drawing.Point(206, 6)
-    $btnRetry.Enabled  = $false
+    $btnRetry = New-StyledButton -Text '실패 항목만 재시도' -Width 150 -Height 34 -Variant 'Orange' -RegisterBusy
+    $btnRetry.Margin  = New-Object System.Windows.Forms.Padding(0, 0, 14, 0)
+    $btnRetry.Enabled = $false
     $btnRetry.Add_Click({ Start-Tab2RestoreExecution -RetryFailedOnly })
 
     $lblHint = New-Object System.Windows.Forms.Label
-    $lblHint.Text      = '※ 비활성의심 및 Win 11 전용 설치 기종(세우테크)은 기본 체크 해제됩니다.'
+    $lblHint.Text      = '※ 비활성의심 및 Win 11 전용 기종(세우테크)은 안전을 위해 자동 해제됩니다.'
     $lblHint.Font      = $script:FontSmall
-    $lblHint.ForeColor = [System.Drawing.Color]::FromArgb(100, 116, 139)
+    $lblHint.ForeColor = $script:Theme.InkMuted
     $lblHint.AutoSize  = $true
-    $lblHint.Location  = New-Object System.Drawing.Point(385, 14)
+    $lblHint.Margin    = New-Object System.Windows.Forms.Padding(0, 10, 0, 0)
 
     $pnlAction.Controls.AddRange(@($btnStart, $btnRetry, $lblHint))
 
@@ -1373,7 +1429,7 @@ function Initialize-Tab2RestoreUi {
     $parent.Controls.Add($pnlAction)
     $parent.Controls.Add($pnlGridBar)
     $parent.Controls.Add($pnlNotes)
-    $parent.Controls.Add($pnlSource)
+    $parent.Controls.Add($pnlSourceOuter)
     $dgv.BringToFront()
 
     $script:Tab2Ui.CmbServerBackups = $cmbBackups

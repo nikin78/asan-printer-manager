@@ -400,6 +400,17 @@ function Disconnect-AllHostSessions {
             [void][AsanWin32.NativeApi]::DisconnectShare("\\$($c.ServerName)\$($c.ShareName)")
         }
     } catch {}
+    try {
+        $maps = @(Get-SmbMapping -ErrorAction SilentlyContinue | Where-Object { $_.RemotePath -like "\\$HostName\*" })
+        foreach ($mp in $maps) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$mp.LocalPath)) {
+                [void][AsanWin32.NativeApi]::DisconnectShare([string]$mp.LocalPath)
+            }
+            if (-not [string]::IsNullOrWhiteSpace([string]$mp.RemotePath)) {
+                [void][AsanWin32.NativeApi]::DisconnectShare([string]$mp.RemotePath)
+            }
+        }
+    } catch {}
 }
 
 function Connect-AsanBackupServer {
@@ -920,7 +931,9 @@ function Connect-SharedHostSmart {
         }
 
         if ($rc -eq 0) {
-            [void][AsanWin32.NativeApi]::WriteDomainCredential($HostName, $att.User, $att.Pass)
+            if ($HostName -ine $global:AsanCtx.ServerIP) {
+                [void][AsanWin32.NativeApi]::WriteDomainCredential($HostName, $att.User, $att.Pass)
+            }
             $global:AsanCtx.HostCredCache[$cacheKey] = [pscustomobject]@{ User = $att.User; Pass = $att.Pass }
             return [pscustomobject]@{ Success = $true; Status = 'Authenticated'; Win32Error = 0; Reason = "인증 성공 ($($att.User))"; UsedUser = $att.User; UsedPass = $att.Pass }
         }
@@ -983,6 +996,20 @@ function Test-UncSharePrinterAlive {
     }
 
     $enumRes = Get-RemoteSharedPrintersResult -HostName $hostName
+    if ($enumRes.Win32Error -notin @(0, 234)) {
+        if ($enumRes.Win32Error -in @(5, 86, 1326, 1331, 1909)) {
+            $cacheKey = $hostName.ToLowerInvariant()
+            if ($global:AsanCtx.HostCredCache.ContainsKey($cacheKey)) { $global:AsanCtx.HostCredCache.Remove($cacheKey) }
+            $reAuth = Connect-SharedHostSmart -HostName $hostName -CustomUser $CustomUser -CustomPass $CustomPass -ForceResetSession
+            if (-not $reAuth.Success) {
+                $reStat = 'AuthOrSidConflict'
+                if ($reAuth.Status -ne 'AuthOrSidConflict') { $reStat = 'Ambiguous' }
+                return [pscustomobject]@{ Status = $reStat; Reason = $reAuth.Reason; HostName = $hostName; ShareName = $shareName }
+            }
+            $enumRes = Get-RemoteSharedPrintersResult -HostName $hostName
+        }
+    }
+
     $matched = $enumRes.Shares | Where-Object { $_ -ieq $shareName } | Select-Object -First 1
     if ($matched) {
         return [pscustomobject]@{ Status = 'Healthy'; Reason = "공유 호스트 인증 및 프린터 공유($shareName) 정상 확인"; HostName = $hostName; ShareName = $shareName }
@@ -990,6 +1017,23 @@ function Test-UncSharePrinterAlive {
 
     if (Test-Path -LiteralPath $UncPath) {
         return [pscustomobject]@{ Status = 'Healthy'; Reason = "UNC 공유 경로($UncPath) 접근 정상 확인"; HostName = $hostName; ShareName = $shareName }
+    }
+
+    if ($enumRes.Win32Error -in @(5, 86, 1326, 1331, 1909)) {
+        return [pscustomobject]@{
+            Status    = 'AuthOrSidConflict'
+            Reason    = "메인 PC($hostName) 공유 목록 조회 권한 거부 (Win32=$($enumRes.Win32Error)) — 암호 변경 또는 동일 SID 충돌 의심"
+            HostName  = $hostName
+            ShareName = $shareName
+        }
+    }
+    if ($enumRes.Win32Error -notin @(0, 234)) {
+        return [pscustomobject]@{
+            Status    = 'Ambiguous'
+            Reason    = "메인 PC($hostName) 공유 목록 조회 오류 (Win32=$($enumRes.Win32Error)) — 일시적 SMB 응답 지연 또는 네트워크 확인 필요"
+            HostName  = $hostName
+            ShareName = $shareName
+        }
     }
 
     return [pscustomobject]@{
@@ -1290,6 +1334,8 @@ function Resolve-WsdPrinterInfo {
                 }
             }
         }
+        # Stage 1(UUID 일치)에서 IP를 이미 확정했다면 Stage 2/3 이름 추측으로 타 WSD 장치 오염 차단
+        if ($wsdStage -eq 1 -and $foundIp) { break }
     }
 
     $modelHintText = ''
@@ -1345,6 +1391,15 @@ function Resolve-WsdPrinterInfo {
                     Status           = 'WsdConvert'
                     Reason           = "WSD -> Local Port(\\$foundIp\$bestShare$modelHintText) 자동 전환 대상 (공유 프린터 확인됨)"
                 }
+            }
+        } elseif ($auth.Status -eq 'AuthOrSidConflict') {
+            return [pscustomobject]@{
+                ExtractedIP      = $foundIp
+                ExtractedModel   = $foundModel
+                RecommendedMode  = 'LOCAL_UNC'
+                RecommendedShare = $null
+                Status           = 'AuthOrSidConflict'
+                Reason           = "WSD 호스트($foundIp$modelHintText) 공유 인증/SID 충돌: $($auth.Reason)"
             }
         }
     }

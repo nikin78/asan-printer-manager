@@ -85,30 +85,30 @@ function Render-Tab3VerifyGrid {
             $row.Tag = $p
 
             if ($p.IsVirtual) {
-                $row.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(241, 245, 249)
-                $row.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(100, 116, 139)
+                $row.DefaultCellStyle.BackColor = $script:Theme.DisabledBg
+                $row.DefaultCellStyle.ForeColor = $script:Theme.InkMuted
             } elseif ($p.IsSpecial) {
-                $row.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(243, 232, 255)
-                $row.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(88, 28, 135)
-            } else {
-                $row.DefaultCellStyle.BackColor = [System.Drawing.Color]::White
-                $row.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
+                $row.Cells[1].Style.BackColor = $script:Theme.SpecialTint
+                $row.Cells[1].Style.ForeColor = $script:Theme.SpecialPurple
+                $row.Cells[1].Style.Font      = $script:FontBold
             }
 
             if ($p.SnmpWarn) {
-                $row.Cells[4].Style.BackColor = [System.Drawing.Color]::FromArgb(254, 202, 202)
-                $row.Cells[4].Style.ForeColor = [System.Drawing.Color]::FromArgb(153, 27, 27)
+                $row.Cells[4].Style.BackColor = $script:Theme.DangerRedTint
+                $row.Cells[4].Style.ForeColor = $script:Theme.DangerRedDeep
                 $row.Cells[4].Style.Font      = $script:FontBold
             } elseif ($p.SnmpState -eq 'OFF') {
-                $row.Cells[4].Style.ForeColor = [System.Drawing.Color]::FromArgb(22, 101, 52)
+                $row.Cells[4].Style.ForeColor = $script:Theme.AsanGreen
+                $row.Cells[4].Style.Font      = $script:FontBold
             }
 
             if ($p.BidiWarn) {
-                $row.Cells[5].Style.BackColor = [System.Drawing.Color]::FromArgb(254, 202, 202)
-                $row.Cells[5].Style.ForeColor = [System.Drawing.Color]::FromArgb(153, 27, 27)
+                $row.Cells[5].Style.BackColor = $script:Theme.DangerRedTint
+                $row.Cells[5].Style.ForeColor = $script:Theme.DangerRedDeep
                 $row.Cells[5].Style.Font      = $script:FontBold
-            } elseif ($p.BidiState -eq 'OFF') {
-                $row.Cells[5].Style.ForeColor = [System.Drawing.Color]::FromArgb(22, 101, 52)
+            } elseif ($p.BidiState -eq 'OFF' -or $p.BidiState -eq 'ON(유지)') {
+                $row.Cells[5].Style.ForeColor = $script:Theme.AsanGreen
+                $row.Cells[5].Style.Font      = $script:FontBold
             }
         }
     }
@@ -116,12 +116,16 @@ function Render-Tab3VerifyGrid {
         $dgv.ResumeLayout()
     }
 
-    $script:Tab3Ui.LblSummary.Text = "설치 프린터: 일반 ${cntNormal}대 / 특수 ${cntSpecial}대 | SNMP·양방향 수정 필요: ${cntPolicy}대"
     if ($cntPolicy -gt 0) {
-        $script:Tab3Ui.LblSummary.ForeColor = [System.Drawing.Color]::FromArgb(185, 28, 28)
+        $script:Tab3Ui.LblSummary.Text      = "설치 프린터: 일반 ${cntNormal}대 · 특수 ${cntSpecial}대  |  ▲ 표준 설정(SNMP·양방향) 수정 필요: ${cntPolicy}대 → [표준 설정 일괄 수정] 클릭"
+        $script:Tab3Ui.LblSummary.ForeColor = $script:Theme.DangerRedDeep
+        if ($script:Tab3Ui.LblSummary.Parent) { $script:Tab3Ui.LblSummary.Parent.BackColor = $script:Theme.DangerRedTint }
     } else {
-        $script:Tab3Ui.LblSummary.ForeColor = [System.Drawing.Color]::FromArgb(22, 101, 52)
+        $script:Tab3Ui.LblSummary.Text      = "설치 프린터: 일반 ${cntNormal}대 · 특수 ${cntSpecial}대  |  ● 모든 표준 설정(SNMP·양방향) 정상 → 하단 [일반 프린터 전체 인쇄]로 출력 확인"
+        $script:Tab3Ui.LblSummary.ForeColor = $script:Theme.AsanDeep
+        if ($script:Tab3Ui.LblSummary.Parent) { $script:Tab3Ui.LblSummary.Parent.BackColor = $script:Theme.AsanMint }
     }
+    Sync-AllUiButtonStates
 }
 
 function Invoke-Tab3RefreshAsync {
@@ -205,40 +209,67 @@ function Invoke-Tab3BulkNormalTestPrint {
 function Initialize-Tab3VerifyUi {
     $parent = $script:Ui.TabVerify
 
-    # [1] 상단 툴바
+    # [1] 상단 워크플로우 요약 바 + DPI 안전 FlowLayoutPanel 툴바
     $pnlTop = New-Object System.Windows.Forms.Panel
-    $pnlTop.Dock   = [System.Windows.Forms.DockStyle]::Top
-    $pnlTop.Height = 64
+    $pnlTop.Dock      = [System.Windows.Forms.DockStyle]::Top
+    $pnlTop.Height    = 76
+    $pnlTop.BackColor = [System.Drawing.Color]::Transparent
 
-    $btnRef = New-StyledButton -Text '목록 새로고침' -Width 112 -Height 28 -BackColor ([System.Drawing.Color]::FromArgb(51, 65, 85)) -RegisterBusy
-    $btnRef.Location = New-Object System.Drawing.Point(0, 4)
+    $pnlSumBar = New-Object System.Windows.Forms.Panel
+    $pnlSumBar.Dock      = [System.Windows.Forms.DockStyle]::Top
+    $pnlSumBar.Height    = 34
+    $pnlSumBar.BackColor = $script:Theme.AsanMint
+    $pnlSumBar.Padding   = New-Object System.Windows.Forms.Padding(10, 0, 10, 0)
+
+    $lblSum = New-Object System.Windows.Forms.Label
+    $lblSum.Text      = '설치 프린터 상태를 조회 중입니다...'
+    $lblSum.Font      = $script:FontBold
+    $lblSum.ForeColor = $script:Theme.AsanDeep
+    $lblSum.Dock      = [System.Windows.Forms.DockStyle]::Fill
+    $lblSum.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+    $pnlSumBar.Controls.Add($lblSum)
+
+    $flpTopBar = New-Object System.Windows.Forms.FlowLayoutPanel
+    $flpTopBar.Dock          = [System.Windows.Forms.DockStyle]::Fill
+    $flpTopBar.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+    $flpTopBar.WrapContents  = $false
+    $flpTopBar.BackColor     = [System.Drawing.Color]::Transparent
+    $flpTopBar.Padding       = New-Object System.Windows.Forms.Padding(0, 7, 0, 0)
+
+    $btnRef = New-StyledButton -Text '목록 새로고침' -Width 110 -Height 28 -Variant 'Secondary' -RegisterBusy
+    $btnRef.Margin = New-Object System.Windows.Forms.Padding(0, 0, 8, 0)
     $btnRef.Add_Click({ Invoke-Tab3RefreshAsync })
 
-    $btnFix = New-StyledButton -Text 'SNMP / 양방향 일괄 수정' -Width 182 -Height 28 -BackColor ([System.Drawing.Color]::FromArgb(217, 119, 6)) -RegisterBusy
-    $btnFix.Location = New-Object System.Drawing.Point(120, 4)
+    $btnFix = New-StyledButton -Text '표준 설정 일괄 수정 (SNMP·양방향)' -Width 230 -Height 28 -Variant 'Orange' -RegisterBusy
+    $btnFix.Margin = New-Object System.Windows.Forms.Padding(0, 0, 8, 0)
     $btnFix.Add_Click({
         $work = {
             param($arg)
             Write-ProgressSafe -Percent 40 -Message 'Spooler 안전 중지 후 SNMP/양방향 OFF 일괄 적용 중...'
-            Invoke-AsanStandardPolicyAtomic
+            $polRes = Invoke-AsanStandardPolicyAtomic
             Write-ProgressSafe -Percent 80 -Message '적용 후 프린터 상태 재조회 중...'
-            return @(Get-InstalledPrintersVerifyInfo)
+            $list = @(Get-InstalledPrintersVerifyInfo)
+            return [pscustomobject]@{ Policy = $polRes; Printers = $list }
         }
         $done = {
             param($ok, $data, $err, $cbState)
-            if (-not $ok) {
+            if (-not $ok -or -not $data) {
                 [void](Show-AsanMessageBox -Text "일괄 수정 오류: $err" -Caption '오류' -Buttons 'OK' -Icon 'Error')
                 return
             }
-            $script:Tab3Ui.InstalledList = @($data)
+            $script:Tab3Ui.InstalledList = @($data.Printers)
             Render-Tab3VerifyGrid
-            [void](Show-AsanMessageBox -Text '모든 TCP/IP SNMP 해제 및 일반 프린터 양방향 지원 해제를 완료했습니다.' -Caption '일괄 수정 완료' -Buttons 'OK' -Icon 'Information')
+            if ($data.Policy -and (-not $data.Policy.SpoolerStopped)) {
+                [void](Show-AsanMessageBox -Text '일부 설정을 적용했으나 Print Spooler 중지 대기 시간이 초과되었습니다. 표의 빨간 항목이 남아 있다면 다시 시도해 주세요.' -Caption '일괄 수정 확인 필요' -Buttons 'OK' -Icon 'Warning')
+            } else {
+                [void](Show-AsanMessageBox -Text '모든 TCP/IP SNMP 해제 및 일반 프린터 양방향 지원 해제를 완료했습니다.' -Caption '일괄 수정 완료' -Buttons 'OK' -Icon 'Information')
+            }
         }
         Invoke-AsanAsyncTask -TaskName 'SNMP/양방향 아산 표준 일괄 적용' -WorkScript $work -OnComplete $done -Indeterminate
     })
 
-    $btnReset = New-StyledButton -Text '클라이언트 스풀러 초기화' -Width 176 -Height 28 -BackColor ([System.Drawing.Color]::FromArgb(185, 28, 28)) -RegisterBusy
-    $btnReset.Location = New-Object System.Drawing.Point(310, 4)
+    $btnReset = New-StyledButton -Text '인쇄 대기열(스풀러) 초기화' -Width 184 -Height 28 -Variant 'DangerOutline' -RegisterBusy
+    $btnReset.Margin = New-Object System.Windows.Forms.Padding(0, 0, 12, 0)
     $btnReset.Add_Click({
         $ans = Show-AsanMessageBox -Text "현재 PC의 Print Spooler를 중지하고 대기열 잔여물(spool\PRINTERS)을 모두 비운 뒤 재시작합니다.`r`n계속하시겠습니까?" -Caption '스풀러 초기화 확인' -Buttons 'YesNo' -Icon 'Warning'
         if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) { return }
@@ -266,39 +297,39 @@ function Initialize-Tab3VerifyUi {
     $chkVirt = New-Object System.Windows.Forms.CheckBox
     $chkVirt.Text      = '가상 프린터 함께 보기'
     $chkVirt.AutoSize  = $true
-    $chkVirt.Location  = New-Object System.Drawing.Point(500, 9)
-    $chkVirt.ForeColor = [System.Drawing.Color]::FromArgb(71, 85, 105)
+    $chkVirt.ForeColor = $script:Theme.InkSecondary
+    $chkVirt.Margin    = New-Object System.Windows.Forms.Padding(0, 5, 0, 0)
     $chkVirt.Add_CheckedChanged({ Render-Tab3VerifyGrid })
 
-    $lblSum = New-Object System.Windows.Forms.Label
-    $lblSum.Text      = '설치 프린터: 조회 대기 중'
-    $lblSum.Font      = $script:FontBold
-    $lblSum.ForeColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
-    $lblSum.AutoSize  = $true
-    $lblSum.Location  = New-Object System.Drawing.Point(2, 40)
+    $flpTopBar.Controls.AddRange(@($btnRef, $btnFix, $btnReset, $chkVirt))
+    $pnlTop.Controls.Add($flpTopBar)
+    $pnlTop.Controls.Add($pnlSumBar)
 
-    $pnlTop.Controls.AddRange(@($btnRef, $btnFix, $btnReset, $chkVirt, $lblSum))
-
-    # [2] 중앙 설치 프린터 검증 그리드
+    # [2] 중앙 설치 프린터 검증 그리드 (Driver 컬럼 Fill로 우측 여백 제거)
     $dgv = New-StyledGrid
     $dgv.Dock = [System.Windows.Forms.DockStyle]::Fill
 
     foreach ($cDef in @(
-        @{ Name = 'Default';  Header = '기본';       Width = 42 },
-        @{ Name = 'Category'; Header = '구분';       Width = 105 },
-        @{ Name = 'Printer';  Header = '프린터 이름'; Width = 200 },
-        @{ Name = 'Port';     Header = '포트';       Width = 170 },
-        @{ Name = 'Snmp';     Header = 'SNMP';       Width = 64 },
-        @{ Name = 'Bidi';     Header = '양방향';     Width = 72 },
-        @{ Name = 'Driver';   Header = '드라이버';   Width = 220 },
-        @{ Name = 'Status';   Header = '상태';       Width = 85 }
+        @{ Name = 'Default';  Header = '기본';       Width = 48;  Fill = $false },
+        @{ Name = 'Category'; Header = '구분';       Width = 104; Fill = $false },
+        @{ Name = 'Printer';  Header = '프린터 이름'; Width = 200; Fill = $false },
+        @{ Name = 'Port';     Header = '포트';       Width = 165; Fill = $false },
+        @{ Name = 'Snmp';     Header = 'SNMP';       Width = 64;  Fill = $false },
+        @{ Name = 'Bidi';     Header = '양방향';     Width = 76;  Fill = $false },
+        @{ Name = 'Driver';   Header = '드라이버';   Width = 200; Fill = $true  },
+        @{ Name = 'Status';   Header = '상태';       Width = 84;  Fill = $false }
     )) {
         $c = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
         $c.Name       = $cDef.Name
         $c.HeaderText = $cDef.Header
         $c.Width      = $cDef.Width
+        if ($cDef.Fill) {
+            $c.AutoSizeMode = [System.Windows.Forms.DataGridViewAutoSizeColumnMode]::Fill
+            $c.MinimumWidth = 150
+        }
         [void]$dgv.Columns.Add($c)
     }
+    $dgv.Add_SelectionChanged({ Sync-AllUiButtonStates })
 
     # [3] 하단 테스트 인쇄 및 제어 액션 바 (DPI 125~150% 대응 FlowLayoutPanel)
     $pnlBot = New-Object System.Windows.Forms.FlowLayoutPanel
@@ -307,13 +338,13 @@ function Initialize-Tab3VerifyUi {
     $pnlBot.WrapContents  = $true
     $pnlBot.AutoSize      = $true
     $pnlBot.AutoSizeMode  = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
-    $pnlBot.Padding       = New-Object System.Windows.Forms.Padding(0, 6, 0, 2)
+    $pnlBot.Padding       = New-Object System.Windows.Forms.Padding(0, 8, 0, 2)
 
-    $btnBulk = New-StyledButton -Text '일반 프린터 전체 인쇄 (특수제외)' -Width 230 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(22, 163, 74)) -RegisterBusy
+    $btnBulk = New-StyledButton -Text '일반 프린터 전체 인쇄 (특수제외)' -Width 230 -Height 36 -Variant 'Primary' -RegisterBusy
     $btnBulk.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
     $btnBulk.Add_Click({ Invoke-Tab3BulkNormalTestPrint })
 
-    $btnSingle = New-StyledButton -Text '선택 테스트 인쇄' -Width 130 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(37, 99, 235)) -RegisterBusy
+    $btnSingle = New-StyledButton -Text '선택 테스트 인쇄' -Width 130 -Height 36 -Variant 'SoftTeal' -RegisterBusy
     $btnSingle.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
     $btnSingle.Add_Click({
         $sel = Get-Tab3SelectedPrinterItem
@@ -330,29 +361,38 @@ function Initialize-Tab3VerifyUi {
         }
     })
 
-    $btnProps = New-StyledButton -Text '프린터 속성' -Width 105 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105)) -RegisterBusy
+    $btnProps = New-StyledButton -Text '프린터 속성' -Width 104 -Height 36 -Variant 'Secondary' -RegisterBusy
     $btnProps.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
     $btnProps.Add_Click({
         $sel = Get-Tab3SelectedPrinterItem
-        if (-not $sel) { return }
+        if (-not $sel) {
+            [void](Show-AsanMessageBox -Text '속성을 열 프린터 행을 먼저 선택하세요.' -Caption '선택 없음' -Buttons 'OK' -Icon 'Information')
+            return
+        }
         $arg = 'printui.dll,PrintUIEntry /p /n "' + ($sel.PrinterName -replace '"', '\"') + '"'
         try { Start-Process -FilePath 'rundll32.exe' -ArgumentList $arg } catch {}
     })
 
-    $btnPrefs = New-StyledButton -Text '인쇄 기본 설정' -Width 118 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105)) -RegisterBusy
+    $btnPrefs = New-StyledButton -Text '인쇄 기본 설정' -Width 118 -Height 36 -Variant 'Secondary' -RegisterBusy
     $btnPrefs.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
     $btnPrefs.Add_Click({
         $sel = Get-Tab3SelectedPrinterItem
-        if (-not $sel) { return }
+        if (-not $sel) {
+            [void](Show-AsanMessageBox -Text '인쇄 기본 설정을 열 프린터 행을 먼저 선택하세요.' -Caption '선택 없음' -Buttons 'OK' -Icon 'Information')
+            return
+        }
         $arg = 'printui.dll,PrintUIEntry /e /n "' + ($sel.PrinterName -replace '"', '\"') + '"'
         try { Start-Process -FilePath 'rundll32.exe' -ArgumentList $arg } catch {}
     })
 
-    $btnDef = New-StyledButton -Text '기본 프린터 지정' -Width 126 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(15, 118, 110)) -RegisterBusy
+    $btnDef = New-StyledButton -Text '기본 프린터 지정' -Width 126 -Height 36 -Variant 'Secondary' -RegisterBusy
     $btnDef.Margin = New-Object System.Windows.Forms.Padding(0, 2, 0, 2)
     $btnDef.Add_Click({
         $sel = Get-Tab3SelectedPrinterItem
-        if (-not $sel) { return }
+        if (-not $sel) {
+            [void](Show-AsanMessageBox -Text '기본 프린터로 지정할 행을 먼저 선택하세요.' -Caption '선택 없음' -Buttons 'OK' -Icon 'Information')
+            return
+        }
         if (Set-DefaultPrinterSafe -PrinterName $sel.PrinterName) {
             Add-UiLog -Message "기본 프린터 지정 완료: $($sel.PrinterName)" -Level 'INFO'
             Invoke-Tab3RefreshAsync
@@ -427,11 +467,11 @@ function Render-Tab4ServerGrid {
             $row.Tag = $e
 
             if ($e.MatchRank -eq 1) {
-                $row.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(220, 252, 231)
-                $row.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(22, 101, 52)
+                $row.DefaultCellStyle.BackColor = $script:Theme.AsanMint
+                $row.DefaultCellStyle.ForeColor = $script:Theme.AsanDeep
             } elseif ($e.IsOld5Days) {
-                $row.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(254, 243, 199)
-                $row.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(146, 64, 14)
+                $row.DefaultCellStyle.BackColor = $script:Theme.AsanOrangeTint
+                $row.DefaultCellStyle.ForeColor = $script:Theme.AsanOrangeText
             }
         }
     }
@@ -648,14 +688,14 @@ function Initialize-Tab4ServerUi {
         Request-Tab4PreviewDebounced
     })
 
-    $btnRefSrv = New-StyledButton -Text '서버 목록 새로고침' -Width 138 -Height 28 -BackColor ([System.Drawing.Color]::FromArgb(51, 65, 85)) -RegisterBusy
+    $btnRefSrv = New-StyledButton -Text '서버 목록 새로고침' -Width 138 -Height 28 -Variant 'Secondary' -RegisterBusy
     $btnRefSrv.Margin = New-Object System.Windows.Forms.Padding(0, 1, 0, 0)
     $btnRefSrv.Add_Click({ Invoke-EnvironmentRefreshAsync })
 
     $pnlTopLeft.Controls.AddRange(@($lblSearch, $txtSearch, $btnRefSrv))
 
     $flpTopRight = New-RightFlowStrip -TopPadding 4 -RightPadding 0
-    $btnClean5 = New-StyledButton -Text '5일 경과 일괄 정리 (0개)' -Width 182 -Height 28 -BackColor ([System.Drawing.Color]::FromArgb(185, 28, 28)) -RegisterBusy
+    $btnClean5 = New-StyledButton -Text '5일 경과 일괄 정리 (0개)' -Width 182 -Height 28 -Variant 'DangerOutline' -RegisterBusy
     $btnClean5.Enabled = $false
     $btnClean5.Add_Click({
         $net = $script:AppState.NetworkInfo
@@ -714,17 +754,21 @@ function Initialize-Tab4ServerUi {
     $dgv.Dock = [System.Windows.Forms.DockStyle]::Fill
 
     foreach ($cDef in @(
-        @{ Name = 'Match'; Header = '매칭';       Width = 84 },
-        @{ Name = 'Name';  Header = '백업 폴더명'; Width = 220 },
-        @{ Name = 'Date';  Header = '백업 일시';   Width = 140 },
-        @{ Name = 'Age';   Header = '경과일';     Width = 72 },
-        @{ Name = 'Brm';   Header = 'PrintBrm';   Width = 74 },
-        @{ Name = 'Path';  Header = '서버 경로';   Width = 370 }
+        @{ Name = 'Match'; Header = '매칭';       Width = 84;  Fill = $false },
+        @{ Name = 'Name';  Header = '백업 폴더명'; Width = 220; Fill = $false },
+        @{ Name = 'Date';  Header = '백업 일시';   Width = 140; Fill = $false },
+        @{ Name = 'Age';   Header = '경과일';     Width = 72;  Fill = $false },
+        @{ Name = 'Brm';   Header = 'PrintBrm';   Width = 74;  Fill = $false },
+        @{ Name = 'Path';  Header = '서버 경로';   Width = 260; Fill = $true }
     )) {
         $c = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
         $c.Name       = $cDef.Name
         $c.HeaderText = $cDef.Header
         $c.Width      = $cDef.Width
+        if ($cDef.Fill) {
+            $c.AutoSizeMode = [System.Windows.Forms.DataGridViewAutoSizeColumnMode]::Fill
+            $c.MinimumWidth = 180
+        }
         [void]$dgv.Columns.Add($c)
     }
     $dgv.Add_SelectionChanged({
@@ -734,11 +778,21 @@ function Initialize-Tab4ServerUi {
         }
     })
 
-    # [3] 하단 리포트 미리보기 창
+    # [3] 하단 리포트 미리보기 창 (아산 소프트 민트 헤더 + 화이트 미리보기)
     $pnlPrev = New-Object System.Windows.Forms.Panel
     $pnlPrev.Dock    = [System.Windows.Forms.DockStyle]::Bottom
-    $pnlPrev.Height  = 128
-    $pnlPrev.Padding = New-Object System.Windows.Forms.Padding(0, 6, 0, 0)
+    $pnlPrev.Height  = 140
+    $pnlPrev.Padding = New-Object System.Windows.Forms.Padding(0, 8, 0, 0)
+
+    $lblPrevHead = New-Object System.Windows.Forms.Label
+    $lblPrevHead.Text      = '선택한 백업 리포트 미리보기 (Migration_Report.txt)'
+    $lblPrevHead.Dock      = [System.Windows.Forms.DockStyle]::Top
+    $lblPrevHead.Height    = 22
+    $lblPrevHead.BackColor = $script:Theme.AsanMintSoft
+    $lblPrevHead.ForeColor = $script:Theme.AsanDeep
+    $lblPrevHead.Font      = $script:FontSmallB
+    $lblPrevHead.Padding   = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
+    $lblPrevHead.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
 
     $txtPrev = New-Object System.Windows.Forms.TextBox
     $txtPrev.Dock        = [System.Windows.Forms.DockStyle]::Fill
@@ -746,24 +800,29 @@ function Initialize-Tab4ServerUi {
     $txtPrev.ReadOnly    = $true
     $txtPrev.ScrollBars  = [System.Windows.Forms.ScrollBars]::Vertical
     $txtPrev.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $txtPrev.BackColor   = [System.Drawing.Color]::White
-    $txtPrev.ForeColor   = [System.Drawing.Color]::FromArgb(30, 41, 59)
+    $txtPrev.BackColor   = $script:Theme.CardBg
+    $txtPrev.ForeColor   = $script:Theme.InkPrimary
     $txtPrev.Font        = $script:FontMono
     $txtPrev.Text        = '목록에서 백업 폴더를 선택하면 백업 리포트(Migration_Report.txt) 미리보기가 표시됩니다.'
     $pnlPrev.Controls.Add($txtPrev)
+    $pnlPrev.Controls.Add($lblPrevHead)
+    $txtPrev.BringToFront()
 
-    # [4] 최하단 액션 바 ([C2] RightFlowStrip + [C4] 안전 탐색기 열기)
+    # [4] 최하단 액션 바 (FlowLayoutPanel + RightFlowStrip — DPI 안전)
     $pnlBot = New-Object System.Windows.Forms.Panel
     $pnlBot.Dock   = [System.Windows.Forms.DockStyle]::Bottom
-    $pnlBot.Height = 46
+    $pnlBot.Height = 48
 
-    $pnlBotLeft = New-Object System.Windows.Forms.Panel
-    $pnlBotLeft.Dock      = [System.Windows.Forms.DockStyle]::Fill
-    $pnlBotLeft.BackColor = [System.Drawing.Color]::Transparent
+    $flpBotLeft = New-Object System.Windows.Forms.FlowLayoutPanel
+    $flpBotLeft.Dock          = [System.Windows.Forms.DockStyle]::Fill
+    $flpBotLeft.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
+    $flpBotLeft.WrapContents  = $false
+    $flpBotLeft.BackColor     = [System.Drawing.Color]::Transparent
+    $flpBotLeft.Padding       = New-Object System.Windows.Forms.Padding(0, 8, 0, 0)
 
-    $btnLoadTab2 = New-StyledButton -Text '선택 백업을 복원 탭으로 불러오기' -Width 230 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(37, 99, 235)) -RegisterBusy
-    $btnLoadTab2.Location = New-Object System.Drawing.Point(0, 8)
-    $btnLoadTab2.Enabled  = $false
+    $btnLoadTab2 = New-StyledButton -Text '선택 백업을 복원 탭으로 불러오기' -Width 232 -Height 36 -Variant 'Primary' -RegisterBusy
+    $btnLoadTab2.Margin  = New-Object System.Windows.Forms.Padding(0, 0, 10, 0)
+    $btnLoadTab2.Enabled = $false
     $btnLoadTab2.Add_Click({
         $sel = Get-Tab4SelectedBackupEntry
         if (-not $sel) {
@@ -774,8 +833,8 @@ function Initialize-Tab4ServerUi {
         Load-Tab2BackupSourceAsync -SourcePath $sel.FullPath
     })
 
-    $btnOpenDir = New-StyledButton -Text '탐색기로 폴더 열기' -Width 142 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(71, 85, 105))
-    $btnOpenDir.Location = New-Object System.Drawing.Point(242, 8)
+    $btnOpenDir = New-StyledButton -Text '탐색기로 폴더 열기' -Width 142 -Height 36 -Variant 'Secondary'
+    $btnOpenDir.Margin = New-Object System.Windows.Forms.Padding(0)
     $btnOpenDir.Add_Click({
         $sel = Get-Tab4SelectedBackupEntry
         $dir = $null
@@ -784,10 +843,10 @@ function Initialize-Tab4ServerUi {
         Open-FolderInExplorerSafe -FolderPath $dir
     })
 
-    $pnlBotLeft.Controls.AddRange(@($btnLoadTab2, $btnOpenDir))
+    $flpBotLeft.Controls.AddRange(@($btnLoadTab2, $btnOpenDir))
 
     $flpBotRight = New-RightFlowStrip -TopPadding 8 -RightPadding 0
-    $btnDelOne = New-StyledButton -Text '선택 백업 삭제' -Width 126 -Height 34 -BackColor ([System.Drawing.Color]::FromArgb(220, 38, 38)) -RegisterBusy
+    $btnDelOne = New-StyledButton -Text '선택 백업 삭제' -Width 126 -Height 36 -Variant 'Danger' -RegisterBusy
     $btnDelOne.Enabled = $false
     $btnDelOne.Add_Click({
         $sel = Get-Tab4SelectedBackupEntry
@@ -831,7 +890,7 @@ function Initialize-Tab4ServerUi {
     })
     $flpBotRight.Controls.Add($btnDelOne)
 
-    $pnlBot.Controls.Add($pnlBotLeft)
+    $pnlBot.Controls.Add($flpBotLeft)
     $pnlBot.Controls.Add($flpBotRight)
 
     $parent.Controls.Add($dgv)
@@ -985,6 +1044,8 @@ function Start-AsanPrinterManagerApp {
         if ($script:Tab4Ui.PreviewTimer) { try { $script:Tab4Ui.PreviewTimer.Dispose() } catch {}; $script:Tab4Ui.PreviewTimer = $null }
         try { Clear-RetiredTab4Previews } catch {}
         if ($script:AsyncState.PollTimer) { try { $script:AsyncState.PollTimer.Dispose() } catch {}; $script:AsyncState.PollTimer = $null }
+        if ($script:Ui.LogoImage) { try { $script:Ui.LogoImage.Dispose() } catch {}; $script:Ui.LogoImage = $null }
+        if ($script:Ui.AppIcon) { try { $script:Ui.AppIcon.Dispose() } catch {}; $script:Ui.AppIcon = $null }
         if ($script:Ui.Form) { try { $script:Ui.Form.Dispose() } catch {} }
     }
 }

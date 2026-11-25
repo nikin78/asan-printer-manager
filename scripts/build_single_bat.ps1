@@ -60,13 +60,18 @@ $pwLiteral       = $null
 $userOverride    = $null
 $placeholderExpr = "@('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')"
 
-if (Test-Path -LiteralPath $SecretsFile) {
+if ((-not $AllowPlaceholderBuild) -and (Test-Path -LiteralPath $SecretsFile)) {
     $secRaw = [IO.File]::ReadAllText($SecretsFile, $utf8StrictReader)
     if ($secRaw.Length -gt 0 -and $secRaw[0] -eq [char]0xFEFF) { $secRaw = $secRaw.Substring(1) }
     $secObj = $secRaw | ConvertFrom-Json
     $pws = @($secObj.DefaultPasswords | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
     if ($pws.Count -eq 0) {
         throw "비밀 설정 파일($SecretsFile)에 유효한 DefaultPasswords 항목이 없습니다."
+    }
+    foreach ($chkPw in $pws) {
+        if ($chkPw -match '(?i)CHANGE_ME_|__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__') {
+            throw "비밀 설정 파일($SecretsFile)에 미수정 예제 암호('$chkPw')가 남아 있습니다. 실제 병원 공용 암호를 입력한 뒤 다시 빌드하세요."
+        }
     }
     $escapedItems    = @($pws | ForEach-Object { "'" + ($_.Replace("'", "''")) + "'" })
     $pwLiteral       = '@(' + ($escapedItems -join ', ') + ')'

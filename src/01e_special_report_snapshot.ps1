@@ -326,8 +326,8 @@ function Complete-Sip30mPostInstall {
         return [pscustomobject]@{ Success = $false; Message = 'SISS HODOO SIP-30(Class) 프린터가 감지되지 않습니다. 1단계 설치 프로그램(sip30inst)을 먼저 완료하세요.' }
     }
 
-    if ([string]::IsNullOrWhiteSpace($TargetIp) -or $TargetIp -eq '백업 IP') {
-        return [pscustomobject]@{ Success = $false; Message = 'SIP-30M 대상 TCP/IP 주소가 확인되지 않습니다.' }
+    if ([string]::IsNullOrWhiteSpace($TargetIp) -or $TargetIp -eq '백업 IP' -or (-not (Test-IsUsableIPv4 -IpText $TargetIp))) {
+        return [pscustomobject]@{ Success = $false; Message = "유효한 SIP-30M 대상 TCP/IPv4 주소가 아닙니다: '$TargetIp'" }
     }
 
     $pRes = Ensure-RestoredPortSafe -PortObj $null -FallbackName $TargetIp -OverrideKind 'TCPIP' -OverrideHostIp $TargetIp
@@ -353,25 +353,32 @@ function Complete-Sip30mPostInstall {
     $datFile = Resolve-SpecialSettingFileOnDemand -RelPath $DatRelPath -BackupSourcePath $BackupSourcePath
     $regFile = Resolve-SpecialSettingFileOnDemand -RelPath $RegRelPath -BackupSourcePath $BackupSourcePath
 
-    $settingsApplied = $false
+    $datApplied = $false
     if ($datFile -and (Test-Path -LiteralPath $datFile)) {
-        [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Sr', '/q', '/n', $curName, '/a', $datFile, 'd', 'g', 'u', 'r'))
-        $settingsApplied = $true
+        $srSip = Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Sr', '/q', '/n', $curName, '/a', $datFile, 'd', 'g', 'u', 'r')
+        if ($srSip.ExitCode -eq 0) { $datApplied = $true }
     }
 
     $pendingRegs = @()
+    $regQueued   = $false
     if ($regFile -and (Test-Path -LiteralPath $regFile)) {
         $pendingRegs = @([pscustomobject]@{ PrinterName = $curName; OriginalPrinterName = $OriginalPrinterName; RegFullPath = $regFile })
-        $settingsApplied = $true
+        $regQueued   = $true
     }
 
-    Invoke-AsanStandardPolicyAtomic -PendingRegImports $pendingRegs
+    $policyRes  = Invoke-AsanStandardPolicyAtomic -PendingRegImports $pendingRegs
+    $regFailed  = ($policyRes -and (@($policyRes.FailedRegImports) -contains $curName))
+    $regApplied = ($regQueued -and (-not $regFailed))
 
     $safeCurName = ($curName -replace '"', '\"')
     Start-Process -FilePath 'rundll32.exe' -ArgumentList ('printui.dll,PrintUIEntry /e /n "' + $safeCurName + '"')
 
     $detail = '백업된 설정 파일이 없어 기본 설정 창에서 값을 직접 확인하세요.'
-    if ($settingsApplied) { $detail = '백업된 4개 탭 인쇄 기본 설정(리본/코팅/농도/MS쓰기)이 자동 주입되었습니다.' }
+    if ($regFailed) {
+        $detail = '레지스트리(.reg) 설정 주입에 실패했습니다 — 열린 기본 설정 창에서 4개 탭(리본/코팅/농도/MS쓰기)을 직접 확인하세요.'
+    } elseif ($datApplied -or $regApplied) {
+        $detail = '백업된 4개 탭 인쇄 기본 설정(리본/코팅/농도/MS쓰기)이 자동 주입되었습니다.'
+    }
     return [pscustomobject]@{
         Success = $true
         Message = "SIP-30M 마무리 완료: 이름='$curName', 포트='$($pRes.PortName)' (SNMP/양방향 OFF). $detail"
@@ -423,7 +430,10 @@ function Get-BackupEffectiveWriteTime {
             try {
                 $fi = Get-Item -LiteralPath $mp -Force -ErrorAction Stop
                 if ($fi.LastWriteTime -gt $bestTime) { $bestTime = $fi.LastWriteTime }
-            } catch {}
+            } catch {
+                # SMB 일시 잠금/재백업 진행 중 Get-Item 실패 시 Fail-Closed(최신 시각 반환)로 오삭제 차단
+                return (Get-Date)
+            }
         }
     }
     return $bestTime
@@ -477,16 +487,21 @@ function Remove-OldServerBackups {
     param([string]$PrtBakDir, [int]$DaysThreshold = 5)
     $now     = Get-Date
     $removed = [System.Collections.Generic.List[string]]::new()
+    if ($DaysThreshold -lt 1) { return @() }
     if ([string]::IsNullOrWhiteSpace($PrtBakDir) -or -not (Test-Path -LiteralPath $PrtBakDir)) { return @() }
+    $baseFull = [IO.Path]::GetFullPath($PrtBakDir).TrimEnd('\')
 
     foreach ($d in @(Get-ChildItem -LiteralPath $PrtBakDir -Directory -Force -ErrorAction SilentlyContinue)) {
         if ($d.Name.StartsWith('_')) { continue }
-        $hasMarker = (Test-Path -LiteralPath (Join-Path $d.FullName 'PrinterBackup.json')) -or (Test-Path -LiteralPath (Join-Path $d.FullName 'PrinterBackup.printerExport'))
+        if (($d.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+        $dFull = [IO.Path]::GetFullPath($d.FullName).TrimEnd('\')
+        if ([IO.Path]::GetDirectoryName($dFull).TrimEnd('\') -ine $baseFull) { continue }
+        $hasMarker = (Test-Path -LiteralPath (Join-Path $dFull 'PrinterBackup.json')) -or (Test-Path -LiteralPath (Join-Path $dFull 'PrinterBackup.printerExport'))
         if (-not $hasMarker) { continue }
         $effTime = Get-BackupEffectiveWriteTime -DirInfo $d
         if (($now - $effTime).TotalDays -lt [double]$DaysThreshold) { continue }
-        Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue
-        if (-not (Test-Path -LiteralPath $d.FullName)) { $removed.Add($d.Name) }
+        Remove-Item -LiteralPath $dFull -Recurse -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path -LiteralPath $dFull)) { $removed.Add($d.Name) }
     }
     return @($removed.ToArray())
 }
@@ -517,7 +532,14 @@ function Protect-ReportSensitiveText {
         $es = [string]$ex
         if (-not [string]::IsNullOrWhiteSpace($es) -and $es.Length -ge 3) { $secrets.Add($es) }
     }
-    foreach ($s in ($secrets | Sort-Object { $_.Length } -Descending | Select-Object -Unique)) {
+    $expandedSecrets = [System.Collections.Generic.List[string]]::new()
+    foreach ($s in ($secrets | Select-Object -Unique)) {
+        $expandedSecrets.Add($s)
+        # ConvertTo-Json이 &, ', <, >, \, " 등을 이스케이프한 변형 문자열도 함께 마스킹
+        $jEsc = $s.Replace('\', '\\').Replace('"', '\"').Replace('&', '\u0026').Replace("'", '\u0027').Replace('<', '\u003c').Replace('>', '\u003e')
+        if ($jEsc -cne $s -and $jEsc.Length -ge 3) { $expandedSecrets.Add($jEsc) }
+    }
+    foreach ($s in ($expandedSecrets | Sort-Object { $_.Length } -Descending | Select-Object -Unique)) {
         $masked = [regex]::Replace($masked, [regex]::Escape($s), '[REDACTED]')
     }
     return $masked
@@ -728,14 +750,16 @@ function Get-InstalledPrintersVerifyInfo {
 
         $snmpState = '-'
         $snmpWarn  = $false
-        $tcpKey    = Join-Path $tcpRegRoot $port
-        if (Test-Path -LiteralPath $tcpKey) {
-            $sv = (Get-ItemProperty -LiteralPath $tcpKey -Name 'SNMP Enabled' -ErrorAction SilentlyContinue).'SNMP Enabled'
-            if ($null -ne $sv -and [int]$sv -ne 0) {
-                $snmpState = 'ON'
-                $snmpWarn  = $true
-            } else {
-                $snmpState = 'OFF'
+        if (-not [string]::IsNullOrWhiteSpace($port)) {
+            $tcpKey = Join-Path $tcpRegRoot $port
+            if (Test-Path -LiteralPath $tcpKey) {
+                $sv = (Get-ItemProperty -LiteralPath $tcpKey -Name 'SNMP Enabled' -ErrorAction SilentlyContinue).'SNMP Enabled'
+                if ($null -ne $sv -and [int]$sv -ne 0) {
+                    $snmpState = 'ON'
+                    $snmpWarn  = $true
+                } else {
+                    $snmpState = 'OFF'
+                }
             }
         }
 

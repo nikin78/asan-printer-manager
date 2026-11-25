@@ -212,7 +212,14 @@ if ($bootPart -notmatch 'ToBase64String' -or $bootPart -notmatch 'ORIGINAL_SELF'
 if ($bootPart -notmatch '-STA') { $bootIssues.Add('부트스트랩 -STA 실행 옵션 누락') }
 if ($bootPart -notmatch '"%RC%"=="99"') { $bootIssues.Add('정상 종료 코드 99 검사 누락') }
 if ($bootPart -match '""%SELF%""') { $bootIssues.Add('00_bootstrap.bat 깨진 ""%SELF%"" 인용 부호 감지 ("%%SELF%%" 사용 필수)') }
+if ($bootPart -match 'Start-Process\s+-FilePath\s+\$env:CMD_EXE') { $bootIssues.Add('00_bootstrap.bat WOW64 UAC 버그: 64비트 PS에서 Sysnative CMD_EXE 실행 금지(System32\cmd.exe 사용 필수)') }
 if ($batText.TrimEnd("`r", "`n") -notmatch '(?m)^exit 99$') { $bootIssues.Add('페이로드 말미 exit 99 누락') }
+
+# 부트스트랩 실제 본문에서 페이로드 추출 원라이너를 직접 파싱해 실행 검증 (사본 하드코딩 사각지대 제거)
+$bootExtMatch = [regex]::Match($bootPart, '(?m)-Command\s+("\$ErrorActionPreference=''Stop'';\s*\$raw=\[IO\.File\]::ReadAllText\(\$env:SELF[^\r\n]+")')
+if (-not $bootExtMatch.Success) {
+    $bootIssues.Add('00_bootstrap.bat 본문에서 실제 페이로드 추출 -Command 원라이너를 찾지 못함')
+}
 
 $tmpPs1 = Join-Path $env:TEMP ("AsanVerifyStatic_{0}.ps1" -f $PID)
 $tmpLog = Join-Path $env:TEMP ("AsanVerifyStatic_{0}.log" -f $PID)
@@ -223,9 +230,14 @@ $payloadText = ''
 try {
     $env:SELF   = $BatFile
     $env:PSTEMP = $tmpPs1
-    $extractOneLiner = '"$ErrorActionPreference=''Stop''; $raw=[IO.File]::ReadAllText($env:SELF,[Text.Encoding]::UTF8); $m=[regex]::Match($raw,''(?m)^##__POWERSHELL_PAYLOAD__\s*$'',[Text.RegularExpressions.RegexOptions]::RightToLeft); if(-not $m.Success){throw ''Payload marker not found.''}; $ps=$raw.Substring($m.Index+$m.Length); [IO.File]::WriteAllText($env:PSTEMP,$ps,(New-Object Text.UTF8Encoding($true)))"'
-    $cmdLine = ('"{0}" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command {1} > "{2}" 2>&1' -f $ps51, $extractOneLiner, $tmpLog)
-    & cmd.exe /d /c $cmdLine
+    $extractOneLiner = ''
+    if ($bootExtMatch.Success) { $extractOneLiner = $bootExtMatch.Groups[1].Value }
+    if (-not [string]::IsNullOrWhiteSpace($extractOneLiner)) {
+        $cmdLine = ('"{0}" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command {1} > "{2}" 2>&1' -f $ps51, $extractOneLiner, $tmpLog)
+        & cmd.exe /d /c $cmdLine
+    } else {
+        $LASTEXITCODE = 1
+    }
     if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $tmpPs1)) {
         $extBytes  = [IO.File]::ReadAllBytes($tmpPs1)
         $extHasBom = ($extBytes.Length -ge 3 -and $extBytes[0] -eq 0xEF -and $extBytes[1] -eq 0xBB -and $extBytes[2] -eq 0xBF)
@@ -510,8 +522,24 @@ Write-Output ("CS_COMPILE_OK|Methods=" + `$methods.Count + "|Verified=" + `$expe
         $undefinedCalls.Add("$cn (Line $($ca.Extent.StartLineNumber))")
     }
 
-    # 모든 비동기 $work = { ... } 블록 내부에서 GUI 함수가 잘못 호출되지 않았는지 정적 검사
-    $guiCallsInWork = [System.Collections.Generic.List[string]]::new()
+    # 모든 비동기 $work = { ... } 및 인라인 -WorkScript { ... } 블록에서 GUI 호출 및 $script:* 참조 차단
+    $guiCallsInWork    = [System.Collections.Generic.List[string]]::new()
+    $scriptVarsInWork  = [System.Collections.Generic.List[string]]::new()
+    $coreCallsGui      = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($fd in $fnDefs) {
+        if ($fd.Extent.StartOffset -lt $snapOffset) {
+            $cCmds = $fd.Body.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)
+            foreach ($cc in $cCmds) {
+                $ccn = $cc.GetCommandName()
+                if (-not [string]::IsNullOrWhiteSpace($ccn) -and $guiDefinedSet.ContainsKey($ccn)) {
+                    $coreCallsGui.Add("Core '$($fd.Name)' calls GUI '$ccn' (Line $($cc.Extent.StartLineNumber))")
+                }
+            }
+        }
+    }
+
+    $workBlockAsts = [System.Collections.Generic.List[object]]::new()
     $workAssigns = $ast.FindAll({
         param($n)
         $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
@@ -519,15 +547,35 @@ Write-Output ("CS_COMPILE_OK|Methods=" + `$methods.Count + "|Verified=" + `$expe
         $n.Right -is [System.Management.Automation.Language.CommandExpressionAst] -and
         $n.Right.Expression -is [System.Management.Automation.Language.ScriptBlockExpressionAst]
     }, $true)
+    foreach ($wa in $workAssigns) { $workBlockAsts.Add($wa.Right.Expression.ScriptBlock) }
 
-    foreach ($wa in $workAssigns) {
-        $sbAst = $wa.Right.Expression.ScriptBlock
+    foreach ($ca in $allCmdAsts) {
+        if ($ca.GetCommandName() -ieq 'Invoke-AsanAsyncTask') {
+            for ($ei = 0; $ei -lt ($ca.CommandElements.Count - 1); $ei++) {
+                $el = $ca.CommandElements[$ei]
+                if ($el -is [System.Management.Automation.Language.CommandParameterAst] -and $el.ParameterName -ieq 'WorkScript') {
+                    $nxt = $ca.CommandElements[$ei + 1]
+                    if ($nxt -is [System.Management.Automation.Language.ScriptBlockExpressionAst]) {
+                        $workBlockAsts.Add($nxt.ScriptBlock)
+                    }
+                }
+            }
+        }
+    }
+
+    foreach ($sbAst in $workBlockAsts) {
         $innerCmds = $sbAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)
         foreach ($ic in $innerCmds) {
             $icn = $ic.GetCommandName()
             if ([string]::IsNullOrWhiteSpace($icn)) { continue }
             if ($guiDefinedSet.ContainsKey($icn)) {
                 $guiCallsInWork.Add("'$icn' called inside `$work (Line $($ic.Extent.StartLineNumber))")
+            }
+        }
+        $innerVars = $sbAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)
+        foreach ($iv in $innerVars) {
+            if ($iv.VariablePath -and $iv.VariablePath.IsScript) {
+                $scriptVarsInWork.Add("'$($iv.Extent.Text)' referenced inside `$work (Line $($iv.Extent.StartLineNumber))")
             }
         }
     }
@@ -644,13 +692,15 @@ finally {
         $runspaceMsg = '$script:CoreFunctionNames 닫는 괄호를 찾지 못했습니다.'
     }
 
-    $c6Pass = ($dupFunctions.Count -eq 0 -and $undefinedCalls.Count -eq 0 -and $guiCallsInWork.Count -eq 0 -and $barePreviewCalls.Count -eq 0 -and $runspaceOk)
+    $c6Pass = ($dupFunctions.Count -eq 0 -and $undefinedCalls.Count -eq 0 -and $guiCallsInWork.Count -eq 0 -and $scriptVarsInWork.Count -eq 0 -and $coreCallsGui.Count -eq 0 -and $barePreviewCalls.Count -eq 0 -and $runspaceOk)
     $c6Lines = [System.Collections.Generic.List[string]]::new()
-    $c6Lines.Add("DefinedFunctions=$($allDefinedSet.Count) (Core=$($coreDefinedSet.Count), GUI=$($guiDefinedSet.Count)), Duplicates=$($dupFunctions.Count), UndefinedCalls=$($undefinedCalls.Count), AsyncWorkBlocks=$($workAssigns.Count), GuiInWork=$($guiCallsInWork.Count), BarePreviewBlocks=$($previewAssigns.Count), BarePreviewCalls=$($barePreviewCalls.Count)")
+    $c6Lines.Add("DefinedFunctions=$($allDefinedSet.Count) (Core=$($coreDefinedSet.Count), GUI=$($guiDefinedSet.Count)), Duplicates=$($dupFunctions.Count), UndefinedCalls=$($undefinedCalls.Count), AsyncWorkBlocks=$($workBlockAsts.Count), GuiInWork=$($guiCallsInWork.Count), ScriptVarsInWork=$($scriptVarsInWork.Count), CoreToGui=$($coreCallsGui.Count), BarePreviewBlocks=$($previewAssigns.Count), BarePreviewCalls=$($barePreviewCalls.Count)")
     $c6Lines.Add("ChildRunspaceTest: $runspaceMsg")
     if ($dupFunctions.Count -gt 0)     { $c6Lines.Add("Duplicates: " + ($dupFunctions -join ', ')) }
     if ($undefinedCalls.Count -gt 0)   { $c6Lines.Add("Undefined: " + ($undefinedCalls -join ', ')) }
     if ($guiCallsInWork.Count -gt 0)   { $c6Lines.Add("GuiInWork: " + ($guiCallsInWork -join ', ')) }
+    if ($scriptVarsInWork.Count -gt 0) { $c6Lines.Add("ScriptVarsInWork: " + ($scriptVarsInWork -join ', ')) }
+    if ($coreCallsGui.Count -gt 0)     { $c6Lines.Add("CoreToGui: " + ($coreCallsGui -join ', ')) }
     if ($barePreviewCalls.Count -gt 0) { $c6Lines.Add("BarePreviewCalls: " + ($barePreviewCalls -join ', ')) }
     Add-CheckResult -Id 'CHK-6' -Title '함수 교차참조 · 비동기 $work 코어 전용 · 자식 Runspace 실주입' -Passed $c6Pass -Detail ($c6Lines -join "`r`n")
 }

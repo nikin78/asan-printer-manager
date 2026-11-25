@@ -254,12 +254,15 @@ try {
     (Get-Item -LiteralPath `$expJson).LastWriteTime    = (Get-Date).AddDays(-6)
     (Get-Item -LiteralPath `$expiredDir).LastWriteTime = (Get-Date).AddDays(-6)
 
-    `$repRes = Send-AsanBugReport -Category '테스트' -UserDescription "pw=`$sampleDefPw" -TargetPrinter "약제팀 `$sampleDefPw" -UiLogText "log `$sampleDefPw" -PrtBakDir `$fakePrtBak -PcIp '172.25.1.1'
+    `$repRes = Send-AsanBugReport -Category '테스트' -UserDescription "pw=`$sampleDefPw sp=My&Sec'ret!" -TargetPrinter "약제팀 `$sampleDefPw" -UiLogText "log `$sampleDefPw" -PrtBakDir `$fakePrtBak -PcIp '172.25.1.1' -ExtraSecrets @("My&Sec'ret!")
     if (-not `$repRes.Success -or (-not `$repRes.SavedToServer) -or (-not (Test-Path -LiteralPath (Join-Path `$repRes.SavedPath 'BugReport_Summary.txt')))) {
         throw '버그 리포트 저장 검증 실패'
     }
     `$repSumTxt = [IO.File]::ReadAllText((Join-Path `$repRes.SavedPath 'BugReport_Summary.txt'), [Text.Encoding]::UTF8)
-    if (`$repSumTxt.Contains(`$sampleDefPw)) { throw '저장된 버그 리포트에 비밀번호 평문 잔존!' }
+    `$repJsnTxt = [IO.File]::ReadAllText((Join-Path `$repRes.SavedPath 'BugReport_Detail.json'), [Text.Encoding]::UTF8)
+    if (`$repSumTxt.Contains(`$sampleDefPw) -or `$repJsnTxt.Contains(`$sampleDefPw) -or `$repJsnTxt -match 'My\\u0026Sec|My&Sec') {
+        throw '저장된 버그 리포트(Summary/JSON)에 비밀번호 평문 또는 JSON 이스케이프 평문 잔존!'
+    }
 } finally {
     `$global:AsanCtx.DefaultPasswords = `$origDefPws
 }
@@ -276,22 +279,40 @@ if (`$removedOld.Count -ne 1 -or `$removedOld[0] -ne 'OLDPC(172.25.1.2)' -or (-n
     throw ("5일 경과 정리 보호 실패: removed=" + (`$removedOld -join ','))
 }
 
-# 2-C. 다국어 INF [Strings.xxxx] 영문/한글 우선순위 + 비모델 섹션 제외 검증
+# 2-C. 다국어 INF [Strings.xxxx] 영문/한글 우선순위 + 인라인 주석 + 따옴표 "%Token%" + 비모델 섹션 제외 검증
 `$multiInf = @(
     '[Version]',
     'Signature="`$Windows NT`$"',
     '[SourceDisksNames]',
     '1 = "Driver Install Disk"',
-    '[Kyocera.NTamd64]',
+    '[Kyocera.NTamd64] ; model section',
     '%MODEL_PA5000% = PA5000_INST, USBPRINT\Kyocera',
-    '[Strings]',
+    '"%MODEL_QUOTED%" = PA5000_INST2, USBPRINT\Kyocera2',
+    '[Strings] ; default english',
     'MODEL_PA5000 = "Kyocera ECOSYS PA5000x KX"',
+    'MODEL_QUOTED = "Sindoh D410 Series PCL6"',
     '[Strings.0804]',
     'MODEL_PA5000 = "京瓷 ECOSYS PA5000x KX"'
 ) -join [Environment]::NewLine
 `$parsedInfNames = @(Get-InfDisplayNames -InfText `$multiInf)
-if (`$parsedInfNames -notcontains 'Kyocera ECOSYS PA5000x KX' -or `$parsedInfNames -contains 'Driver Install Disk') {
-    throw ("다국어 INF 파싱 오류: " + (`$parsedInfNames -join ' | '))
+if (`$parsedInfNames -notcontains 'Kyocera ECOSYS PA5000x KX' -or `$parsedInfNames -notcontains 'Sindoh D410 Series PCL6' -or `$parsedInfNames -contains 'Driver Install Disk') {
+    throw ("다국어/인라인주석/따옴표토큰 INF 파싱 오류: " + (`$parsedInfNames -join ' | '))
+}
+
+# 2-C2. 신도리코!=RICOH, Zebra 203dpi 이기종(ZD410!=ZT411) 차단, 한글 병동명(52병동) 비줄기 검증
+`$sindohVends = @(Get-DetectedVendors -Text '신도리코 D410')
+if ((`$sindohVends -contains 'RICOH') -or (`$sindohVends -notcontains 'SINDOH')) {
+    throw ("신도리코 벤더 오분류: " + (`$sindohVends -join ','))
+}
+`$ztTokens = @(Get-SignificantTokens 'ZDesigner ZT411-203dpi ZPL')
+`$ztStems  = @(Get-ModelStems -Tokens `$ztTokens)
+`$zdScore  = Score-DriverDisplayName -DisplayName 'ZDesigner ZD410-203dpi ZPL' -SearchTarget 'ZDesigner ZT411-203dpi ZPL' -WantedNorm (Normalize-Text 'ZDesigner ZT411-203dpi ZPL') -WantedVendor 'ZEBRA' -Tokens `$ztTokens -ModelStems `$ztStems -WantedHasDigits (`$ztStems.Count -gt 0) -PreferPcl6 `$false -AllowVendorUniversal `$false
+if (`$zdScore -ge 160) {
+    throw "Zebra 203dpi 이기종 오매칭(ZT411->ZD410 Score=`$zdScore)"
+}
+`$korWardStems = @(Get-ModelStems -Tokens (Get-SignificantTokens '52병동 프린터'))
+if (`$korWardStems.Count -ne 0) {
+    throw ("한글 병동명 모델 줄기 오인: " + (`$korWardStems -join ','))
 }
 
 # 2-D. @(`$null) 고스트 행 차단 + '_' 접두어 호스트명 방어 + ZT411 PrnInst 제외 검증
@@ -555,11 +576,14 @@ Sync-AllUiButtonStates
                     Test-ContainerLayout -Container `$script:Ui.PnlHeader -ContextLabel "`$(`$szPair.Label)/Header"
                     Test-ContainerLayout -Container `$script:Ui.PnlFooter -ContextLabel "`$(`$szPair.Label)/Footer"
 
-                    # WPP 배너 임시 표시 상태에서 레이아웃 검사 후 원복
+                    # WPP 배너 임시 표시 상태에서 배너 + 탭 2 도우미 동시 표시 레이아웃 검사 후 원복
                     `$origWppVis = `$script:Ui.PnlWppBanner.Visible
                     `$script:Ui.PnlWppBanner.Visible = `$true
                     [System.Windows.Forms.Application]::DoEvents()
                     Test-ContainerLayout -Container `$script:Ui.PnlWppBanner -ContextLabel "`$(`$szPair.Label)/WppBanner"
+                    `$script:Ui.TabMain.SelectedIndex = 1
+                    [System.Windows.Forms.Application]::DoEvents()
+                    Test-ContainerLayout -Container `$script:Ui.TabMain.TabPages[1] -ContextLabel "`$(`$szPair.Label)/Tab2WithWpp"
                     `$script:Ui.PnlWppBanner.Visible = `$origWppVis
 
                     for (`$ti = 0; `$ti -lt 4; `$ti++) {
