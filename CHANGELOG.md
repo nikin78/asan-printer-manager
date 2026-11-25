@@ -16,14 +16,17 @@
 * **`%TEMP%` 스테이징 `.bat` 자동 삭제 및 인스턴스 분리:** `00_bootstrap.bat`이 인스턴스별 임시 스테이징 파일(`AsanMgr_Staged_*.bat`)과 로그(`AsanPrinterMgr_Startup_*.log`)를 사용하고 종료 시 자가 삭제하여 `%TEMP%` 평문 잔존 및 중복 실행 오류를 동시 해소.
 * **버그 리포트 민감정보 마스킹 강화:** `HostCredCache` 세션 암호 포함 마스킹, 3글자 미만 문자열 오탐 방지(IP/JSON 훼손 차단), `TargetPrinter`/`LoadedBackupSource`/최종 텍스트·JSON 전면 마스킹 및 서버 전송 실패 사유(`FallbackNote`) 표시.
 
-### 추가 · 개선 (Added / Changed — 약제팀 `ZT411` PDF 공식 규격 반영)
-* **약제팀 `Zebra ZT411-203dpi ZPL` 공식 설치·용지 설정(`.drs`) 규격 완전 반영:**
-  * `C:\ZD5-1-17-7412\ZBRN\ZBRN.inf` 자동 INF 탐색 루트 추가 및 `Get-DetectedVendors`/`Export-PreciseThirdPartyDrivers`에 `ZT410`/`ZT411`/`ZBRN` 추가.
-  * `Find-LocalSpecialInstaller`에 `ZEBRA_ZT411` 전용 탐색(로컬 및 사내 `\\172.23.2.130\driver\...\ZT411*`) 추가하여 `zd51177412-certified.exe`, `ZBRN.inf`, **`ZebraDriver 설정.drs`** 자동 감지.
-  * 특수 프린터 도우미 체크리스트에 공식 절차 반영(셋업 마법사 **[나가기]** 종료 주의, USB/TCP·IP `Generic Network Card` 설치 경로, 용지값 수동 입력 금지 및 **`ZebraDriver 설정.drs`** 가져오기 안내).
-* **자동 검증 스위트 고도화:** `verify_static.ps1`에 `src/`·`scripts/` 인코딩/CRLF 전수 검사, `src/`↔`dist/` SHA-256 동기화 검사, 안 A 비밀 분리 검증 추가; `smoke_test_local.ps1`에 다국어 INF·5일 정리 NTFS 타임스탬프·TM-T88 포트 분기·ZT411 PDF 규격·`@($null)` 고스트 행·동적 마스킹 단위테스트 확장.
+### 추가 · 개선 (Added / Changed — 약제팀 `ZT411` 골든 이미지 로컬 정책 반영)
+* **약제팀 `Zebra ZT411-203dpi ZPL` 기존 PC 복원 최우선 + 골든 이미지 로컬 폴백 전환:**
+  * 접근 계정 미확인 원격 서버(`\\172.23.2.130\driver`) 탐색을 완전 제거하고, 모든 골든 이미지 공통 로컬 경로(`C:\Users\admin\드라이버(win10_x64)\AMIS 3.0 장비\ZT411 (약국용 신형라벨프린터)`)의 사전 압축 해제 드라이버(`ZD8-6-5-26125\ZDesigner.inf`, `zd86526125-certified.exe`)와 용지별 설정 파일(`.drx`/`.drs`)을 자동 탐색하도록 전환(`ZD410`/`ZD411`·`PrnInst.exe` 엄격 제외).
+  * 복원 시 **기존 PC 추출 드라이버(`PrintBrm`/`ExportedDrivers`) + `.dat`/`.reg` 설정을 최우선** 적용(`-PreExistingDrivers`/`-PreferExportedFirst`)하고, 부득이하게 골든 이미지 로컬 드라이버로 대체 복원되었거나 백업 설정이 미확인된 경우 요약 팝업·배너·도우미에서 **인쇄 기본 설정 마무리 필요** 경고를 자동 표시.
+* **자동 검증 스위트 고도화:** `verify_static.ps1`에 `src/`·`scripts/` 인코딩/CRLF 전수 검사, `src/`↔`dist/` SHA-256 동기화, 안 A 비밀 분리, AST 기반 `Show-AsanMessageBox` 외부 직접 `MessageBox::Show` 0건 검증, 탭 4 베어 Runspace(`$previewScript`) 사용자 함수 호출 금지 검사 추가; `smoke_test_local.ps1`에 다국어 INF·`Provider=%Token%` 간접 참조 해석·5일 정리 NTFS 타임스탬프·TM-T88 포트 분기·ZT411 골든 이미지 정책·`@($null)` 고스트 행·플레이스홀더 호환 동적 마스킹 단위테스트 확장.
 
-### 버그 수정 (Fixed — P0/P1 전면 패치)
+### 버그 수정 (Fixed — P0/P1 전면 패치 및 재귀 코드 리뷰 Round 1~3 완료)
+* **재귀 코드 리뷰 Round 1~3 전량 반영 (`[FIX-NOW]` 0건):**
+  * `00_bootstrap.bat`: `"%%SELF%%"`·`"%CMD_EXE%"` 인용 정규화, `ASAN_PARENT_CLEANUP` 이중 삭제 방지, 오류 시 `pause` 후 자가 삭제.
+  * `01_core.ps1`: `Connect-SharedHostSmart` 중복 가드 제거, `Invoke-PrinterBackupEngine` 원자적 교체 실패 시 `_OLD_` 기존 백업 유실 차단(target 부재 시 롤백 1회 시도 + `$swapped -and (Test-Path target)`일 때만 `_OLD_` 삭제 + 최초 백업 `robocopy /MIR` 폴백), `Resolve-WsdPrinterInfo` 전역 3단계(UUID→완전일치→부분일치) 및 `UMB\UMB` 누락 수정, `Build-InfIndexCache` `Provider=%Token%` 간접 참조 해석, Case A `$isSharedConnection` 판정 상단 이동 및 MS 범용 드라이버 교체 가드 추가.
+  * GUI(`02`~`04`): `Show-AsanMessageBox` 전면 전환, `PollTimer` 외곽 `catch` UI 영구 잠금 해소 및 `FormClosing` 확인 팝업 중 재진입 차단, 탭 2 `BtnSpecInstall`/`BtnSpecProps` `-RegisterBusy` 및 중앙 상태 동기화, 탭 4 비동기 미리보기 `Ok` 캐싱 가드·예외 UI 복구·`RetiredPreviews` 비차단 `Dispose`·검색 150ms 디바운스·탭 이탈/`FormClosing` 선중단.
 * **USB 바코드 자동 재인식 오탐 및 `SEWOO_TE201` 격리 우회 수정:** 정상 `USB 인쇄 지원`(`PNPClass=USB`) 및 범용 `VID_0525` 오제거를 차단하고 실제 오류/미지정 상태의 검증된 바코드 VID(`0A5F`, `1504`)만 표적 재인식; 백업 시 `SEWOO_TE201` INF 추출을 제외하고 복원 5단계 USB 선등록도 해당 제조사 INF만 선별 적용; 신규 포트 생성/오류 해제로 성공 판정 정확화.
 * **복원 4·5단계 안정화:** 선설치된 Win 11 `SEWOO_TE201` 보호(`$wasPreExisting`), USB 포트 미할당 시 타 프린터 포트 중복 매핑 금지 및 Case A 실패 기록(`[실패 항목만 재시도]` 정상 활성화), 오프라인 공유 호스트 거짓 성공 차단, Spooler 중지/재시작 `try/finally` 및 상태 대기(`Stop-SpoolerSafe`), INF 인덱스 `DriverStore`/`LocalPrt` 지연(Lazy) 구축.
 * **네트워크 외부망 오판 수정:** `Test-AsanNetworkAndServer`가 일반 게이트웨이 Ping만으로 `IntranetOnly`를 반환하던 버그 수정(사내 DNS `10.71.1.5` 응답 또는 NIC DNS 설정 검증).

@@ -240,13 +240,15 @@ function Sync-AllUiButtonStates {
         foreach ($r in $script:Tab2Ui.DgvRestore.Rows) {
             if ($r.Cells[0].Value -eq $true) { $selCnt++ }
         }
-        $hasSip2 = ($null -ne $script:Tab2Ui.CurrentSpecInfo -and [bool]$script:Tab2Ui.CurrentSpecInfo.Info.HasStep2)
-        $hasSpec = ($null -ne $script:Tab2Ui.CurrentSpecInfo)
+        $hasSip2    = ($null -ne $script:Tab2Ui.CurrentSpecInfo -and [bool]$script:Tab2Ui.CurrentSpecInfo.Info.HasStep2)
+        $hasSpec    = ($null -ne $script:Tab2Ui.CurrentSpecInfo)
+        $hasSpecExe = ($hasSpec -and $script:Tab2Ui.CurrentSpecInfo.Info.Installer -and $script:Tab2Ui.CurrentSpecInfo.Info.Installer.Found -and -not [string]::IsNullOrWhiteSpace([string]$script:Tab2Ui.CurrentSpecInfo.Info.Installer.ExePath))
 
         if ($script:Tab2Ui.BtnLoadServer)   { $script:Tab2Ui.BtnLoadServer.Enabled   = ((-not $busy) -and $hasServer) }
         if ($script:Tab2Ui.BtnRunDeferred)  { $script:Tab2Ui.BtnRunDeferred.Enabled  = ((-not $busy) -and $hasLoaded) }
         if ($script:Tab2Ui.BtnStartRestore) { $script:Tab2Ui.BtnStartRestore.Enabled = ((-not $busy) -and $hasLoaded -and ($selCnt -gt 0)) }
         if ($script:Tab2Ui.BtnRetryFailed)  { $script:Tab2Ui.BtnRetryFailed.Enabled  = ((-not $busy) -and $hasLoaded -and $hasFail) }
+        if ($script:Tab2Ui.BtnSpecInstall)  { $script:Tab2Ui.BtnSpecInstall.Enabled  = ((-not $busy) -and $hasSpecExe) }
         if ($script:Tab2Ui.BtnSpecStep2)    { $script:Tab2Ui.BtnSpecStep2.Enabled    = ((-not $busy) -and $hasSip2) }
         if ($script:Tab2Ui.BtnSpecProps)    { $script:Tab2Ui.BtnSpecProps.Enabled    = ((-not $busy) -and $hasSpec) }
     }
@@ -1185,8 +1187,11 @@ function Initialize-MainGuiShell {
             }
         }
         catch {
-            $script:AsyncState.PollTimer.Stop()
+            if ($script:AsyncState.PollTimer) { try { $script:AsyncState.PollTimer.Stop() } catch {} }
             Add-UiLog -Message "타이머 처리 오류: $($_.Exception.Message)" -Level 'ERROR'
+            try { Stop-ActiveAsyncRunspace -ForceAbort } catch {}
+            try { Set-UiBusyState -IsBusy $false -StatusText '타이머 오류로 작업이 중단되었습니다' } catch {}
+            try { Sync-AllUiButtonStates } catch {}
         }
     })
     $script:AsyncState.PollTimer = $timer
@@ -1210,13 +1215,34 @@ function Initialize-MainGuiShell {
 
     $form.Add_FormClosing({
         param($sender, $e)
-        $wasBusy = [bool]$script:AsyncState.IsBusy
+        $wasBusy    = [bool]$script:AsyncState.IsBusy
+        $pausedPoll = $false
         if ($wasBusy) {
+            # 종료 확인 팝업 표시 중 PollTimer 재진입(완료 콜백 중복/상태 변이) 차단
+            if ($script:AsyncState.PollTimer -and $script:AsyncState.PollTimer.Enabled) {
+                try { $script:AsyncState.PollTimer.Stop(); $pausedPoll = $true } catch {}
+            }
             $ans = Show-AsanMessageBox -Text "현재 '$($script:AsyncState.TaskName)' 작업이 진행 중입니다.`r`n강제 종료하면 프린터 설정이 불완전할 수 있습니다. 정말 종료하시겠습니까?" -Caption '작업 중 종료 확인' -Buttons 'YesNo' -Icon 'Warning'
             if ($ans -ne [System.Windows.Forms.DialogResult]::Yes) {
                 $e.Cancel = $true
+                if ($pausedPoll -and $script:AsyncState.PollTimer -and $script:AsyncState.AsyncResult) {
+                    try { $script:AsyncState.PollTimer.Start() } catch {}
+                }
                 return
             }
+        }
+        # Disconnect-AllHostSessions 이전에 탭 4 비동기 미리보기 Runspace/타이머 선중단·해제
+        try { Stop-Tab4PreviewAsync } catch {}
+        if ($script:Tab4Ui) {
+            if ($script:Tab4Ui.PreviewDebounceTimer) {
+                try { $script:Tab4Ui.PreviewDebounceTimer.Stop(); $script:Tab4Ui.PreviewDebounceTimer.Dispose() } catch {}
+                $script:Tab4Ui.PreviewDebounceTimer = $null
+            }
+            if ($script:Tab4Ui.PreviewTimer) {
+                try { $script:Tab4Ui.PreviewTimer.Stop(); $script:Tab4Ui.PreviewTimer.Dispose() } catch {}
+                $script:Tab4Ui.PreviewTimer = $null
+            }
+            try { Clear-RetiredTab4Previews } catch {}
         }
         Stop-ActiveAsyncRunspace -ForceAbort:$wasBusy
         if ($script:AsyncState.PollTimer) {

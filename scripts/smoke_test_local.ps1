@@ -207,50 +207,62 @@ if (`$pT88Usb.NoDriverBackup) { throw 'EPSON TM-T88VI USB 포트가 무드라이
 if (`$pStd.IsSpecial) { throw '일반 프린터 오분류' }
 if (-not (Test-IsVirtualPrinter -PrinterName 'Microsoft Print to PDF' -PortName 'PORTPROMPT:')) { throw '가상 프린터 필터 오류' }
 
-# 2-A. ZT411 도우미 체크리스트 PDF 규격 검증 (ZebraDriver 설정.drs / ZBRN.inf / 나가기)
+# 2-A. ZT411 도우미 체크리스트 골든 이미지 로컬 정책 검증 (원격 172.23.2.130 미참조 / ZDesigner.inf / 나가기 / .drx)
 `$ztRow  = [pscustomobject]@{ SpecialType = 'ZEBRA_ZT411'; PortKind = 'TCPIP'; PortName = '172.23.38.215'; HostAddress = '172.23.38.215'; PrinterName = '약제팀_ZT411' }
 `$ztInfo = Get-SpecialPrinterAssistantInfo -SpecialRow `$ztRow
-if (`$ztInfo.Checklist -notmatch 'ZebraDriver 설정\.drs' -or `$ztInfo.Checklist -notmatch 'ZBRN\.inf' -or `$ztInfo.Checklist -notmatch '나가기') {
-    throw 'ZT411 PDF 공식 안내 문구 누락'
+if (`$ztInfo.Checklist -match '172\.23\.2\.130') {
+    throw 'ZT411 체크리스트에 금지된 원격 드라이버 서버(172.23.2.130) 잔존'
+}
+if (`$ztInfo.Checklist -notmatch 'ZT411 \(약국용 신형라벨프린터\)' -or `$ztInfo.Checklist -notmatch '(ZDesigner|ZBRN)\.inf' -or `$ztInfo.Checklist -notmatch '나가기' -or `$ztInfo.Checklist -notmatch '인쇄 기본 설정') {
+    throw 'ZT411 골든 이미지 로컬 정책 안내 문구 누락'
 }
 
 # 2-B. 버그 리포트 민감정보 마스킹(동적 공용암호 + HostCredCache + 2글자 미만 미훼손) + 5일 정리 NTFS 타임스탬프 검증
 `$cfgPws = @(Get-ConfiguredDefaultPasswords)
+`$origDefPws = `$global:AsanCtx.DefaultPasswords
 `$sampleDefPw = 'DummySecretPw99!'
-if (`$cfgPws.Count -gt 0) { `$sampleDefPw = `$cfgPws[0] }
-`$global:AsanCtx.HostCredCache['10.0.0.99'] = [pscustomobject]@{ User = 'admin'; Pass = 'CachedHostPw77!' }
-`$masked = Protect-ReportSensitiveText -Text "pw=`$sampleDefPw cache=CachedHostPw77! custom=MySecret! ip=172.25.1.1" -ExtraSecrets @('MySecret!', '1')
-`$global:AsanCtx.HostCredCache.Remove('10.0.0.99')
-if (`$masked.Contains(`$sampleDefPw) -or `$masked -match 'CachedHostPw77|MySecret' -or `$masked -notmatch '172\.25\.1\.1') {
-    throw "민감정보 마스킹 검증 실패: `$masked"
+if (`$cfgPws.Count -gt 0) {
+    `$sampleDefPw = `$cfgPws[0]
+} else {
+    `$global:AsanCtx.DefaultPasswords = @(`$sampleDefPw)
 }
+try {
+    `$global:AsanCtx.HostCredCache['10.0.0.99'] = [pscustomobject]@{ User = 'admin'; Pass = 'CachedHostPw77!' }
+    `$masked = Protect-ReportSensitiveText -Text "pw=`$sampleDefPw cache=CachedHostPw77! custom=MySecret! ip=172.25.1.1" -ExtraSecrets @('MySecret!', '1')
+    `$global:AsanCtx.HostCredCache.Remove('10.0.0.99')
+    if (`$masked.Contains(`$sampleDefPw) -or `$masked -match 'CachedHostPw77|MySecret' -or `$masked -notmatch '172\.25\.1\.1') {
+        throw "민감정보 마스킹 검증 실패: `$masked"
+    }
 
-`$fakePrtBak = Join-Path '$($workRoot -replace "'", "''")' 'FakePrtBak'
-New-Item -ItemType Directory -Path `$fakePrtBak -Force | Out-Null
-New-Item -ItemType Directory -Path (Join-Path `$fakePrtBak '_REPORTS') -Force | Out-Null
-New-Item -ItemType Directory -Path (Join-Path `$fakePrtBak '_DB') -Force | Out-Null
+    `$fakePrtBak = Join-Path '$($workRoot -replace "'", "''")' 'FakePrtBak'
+    New-Item -ItemType Directory -Path `$fakePrtBak -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path `$fakePrtBak '_REPORTS') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path `$fakePrtBak '_DB') -Force | Out-Null
 
-# 폴더 타임스탬프는 7일 전이지만 PrinterBackup.json은 오늘 갱신된 재백업(삭제되면 안 됨!)
-`$refreshedDir = Join-Path `$fakePrtBak 'TESTPC(172.25.1.1)'
-New-Item -ItemType Directory -Path `$refreshedDir -Force | Out-Null
-`$refJson = Join-Path `$refreshedDir 'PrinterBackup.json'
-[IO.File]::WriteAllText(`$refJson, '{}', (New-Object System.Text.UTF8Encoding(`$true)))
-(Get-Item -LiteralPath `$refreshedDir).LastWriteTime = (Get-Date).AddDays(-7)
+    # 폴더 타임스탬프는 7일 전이지만 PrinterBackup.json은 오늘 갱신된 재백업(삭제되면 안 됨!)
+    `$refreshedDir = Join-Path `$fakePrtBak 'TESTPC(172.25.1.1)'
+    New-Item -ItemType Directory -Path `$refreshedDir -Force | Out-Null
+    `$refJson = Join-Path `$refreshedDir 'PrinterBackup.json'
+    [IO.File]::WriteAllText(`$refJson, '{}', (New-Object System.Text.UTF8Encoding(`$true)))
+    (Get-Item -LiteralPath `$refreshedDir).LastWriteTime = (Get-Date).AddDays(-7)
 
-# 폴더와 json 모두 6일 전인 실제 만료 백업(삭제되어야 함!)
-`$expiredDir = Join-Path `$fakePrtBak 'OLDPC(172.25.1.2)'
-New-Item -ItemType Directory -Path `$expiredDir -Force | Out-Null
-`$expJson = Join-Path `$expiredDir 'PrinterBackup.json'
-[IO.File]::WriteAllText(`$expJson, '{}', (New-Object System.Text.UTF8Encoding(`$true)))
-(Get-Item -LiteralPath `$expJson).LastWriteTime    = (Get-Date).AddDays(-6)
-(Get-Item -LiteralPath `$expiredDir).LastWriteTime = (Get-Date).AddDays(-6)
+    # 폴더와 json 모두 6일 전인 실제 만료 백업(삭제되어야 함!)
+    `$expiredDir = Join-Path `$fakePrtBak 'OLDPC(172.25.1.2)'
+    New-Item -ItemType Directory -Path `$expiredDir -Force | Out-Null
+    `$expJson = Join-Path `$expiredDir 'PrinterBackup.json'
+    [IO.File]::WriteAllText(`$expJson, '{}', (New-Object System.Text.UTF8Encoding(`$true)))
+    (Get-Item -LiteralPath `$expJson).LastWriteTime    = (Get-Date).AddDays(-6)
+    (Get-Item -LiteralPath `$expiredDir).LastWriteTime = (Get-Date).AddDays(-6)
 
-`$repRes = Send-AsanBugReport -Category '테스트' -UserDescription "pw=`$sampleDefPw" -TargetPrinter "약제팀 `$sampleDefPw" -UiLogText "log `$sampleDefPw" -PrtBakDir `$fakePrtBak -PcIp '172.25.1.1'
-if (-not `$repRes.Success -or (-not `$repRes.SavedToServer) -or (-not (Test-Path -LiteralPath (Join-Path `$repRes.SavedPath 'BugReport_Summary.txt')))) {
-    throw '버그 리포트 저장 검증 실패'
+    `$repRes = Send-AsanBugReport -Category '테스트' -UserDescription "pw=`$sampleDefPw" -TargetPrinter "약제팀 `$sampleDefPw" -UiLogText "log `$sampleDefPw" -PrtBakDir `$fakePrtBak -PcIp '172.25.1.1'
+    if (-not `$repRes.Success -or (-not `$repRes.SavedToServer) -or (-not (Test-Path -LiteralPath (Join-Path `$repRes.SavedPath 'BugReport_Summary.txt')))) {
+        throw '버그 리포트 저장 검증 실패'
+    }
+    `$repSumTxt = [IO.File]::ReadAllText((Join-Path `$repRes.SavedPath 'BugReport_Summary.txt'), [Text.Encoding]::UTF8)
+    if (`$repSumTxt.Contains(`$sampleDefPw)) { throw '저장된 버그 리포트에 비밀번호 평문 잔존!' }
+} finally {
+    `$global:AsanCtx.DefaultPasswords = `$origDefPws
 }
-`$repSumTxt = [IO.File]::ReadAllText((Join-Path `$repRes.SavedPath 'BugReport_Summary.txt'), [Text.Encoding]::UTF8)
-if (`$cfgPws.Count -gt 0 -and `$repSumTxt.Contains(`$sampleDefPw)) { throw '저장된 버그 리포트에 비밀번호 평문 잔존!' }
 
 `$srvEntries = @(Get-ServerBackupEntries -PrtBakDir `$fakePrtBak -PcIp '172.25.1.1')
 if (`$srvEntries.Count -ne 2) { throw ("_REPORTS/_DB 시스템 폴더 격리 실패: count=" + `$srvEntries.Count) }
@@ -296,6 +308,28 @@ try {
 `$ztLocalInst = Find-LocalSpecialInstaller -SpecialType 'ZEBRA_ZT411' -SkipRemoteProbe
 if (`$ztLocalInst.ExePath -and `$ztLocalInst.ExePath -match '(?i)PrnInst') {
     throw "ZT411 설치기에서 금지된 PrnInst.exe 오인식: `$(`$ztLocalInst.ExePath)"
+}
+foreach (`$ztField in @(`$ztLocalInst.Folder, `$ztLocalInst.ExePath, `$ztLocalInst.InfPath, `$ztLocalInst.DrxPath, `$ztLocalInst.DrsPath)) {
+    if (`$ztField -and `$ztField -match '(?i)ZD410|ZD411|172\.23\.2\.130') {
+        throw "ZT411 탐색 결과 오인식(ZD410/원격서버): `$ztField"
+    }
+}
+
+# 2-D2. Build-InfIndexCache Provider=%Token% 간접 참조 해석 검증 (ZDesigner.inf 패턴)
+`$tmpInfPath = Join-Path '$($workRoot -replace "'", "''")' 'fake_indirect.inf'
+`$tmpInfBody = @(
+    '[Version]',
+    'Signature="`$Windows NT`$"',
+    'Provider=%EP% ; indirect provider token',
+    '[Models.NTamd64]',
+    '"Generic Label 203dpi" = INST_SEC, USBPRINT\LABEL203',
+    '[Strings]',
+    'EP="Zebra Technologies Corporation"'
+) -join "`r`n"
+[IO.File]::WriteAllText(`$tmpInfPath, `$tmpInfBody, (New-Object System.Text.UTF8Encoding(`$false)))
+`$infIdxRes = @(Build-InfIndexCache -InfFiles @((Get-Item -LiteralPath `$tmpInfPath)))
+if (`$infIdxRes.Count -ne 1 -or (`$infIdxRes[0].Vendors -notcontains 'ZEBRA')) {
+    throw "Provider=%Token% 간접 참조 벤더 해석 실패: `$(`$infIdxRes[0].Vendors -join ',')"
 }
 
 # 2-E. USB 바코드 장치 판별 읽기 전용 단위 검증 (100% 비파괴 — pnputil 미호출)
@@ -414,6 +448,9 @@ Sync-AllUiButtonStates
 
 `$script:Ui.TabMain.Add_SelectedIndexChanged({
     `$idx = `$script:Ui.TabMain.SelectedIndex
+    if (`$idx -ne 3) {
+        Stop-Tab4PreviewAsync
+    }
     if (`$idx -eq 2 -and (-not `$script:AsyncState.IsBusy)) {
         if (-not `$script:Tab3Ui.HasLoadedOnce -or `$script:Tab3Ui.NeedsRefresh) {
             Invoke-Tab3RefreshAsync

@@ -349,10 +349,29 @@ try {
         $ruleViolations.Add('Rule16 위반: Attributes [uint32] 비트 마스킹(0xFFFFF7FF) 누락')
     }
 
-    # 4-9. GUI 다이얼로그 오너 누락 방지: Show-AsanMessageBox 외부의 직접 MessageBox::Show 호출 금지
-    $directMsgHits = @([regex]::Matches($payloadText, '\[System\.Windows\.Forms\.MessageBox\]::Show\('))
-    if ($directMsgHits.Count -gt 2) {
-        $ruleViolations.Add("UI 규칙 위반: Show-AsanMessageBox 외부에서 직접 MessageBox::Show 호출 감지 (총 $($directMsgHits.Count)건, 허용 2건)")
+    # 4-9. GUI 다이얼로그 오너 누락 방지 (AST 기반): Show-AsanMessageBox 외부 직접 MessageBox::Show 호출 0건 검증
+    $showMsgFnAst = $ast.Find({
+        param($n)
+        $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $n.Name -ieq 'Show-AsanMessageBox'
+    }, $true)
+    $msgBoxCallAsts = $ast.FindAll({
+        param($n)
+        $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+        $n.Static -and
+        $n.Member.Extent.Text -ieq 'Show' -and
+        $n.Expression.Extent.Text -match '(?i)^\[(System\.)?Windows\.Forms\.MessageBox\]$'
+    }, $true)
+    if ($null -eq $showMsgFnAst) {
+        $ruleViolations.Add('UI 규칙 위반: Show-AsanMessageBox 공용 헬퍼 함수가 누락되었습니다.')
+    } else {
+        $mbFnStart = $showMsgFnAst.Extent.StartOffset
+        $mbFnEnd   = $showMsgFnAst.Extent.EndOffset
+        foreach ($mbc in $msgBoxCallAsts) {
+            if ($mbc.Extent.StartOffset -lt $mbFnStart -or $mbc.Extent.EndOffset -gt $mbFnEnd) {
+                $ruleViolations.Add("UI 규칙 위반: Show-AsanMessageBox 외부에서 직접 MessageBox::Show 호출 감지 (Line $($mbc.Extent.StartLineNumber))")
+            }
+        }
     }
 
     $c4Pass = ($ruleViolations.Count -eq 0)
@@ -493,6 +512,31 @@ Write-Output ("CS_COMPILE_OK|Methods=" + `$methods.Count + "|Verified=" + `$expe
         }
     }
 
+    # 탭 4 경량 베어 Runspace($previewScript) 내부에서 코어/GUI 사용자 정의 함수 호출 금지 검사
+    $barePreviewCalls = [System.Collections.Generic.List[string]]::new()
+    $previewAssigns = $ast.FindAll({
+        param($n)
+        $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Left.Extent.Text -eq '$previewScript' -and
+        $n.Right -is [System.Management.Automation.Language.CommandExpressionAst] -and
+        $n.Right.Expression -is [System.Management.Automation.Language.ScriptBlockExpressionAst]
+    }, $true)
+    foreach ($pa in $previewAssigns) {
+        $psbAst = $pa.Right.Expression.ScriptBlock
+        $pCmds  = $psbAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)
+        foreach ($pc in $pCmds) {
+            $pcn = $pc.GetCommandName()
+            if ([string]::IsNullOrWhiteSpace($pcn)) { continue }
+            $hitDefined = $false
+            foreach ($dk in $allDefinedSet.Keys) {
+                if ($dk -ieq $pcn) { $hitDefined = $true; break }
+            }
+            if ($hitDefined) {
+                $barePreviewCalls.Add("'$pcn' called inside bare `$previewScript (Line $($pc.Extent.StartLineNumber))")
+            }
+        }
+    }
+
     # 클린룸 PS 5.1 프로세스에서 코어 블록(~$script:CoreFunctionNames 끝)만 로드 후 실제 자식 Runspace 주입 검증
     $snapEndMatch = [regex]::Match($payloadText.Substring($snapOffset), '\r?\n\)\r?\n')
     $runspaceOk = $false
@@ -580,13 +624,14 @@ finally {
         $runspaceMsg = '$script:CoreFunctionNames 닫는 괄호를 찾지 못했습니다.'
     }
 
-    $c6Pass = ($dupFunctions.Count -eq 0 -and $undefinedCalls.Count -eq 0 -and $guiCallsInWork.Count -eq 0 -and $runspaceOk)
+    $c6Pass = ($dupFunctions.Count -eq 0 -and $undefinedCalls.Count -eq 0 -and $guiCallsInWork.Count -eq 0 -and $barePreviewCalls.Count -eq 0 -and $runspaceOk)
     $c6Lines = [System.Collections.Generic.List[string]]::new()
-    $c6Lines.Add("DefinedFunctions=$($allDefinedSet.Count) (Core=$($coreDefinedSet.Count), GUI=$($guiDefinedSet.Count)), Duplicates=$($dupFunctions.Count), UndefinedCalls=$($undefinedCalls.Count), AsyncWorkBlocks=$($workAssigns.Count), GuiInWork=$($guiCallsInWork.Count)")
+    $c6Lines.Add("DefinedFunctions=$($allDefinedSet.Count) (Core=$($coreDefinedSet.Count), GUI=$($guiDefinedSet.Count)), Duplicates=$($dupFunctions.Count), UndefinedCalls=$($undefinedCalls.Count), AsyncWorkBlocks=$($workAssigns.Count), GuiInWork=$($guiCallsInWork.Count), BarePreviewBlocks=$($previewAssigns.Count), BarePreviewCalls=$($barePreviewCalls.Count)")
     $c6Lines.Add("ChildRunspaceTest: $runspaceMsg")
-    if ($dupFunctions.Count -gt 0)   { $c6Lines.Add("Duplicates: " + ($dupFunctions -join ', ')) }
-    if ($undefinedCalls.Count -gt 0) { $c6Lines.Add("Undefined: " + ($undefinedCalls -join ', ')) }
-    if ($guiCallsInWork.Count -gt 0) { $c6Lines.Add("GuiInWork: " + ($guiCallsInWork -join ', ')) }
+    if ($dupFunctions.Count -gt 0)     { $c6Lines.Add("Duplicates: " + ($dupFunctions -join ', ')) }
+    if ($undefinedCalls.Count -gt 0)   { $c6Lines.Add("Undefined: " + ($undefinedCalls -join ', ')) }
+    if ($guiCallsInWork.Count -gt 0)   { $c6Lines.Add("GuiInWork: " + ($guiCallsInWork -join ', ')) }
+    if ($barePreviewCalls.Count -gt 0) { $c6Lines.Add("BarePreviewCalls: " + ($barePreviewCalls -join ', ')) }
     Add-CheckResult -Id 'CHK-6' -Title '함수 교차참조 · 비동기 $work 코어 전용 · 자식 Runspace 실주입' -Passed $c6Pass -Detail ($c6Lines -join "`r`n")
 }
 finally {

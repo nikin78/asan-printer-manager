@@ -1235,17 +1235,6 @@ function Connect-SharedHostSmart {
         }
     }
 
-    if ($attempts.Count -eq 0) {
-        return [pscustomobject]@{
-            Success    = $false
-            Status     = 'AuthOrSidConflict'
-            Win32Error = 1326
-            Reason     = '기본 공용 암호가 구성되지 않았습니다(secrets.local.json 확인) — 하단 인증 패널에서 직접 계정을 입력하세요.'
-            UsedUser   = $null
-            UsedPass   = $null
-        }
-    }
-
     $ipcPath         = "\\$HostName\IPC$"
     $lastRc          = 0
     $authErrDetected = $false
@@ -1435,47 +1424,83 @@ function Resolve-WsdPrinterInfo {
         }
     }
 
+    $pnpDevices   = [System.Collections.Generic.List[object]]::new()
+    $pnpPropCache = @{}
     try {
-        $pnpDevices = [System.Collections.Generic.List[object]]::new()
         foreach ($pattern in @('SWD\DAFWSDProvider*', 'SWD\PRINTENUM*')) {
             foreach ($dev in @(Get-PnpDevice -InstanceId $pattern -ErrorAction SilentlyContinue)) {
                 $pnpDevices.Add($dev)
             }
         }
+    } catch {}
 
-        # 1패스: WSD 포트 고유 UUID/GUID 정확 매칭 우선 -> 2패스: 프린터명 부분 일치 폴백
-        for ($wsdPass = 1; $wsdPass -le 2; $wsdPass++) {
-            if ($foundIp -and $foundModel) { break }
+    $enumRoots = @(
+        'HKLM:\SYSTEM\CurrentControlSet\Enum\SWD\PRINTENUM',
+        'HKLM:\SYSTEM\CurrentControlSet\Enum\UMB\UMB'
+    )
+    $regRecords = $null
+
+    # 전역 3단계 우선순위:
+    #   Pass 1: UUID/GUID 정확 매칭 (PnP -> Registry 전체 완료)
+    #   Pass 2: 프린터명 완전 일치(-ieq) 폴백 (PnP -> Registry)
+    #   Pass 3: 프린터명 부분 일치 폴백 (PnP -> Registry)
+    for ($wsdStage = 1; $wsdStage -le 3; $wsdStage++) {
+        if ($foundIp -and $foundModel) { break }
+        if ($wsdStage -ge 2 -and $PrinterName.Length -lt 3) { break }
+
+        try {
             foreach ($dev in $pnpDevices) {
                 if ($foundIp -and $foundModel) { break }
                 $instId = [string]$dev.InstanceId
                 $fName  = [string]$dev.FriendlyName
 
                 $directHit = $false
-                if ($wsdPass -eq 1) {
+                if ($wsdStage -eq 1) {
                     foreach ($mk in $matchKeys) {
                         if ($instId.IndexOf($mk, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $directHit = $true; break }
                     }
+                } elseif ($wsdStage -eq 2) {
+                    $cleanFn = Clean-DeviceString -Raw $fName
+                    if (($fName -ieq $PrinterName) -or ($cleanFn -and $cleanFn -ieq $PrinterName)) {
+                        $directHit = $true
+                    }
                 } else {
-                    if ($PrinterName.Length -ge 3 -and $fName.IndexOf($PrinterName, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                    if ($fName.IndexOf($PrinterName, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
                         $directHit = $true
                     }
                 }
                 if (-not $directHit -and $instId -notlike 'SWD\DAFWSDProvider*') { continue }
 
-                $props    = @(Get-PnpDeviceProperty -InstanceId $instId -ErrorAction SilentlyContinue)
-                $propBlob = ($props | ForEach-Object {
-                    if ($_.Data -is [array]) { ($_.Data -join ' ') } else { [string]$_.Data }
-                }) -join ' '
+                $cachedEntry = $null
+                if ($pnpPropCache.ContainsKey($instId)) {
+                    $cachedEntry = $pnpPropCache[$instId]
+                } else {
+                    $propsList = @(Get-PnpDeviceProperty -InstanceId $instId -ErrorAction SilentlyContinue)
+                    $blobText  = ($propsList | ForEach-Object {
+                        if ($_.Data -is [array]) { ($_.Data -join ' ') } else { [string]$_.Data }
+                    }) -join ' '
+                    $cachedEntry = [pscustomobject]@{ Props = $propsList; Blob = $blobText }
+                    $pnpPropCache[$instId] = $cachedEntry
+                }
+                $props    = $cachedEntry.Props
+                $propBlob = $cachedEntry.Blob
 
                 if (-not $directHit) {
                     $propHit = $false
-                    if ($wsdPass -eq 1) {
+                    if ($wsdStage -eq 1) {
                         foreach ($mk in $matchKeys) {
                             if ($propBlob.IndexOf($mk, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $propHit = $true; break }
                         }
+                    } elseif ($wsdStage -eq 2) {
+                        foreach ($pr in $props) {
+                            if ([string]$pr.KeyName -match '(?i)(FriendlyName|DeviceDesc|ModelName|Model$)') {
+                                $pvTxt = if ($pr.Data -is [array]) { ($pr.Data -join ' ') } else { [string]$pr.Data }
+                                $pvCln = Clean-DeviceString -Raw $pvTxt
+                                if (($pvTxt -ieq $PrinterName) -or ($pvCln -and $pvCln -ieq $PrinterName)) { $propHit = $true; break }
+                            }
+                        }
                     } else {
-                        if ($PrinterName.Length -ge 3 -and $propBlob.IndexOf($PrinterName, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                        if ($propBlob.IndexOf($PrinterName, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
                             $propHit = $true
                         }
                     }
@@ -1513,19 +1538,15 @@ function Resolve-WsdPrinterInfo {
                     }
                 }
             }
-        }
-    } catch {}
+        } catch {}
 
-    if (-not $foundIp -or -not $foundModel) {
-        $enumRoots = @(
-            'HKLM:\SYSTEM\CurrentControlSet\Enum\SWD\PRINTENUM',
-            'HKLM:\SYSTEM\CurrentControlSet\Enum\UMB\UMB'
-        )
-        # 레지스트리 보조 스캔도 1패스(UUID/GUID 우선) -> 2패스(프린터명 부분 일치 폴백)
-        for ($regPass = 1; $regPass -le 2; $regPass++) {
-            if ($foundIp -and $foundModel) { break }
+        if ($foundIp -and $foundModel) { break }
+
+        # 레지스트리 스캔 (지연 로드 + 루트 미존재 시 continue로 다음 루트 UMB\UMB 검사 보장)
+        if ($null -eq $regRecords) {
+            $regList = [System.Collections.Generic.List[object]]::new()
             foreach ($root in $enumRoots) {
-                if (($foundIp -and $foundModel) -or -not (Test-Path -LiteralPath $root)) { break }
+                if (-not (Test-Path -LiteralPath $root)) { continue }
                 foreach ($sub in @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue)) {
                     $subProps     = Get-ItemProperty -LiteralPath $sub.PSPath -ErrorAction SilentlyContinue
                     $devParamPath = Join-Path $sub.PSPath 'Device Parameters'
@@ -1533,53 +1554,68 @@ function Resolve-WsdPrinterInfo {
                     if (Test-Path -LiteralPath $devParamPath) {
                         $dpProps = Get-ItemProperty -LiteralPath $devParamPath -ErrorAction SilentlyContinue
                     }
-
                     $blob = ([string]$sub.PSChildName) + ' '
                     if ($subProps) { $blob += (($subProps.PSObject.Properties | ForEach-Object { [string]$_.Value }) -join ' ') + ' ' }
                     if ($dpProps)  { $blob += (($dpProps.PSObject.Properties | ForEach-Object { [string]$_.Value }) -join ' ') }
+                    $regList.Add([pscustomobject]@{ SubProps = $subProps; DpProps = $dpProps; Blob = $blob })
+                }
+            }
+            $regRecords = $regList.ToArray()
+        }
 
-                    $hit = $false
-                    if ($regPass -eq 1) {
-                        foreach ($mk in $matchKeys) {
-                            if ($blob.IndexOf($mk, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true; break }
-                        }
-                    } else {
-                        if ($PrinterName.Length -ge 3 -and $blob.IndexOf($PrinterName, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-                            $hit = $true
+        foreach ($rec in $regRecords) {
+            if ($foundIp -and $foundModel) { break }
+            $subProps = $rec.SubProps
+            $dpProps  = $rec.DpProps
+            $blob     = [string]$rec.Blob
+
+            $hit = $false
+            if ($wsdStage -eq 1) {
+                foreach ($mk in $matchKeys) {
+                    if ($blob.IndexOf($mk, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true; break }
+                }
+            } elseif ($wsdStage -eq 2) {
+                if ($subProps) {
+                    foreach ($propName in @('FriendlyName', 'DeviceDesc')) {
+                        $rv = [string]$subProps.$propName
+                        $rc = Clean-DeviceString -Raw $rv
+                        if (($rv -ieq $PrinterName) -or ($rc -and $rc -ieq $PrinterName)) { $hit = $true; break }
+                    }
+                }
+            } else {
+                if ($blob.IndexOf($PrinterName, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                    $hit = $true
+                }
+            }
+            if (-not $hit) { continue }
+
+            if (-not $foundIp) {
+                foreach ($obj in @($dpProps, $subProps)) {
+                    if (-not $obj -or $foundIp) { continue }
+                    foreach ($prop in $obj.PSObject.Properties) {
+                        $pn = [string]$prop.Name
+                        if ($pn -match $ipKeyDenyRegex) { continue }
+                        $pv = [string]$prop.Value
+                        if ($pn -match $ipKeyAllowRegex) {
+                            $cand = Extract-FirstUsableIPv4 -Text $pv
+                            if ($cand) { $foundIp = $cand; break }
+                        } elseif ($pv -match 'https?://') {
+                            $cand = Extract-FirstUsableIPv4 -Text $pv -UrlOnly
+                            if ($cand) { $foundIp = $cand; break }
                         }
                     }
-                    if (-not $hit) { continue }
+                }
+            }
 
-                    if (-not $foundIp) {
-                        foreach ($obj in @($dpProps, $subProps)) {
-                            if (-not $obj -or $foundIp) { continue }
-                            foreach ($prop in $obj.PSObject.Properties) {
-                                $pn = [string]$prop.Name
-                                if ($pn -match $ipKeyDenyRegex) { continue }
-                                $pv = [string]$prop.Value
-                                if ($pn -match $ipKeyAllowRegex) {
-                                    $cand = Extract-FirstUsableIPv4 -Text $pv
-                                    if ($cand) { $foundIp = $cand; break }
-                                } elseif ($pv -match 'https?://') {
-                                    $cand = Extract-FirstUsableIPv4 -Text $pv -UrlOnly
-                                    if ($cand) { $foundIp = $cand; break }
-                                }
-                            }
-                        }
-                    }
-
-                    if (-not $foundModel -and $subProps) {
-                        foreach ($propName in @('FriendlyName', 'DeviceDesc')) {
-                            $cand = Clean-DeviceString -Raw ([string]$subProps.$propName)
-                            if ($cand) { $foundModel = $cand; break }
-                        }
-                        if (-not $foundModel -and $subProps.HardwareID) {
-                            $hwStr = (@($subProps.HardwareID) -join ' ')
-                            $hm = [regex]::Match($hwStr, '(?i)(?:Samsung|Kyocera|HP|Canon|Epson|Brother|Ricoh|Sindoh|Xerox|Konica)[^\\,;]+')
-                            if ($hm.Success) { $foundModel = ($hm.Value -replace '_', ' ').Trim() }
-                        }
-                    }
-                    if ($foundIp -and $foundModel) { break }
+            if (-not $foundModel -and $subProps) {
+                foreach ($propName in @('FriendlyName', 'DeviceDesc')) {
+                    $cand = Clean-DeviceString -Raw ([string]$subProps.$propName)
+                    if ($cand) { $foundModel = $cand; break }
+                }
+                if (-not $foundModel -and $subProps.HardwareID) {
+                    $hwStr = (@($subProps.HardwareID) -join ' ')
+                    $hm = [regex]::Match($hwStr, '(?i)(?:Samsung|Kyocera|HP|Canon|Epson|Brother|Ricoh|Sindoh|Xerox|Konica)[^\\,;]+')
+                    if ($hm.Success) { $foundModel = ($hm.Value -replace '_', ' ').Trim() }
                 }
             }
         }
@@ -2170,9 +2206,50 @@ function Build-InfIndexCache {
         if ([string]::IsNullOrWhiteSpace($text)) { continue }
         $dispNames = @(Get-InfDisplayNames -InfText $text)
         $vendorHintText = ($dispNames -join ' ') + ' ' + $inf.Name
-        # 모델명 문자열에 제조사 브랜드가 생략된 INF를 위해 Provider/Manufacturer 헤더 보조 확인
-        $hdrMatches = [regex]::Matches($text, '(?im)^\s*Provider\s*=\s*(.+)$')
-        foreach ($hm in $hdrMatches) { $vendorHintText += ' ' + $hm.Groups[1].Value }
+
+        # [Strings] 토큰 테이블 구축 (Provider=%EP% 등 간접 참조 해석용)
+        $infStrings = @{}
+        $infStrPrio = @{}
+        $curSec     = ''
+        foreach ($rawL in ($text -split "`r?`n")) {
+            $ln = $rawL.Trim()
+            if (-not $ln -or $ln.StartsWith(';')) { continue }
+            $sm = [regex]::Match($ln, '^\s*\[([^\]]+)\]\s*$')
+            if ($sm.Success) { $curSec = $sm.Groups[1].Value.Trim(); continue }
+            if ($curSec -match '(?i)^strings(?:\.([0-9a-f]+))?$') {
+                $lTag = ''
+                if ($matches[1]) { $lTag = $matches[1].ToLowerInvariant() }
+                $pr = 1
+                if ($lTag -eq '') { $pr = 3 }
+                elseif ($lTag -in @('0412', '0409')) { $pr = 2 }
+                $kv = [regex]::Match($ln, '^\s*([^=;]+?)\s*=\s*"([^"]+)"')
+                if ($kv.Success) {
+                    $sk = $kv.Groups[1].Value.Trim().Trim('%').ToLowerInvariant()
+                    $sv = $kv.Groups[2].Value.Trim()
+                    if ($sk -and $sv) {
+                        $prevP = 0
+                        if ($infStrPrio.ContainsKey($sk)) { $prevP = [int]$infStrPrio[$sk] }
+                        if ($pr -ge $prevP) {
+                            $infStrings[$sk] = $sv
+                            $infStrPrio[$sk] = $pr
+                        }
+                    }
+                }
+            }
+        }
+
+        # 모델명 문자열에 제조사 브랜드가 생략된 INF를 위해 Provider 헤더(+ %Token% 해석) 보조 확인
+        $hdrMatches = [regex]::Matches($text, '(?im)^\s*Provider\s*=\s*([^;\r\n]+)')
+        foreach ($hm in $hdrMatches) {
+            $pRaw = $hm.Groups[1].Value.Trim()
+            $vendorHintText += ' ' + $pRaw
+            foreach ($tm in [regex]::Matches($pRaw, '%([^%]+)%')) {
+                $tk = $tm.Groups[1].Value.Trim().ToLowerInvariant()
+                if ($infStrings.ContainsKey($tk)) {
+                    $vendorHintText += ' ' + [string]$infStrings[$tk]
+                }
+            }
+        }
         $vendors = @(Get-DetectedVendors -Text $vendorHintText)
         $cache.Add([pscustomobject]@{
             Path         = $inf.FullName
@@ -2223,8 +2300,30 @@ function Get-LocalPrtFolderInfFiles {
     $seen    = @{}
     $roots   = [System.Collections.Generic.List[string]]::new()
     foreach ($r in @($global:AsanCtx.DriverRoots)) { $roots.Add([string]$r) }
-    # 약제팀 ZT411 공식 셋업(zd51177412-certified.exe) 추출 경로 자동 포함
-    if (-not $roots.Contains('C:\ZD5-1-17-7412')) { $roots.Add('C:\ZD5-1-17-7412') }
+
+    # 약제팀 ZT411 골든 이미지 로컬 드라이버 폴백 경로 자동 포함 (기존 PC 백업 드라이버 부재 시에만 사용)
+    foreach ($ztCand in @(
+        'C:\Users\admin\드라이버(win10_x64)\AMIS 3.0 장비\ZT411 (약국용 신형라벨프린터)',
+        'C:\Users\admin\드라이버(win10x64)\AMIS 3.0 장비\ZT411 (약국용 신형라벨프린터)',
+        'C:\ZD8-6-5-26125',
+        'C:\ZD5-1-17-7412'
+    )) {
+        if (-not $roots.Contains($ztCand)) { $roots.Add($ztCand) }
+    }
+    foreach ($amisRoot in @(
+        'C:\Users\admin\드라이버(win10_x64)\AMIS 3.0 장비',
+        'C:\Users\admin\드라이버(win10x64)\AMIS 3.0 장비',
+        'C:\Users\admin\드라이버(win10_x64)\AMIS3.0장비',
+        'C:\Users\admin\드라이버(win10x64)\AMIS3.0장비'
+    )) {
+        if (Test-Path -LiteralPath $amisRoot) {
+            foreach ($zd in @(Get-ChildItem -LiteralPath $amisRoot -Directory -Filter '*ZT411*' -ErrorAction SilentlyContinue)) {
+                if ($zd.FullName -notmatch '(?i)ZD410|ZD411' -and -not $roots.Contains($zd.FullName)) {
+                    $roots.Add($zd.FullName)
+                }
+            }
+        }
+    }
 
     foreach ($root in $roots) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
@@ -2391,7 +2490,9 @@ function Resolve-BestDriverForPrinter {
         [string]$ModelHint = $null,
         [hashtable]$DriverIndexCache,
         [bool]$ExcludeFromPcl6 = $false,
-        [switch]$ForceUpgradeGeneric
+        [switch]$ForceUpgradeGeneric,
+        [hashtable]$PreExistingDrivers = $null,
+        [switch]$PreferExportedFirst
     )
 
     $preferPcl6       = (-not $ExcludeFromPcl6)
@@ -2413,17 +2514,23 @@ function Resolve-BestDriverForPrinter {
     $wantedHasDigits = ($modelStems.Count -gt 0)
 
     # [1-A단계] 이미 스풀러에 정상 등록된 원본 드라이버 유지 (MS 인박스 범용 제외)
+    # 단, -PreferExportedFirst(ZT411 등)이고 복원 전 골든 이미지에 선설치된 드라이버라면 Exported(기존 PC) 우선 탐색
     $installedAll = @(Get-PrinterDriver -ErrorAction SilentlyContinue)
     if (-not $ForceUpgradeGeneric -and -not $isWantedInboxGen -and -not [string]::IsNullOrWhiteSpace($WantedDriverName)) {
         $exact = $installedAll | Where-Object { ($_.Name -eq $WantedDriverName -or (Normalize-Text $_.Name) -eq $wantedNorm) -and $_.Name -notmatch $global:AsanCtx.MicrosoftInboxGenericRegex } | Select-Object -First 1
         if ($exact) {
-            $usedSam = ($exact.Name -match '(?i)Samsung Universal Print Driver')
-            return [pscustomobject]@{
-                Success         = $true
-                DriverName      = [string]$exact.Name
-                Source          = 'OriginalRestored'
-                UsedSamFallback = $usedSam
-                ProtocolNotice  = $null
+            $isExactPreExisting = ($null -ne $PreExistingDrivers -and $PreExistingDrivers.ContainsKey(([string]$exact.Name).ToLowerInvariant()))
+            if (-not ($PreferExportedFirst -and $isExactPreExisting)) {
+                $usedSam = ($exact.Name -match '(?i)Samsung Universal Print Driver')
+                $exactSrc = 'OriginalRestored'
+                if ($isExactPreExisting) { $exactSrc = 'Win11GoldenSpooler' }
+                return [pscustomobject]@{
+                    Success         = $true
+                    DriverName      = [string]$exact.Name
+                    Source          = $exactSrc
+                    UsedSamFallback = $usedSam
+                    ProtocolNotice  = $null
+                }
             }
         }
     }
@@ -2944,13 +3051,13 @@ function Invoke-PrinterBackupEngine {
             if ([IO.Path]::GetDirectoryName($stageFull).TrimEnd('\') -ine $baseFull) {
                 throw "안전 가드 차단: 스테이징 경로가 _PRTBAK 직계 하위가 아닙니다 ($stageFull)."
             }
+            $swapped = $false
             try {
                 if (Test-Path -LiteralPath $stageFull) { Remove-Item -LiteralPath $stageFull -Recurse -Force -ErrorAction SilentlyContinue }
                 New-Item -ItemType Directory -Path $stageFull -Force | Out-Null
                 $rc = (Invoke-NativeCommand -FilePath 'robocopy.exe' -Arguments @($localTemp, $stageFull, '/E', '/R:2', '/W:1')).ExitCode
                 if ($rc -ge 8) { throw "서버 스테이징 업로드 중 robocopy 오류 발생 (ExitCode=$rc)" }
 
-                $swapped = $false
                 if (Test-Path -LiteralPath $targetFull) {
                     try {
                         if (Test-Path -LiteralPath $oldFull) { Remove-Item -LiteralPath $oldFull -Recurse -Force -ErrorAction SilentlyContinue }
@@ -2969,14 +3076,29 @@ function Invoke-PrinterBackupEngine {
                         $swapped = $true
                     }
                 } else {
-                    [IO.Directory]::Move($stageFull, $targetFull)
-                    $swapped = $true
+                    try {
+                        [IO.Directory]::Move($stageFull, $targetFull)
+                        $swapped = $true
+                    } catch {
+                        # 최초 백업 분기에도 Move 실패(SMB 일시 잠금 등) 시 robocopy /MIR 폴백
+                        $rcMir = (Invoke-NativeCommand -FilePath 'robocopy.exe' -Arguments @($localTemp, $targetFull, '/MIR', '/R:2', '/W:1')).ExitCode
+                        if ($rcMir -ge 8) { throw "서버 최초 업로드 중 robocopy 오류 발생 (ExitCode=$rcMir)" }
+                        $swapped = $true
+                    }
                 }
                 if (-not $swapped) { throw '서버 백업 폴더 원자적 전환 실패' }
             }
             finally {
-                if (Test-Path -LiteralPath $oldFull)   { Remove-Item -LiteralPath $oldFull   -Recurse -Force -ErrorAction SilentlyContinue }
-                if (Test-Path -LiteralPath $stageFull) { Remove-Item -LiteralPath $stageFull -Recurse -Force -ErrorAction SilentlyContinue }
+                # [데이터 유실 방지] target 부재 시 _OLD_->target 롤백 1회 시도, 전환 성공+target 실존 시에만 _OLD_ 삭제
+                if ((-not (Test-Path -LiteralPath $targetFull)) -and (Test-Path -LiteralPath $oldFull)) {
+                    try { [IO.Directory]::Move($oldFull, $targetFull) } catch {}
+                }
+                if ($swapped -and (Test-Path -LiteralPath $targetFull) -and (Test-Path -LiteralPath $oldFull)) {
+                    Remove-Item -LiteralPath $oldFull -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                if (Test-Path -LiteralPath $stageFull) {
+                    Remove-Item -LiteralPath $stageFull -Recurse -Force -ErrorAction SilentlyContinue
+                }
             }
 
             Write-ProgressSafe -OnProgress $OnProgress -Percent 100 -Message "서버 백업 완료: $targetFull"
@@ -3447,25 +3569,28 @@ function Invoke-PrinterRestoreEngine {
             RestoreLog        = @([pscustomobject]@{ Level = 'Warning'; Target = 'WPP 차단'; Message = $wppCheck.BannerTitle })
             Failures          = @()
             AuthFailedHosts   = @()
-            DetectedSpecials  = @()
-            SamFallbackNames  = @()
-            RestoredScanCount = 0
+            DetectedSpecials   = @()
+            SamFallbackNames   = @()
+            ZtManualPrefsNames = @()
+            RestoredScanCount  = 0
         }
     }
 
     if (-not (Test-Path -LiteralPath $global:AsanCtx.WorkBaseDir)) { New-Item -ItemType Directory -Path $global:AsanCtx.WorkBaseDir -Force | Out-Null }
 
-    $localTemp         = Join-Path $global:AsanCtx.WorkBaseDir "Work_Res_$PID"
-    $isZip             = ($SourcePath -match '(?i)\.zip$')
-    $restoreLog        = [System.Collections.Generic.List[object]]::new()
-    $failures          = [System.Collections.Generic.List[object]]::new()
-    $authHosts         = [System.Collections.Generic.List[object]]::new()
-    $seenAuth          = @{}
-    $offlineUncHosts   = @{}
-    $detectedSpecials  = [System.Collections.Generic.List[object]]::new()
-    $samFallbackList   = [System.Collections.Generic.List[string]]::new()
-    $pendingRegImports = [System.Collections.Generic.List[object]]::new()
-    $needsUsbReplug    = $false
+    $localTemp          = Join-Path $global:AsanCtx.WorkBaseDir "Work_Res_$PID"
+    $isZip              = ($SourcePath -match '(?i)\.zip$')
+    $restoreLog         = [System.Collections.Generic.List[object]]::new()
+    $failures           = [System.Collections.Generic.List[object]]::new()
+    $authHosts          = [System.Collections.Generic.List[object]]::new()
+    $seenAuth           = @{}
+    $offlineUncHosts    = @{}
+    $detectedSpecials   = [System.Collections.Generic.List[object]]::new()
+    $samFallbackList    = [System.Collections.Generic.List[string]]::new()
+    $ztManualPrefsList  = [System.Collections.Generic.List[string]]::new()
+    $pendingRegImports  = [System.Collections.Generic.List[object]]::new()
+    $needsUsbReplug     = $false
+    $brmRestoredOk      = $false
 
     try {
         if (Test-Path -LiteralPath $localTemp) { Remove-Item -LiteralPath $localTemp -Recurse -Force -ErrorAction SilentlyContinue }
@@ -3474,6 +3599,10 @@ function Invoke-PrinterRestoreEngine {
         $preExistingPrinters = @{}
         foreach ($ep in @(Get-Printer -ErrorAction SilentlyContinue)) {
             $preExistingPrinters[([string]$ep.Name).ToLowerInvariant()] = $true
+        }
+        $preExistingDrivers = @{}
+        foreach ($ed in @(Get-PrinterDriver -ErrorAction SilentlyContinue)) {
+            $preExistingDrivers[([string]$ed.Name).ToLowerInvariant()] = $true
         }
 
         Write-ProgressSafe -OnProgress $OnProgress -Percent 10 -Message '[1/6] 백업 데이터 로컬 스테이징 준비 중...'
@@ -3538,7 +3667,9 @@ function Invoke-PrinterRestoreEngine {
         } elseif (Test-Path -LiteralPath $brmFile) {
             Write-ProgressSafe -OnProgress $OnProgress -Percent 36 -Message '[3/6] PrintBrm 원본 드라이버 및 인쇄 기본 설정 복원 중...'
             $brmRestoreRes = Invoke-NativeCommand -FilePath $global:AsanCtx.PrintBrmExe -Arguments @('-r', '-f', $brmFile, '-o', 'force')
-            if ($brmRestoreRes.ExitCode -ne 0) {
+            if ($brmRestoreRes.ExitCode -eq 0) {
+                $brmRestoredOk = $true
+            } else {
                 $brmShort = ([string]$brmRestoreRes.Output -replace '\s+', ' ').Trim()
                 if ($brmShort.Length -gt 200) { $brmShort = $brmShort.Substring(0, 200) + '...' }
                 $restoreLog.Add([pscustomobject]@{ Level = 'Warning'; Target = 'PrintBrm'; Message = "PrintBrm 일부 경고/오류 (ExitCode=$($brmRestoreRes.ExitCode)) — 누락 항목은 5단계 정밀 복원으로 자동 보완됩니다. [$brmShort]" })
@@ -3630,8 +3761,10 @@ function Invoke-PrinterRestoreEngine {
             }
         }
         # ExportedDrivers 인덱스만 선구축, DriverStore/LocalPrt는 드라이버 미발견 시 지연(Lazy) 구축
-        $exportedIndex = @(Build-InfIndexCache -InfFiles $expInfs)
+        $exportedIndex          = @(Build-InfIndexCache -InfFiles $expInfs)
+        $usedZtLocalUsbFallback = $false
         if ($usbSpecialVendors.Count -gt 0) {
+            $registeredZebraBackup = $false
             foreach ($idxEntry in $exportedIndex) {
                 if ($idxEntry.Vendors -contains 'SEWOO') { continue }
                 $matchUsbVendor = $false
@@ -3639,13 +3772,23 @@ function Invoke-PrinterRestoreEngine {
                     if ($idxEntry.Vendors -contains $uv) { $matchUsbVendor = $true; break }
                 }
                 if ($matchUsbVendor) {
-                    [void](Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/add-driver', $idxEntry.Path, '/install'))
+                    $rcUsbAdd = (Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/add-driver', $idxEntry.Path, '/install')).ExitCode
+                    if (($idxEntry.Vendors -contains 'ZEBRA') -and ($rcUsbAdd -eq 0 -or $rcUsbAdd -eq 259 -or $rcUsbAdd -eq 3010)) {
+                        $registeredZebraBackup = $true
+                    }
                 }
             }
-            if ($hasSelectedZt411Usb) {
-                $ztInf = 'C:\ZD5-1-17-7412\ZBRN\ZBRN.inf'
-                if (Test-Path -LiteralPath $ztInf) {
-                    [void](Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/add-driver', $ztInf, '/install'))
+            # ZT411 USB: 기존 PC 백업(PrintBrm/ExportedDrivers) 최우선 — 모두 없는 부득이한 경우에만 골든 이미지 로컬 INF 폴백 등록
+            $brmAddedZtDrv = (@(Get-PrinterDriver -ErrorAction SilentlyContinue | Where-Object {
+                $_.Name -match '(?i)ZT41[01]' -and (-not $preExistingDrivers.ContainsKey(([string]$_.Name).ToLowerInvariant()))
+            })).Count -gt 0
+            if ($hasSelectedZt411Usb -and (-not $registeredZebraBackup) -and (-not $brmAddedZtDrv)) {
+                $ztLocalFallback = Find-LocalSpecialInstaller -SpecialType 'ZEBRA_ZT411' -SkipRemoteProbe
+                if ($ztLocalFallback -and $ztLocalFallback.InfPath -and (Test-Path -LiteralPath $ztLocalFallback.InfPath)) {
+                    $rcZtLoc = (Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/add-driver', $ztLocalFallback.InfPath, '/install')).ExitCode
+                    if ($rcZtLoc -eq 0 -or $rcZtLoc -eq 259 -or $rcZtLoc -eq 3010) {
+                        $usedZtLocalUsbFallback = $true
+                    }
                 }
             }
             $usbReRes = Invoke-UsbBarcodeAutoReenumerate -WaitSeconds 8 -OnProgress $OnProgress
@@ -3678,9 +3821,10 @@ function Invoke-PrinterRestoreEngine {
 
             # Case A: PrintBrm으로 이미 생성된 큐 검증 및 보강
             if ($existing) {
-                $finalDrvName = [string]$existing.DriverName
-                if (-not $spec.IsSpecial -and $finalDrvName -match $global:AsanCtx.MicrosoftInboxGenericRegex) {
-                    $drvRes = Resolve-BestDriverForPrinter -PrinterName $pName -WantedDriverName $row.DriverName -ModelHint $row.WsdModelName -DriverIndexCache $driverIndexCache -ExcludeFromPcl6:$spec.ExcludeFromPcl6 -ForceUpgradeGeneric
+                $finalDrvName       = [string]$existing.DriverName
+                $isSharedConnection = (-not [string]::IsNullOrWhiteSpace([string]$row.ConnectionName)) -or $pName.StartsWith('\\') -or ($row.PortKind -eq 'SHARED_UNC')
+                if ((-not $isSharedConnection) -and (-not $spec.IsSpecial) -and $finalDrvName -match $global:AsanCtx.MicrosoftInboxGenericRegex) {
+                    $drvRes = Resolve-BestDriverForPrinter -PrinterName $pName -WantedDriverName $row.DriverName -ModelHint $row.WsdModelName -DriverIndexCache $driverIndexCache -ExcludeFromPcl6:$spec.ExcludeFromPcl6 -PreExistingDrivers $preExistingDrivers -ForceUpgradeGeneric
                     if ($drvRes.Success -and $drvRes.DriverName -ne $finalDrvName) {
                         try {
                             Set-Printer -InputObject $existing -DriverName $drvRes.DriverName -ErrorAction Stop
@@ -3697,7 +3841,6 @@ function Invoke-PrinterRestoreEngine {
                     if (-not $samFallbackList.Contains($pName)) { $samFallbackList.Add($pName) }
                 }
                 $existingPort = [string]$existing.PortName
-                $isSharedConnection = (-not [string]::IsNullOrWhiteSpace([string]$row.ConnectionName)) -or $pName.StartsWith('\\') -or ($row.PortKind -eq 'SHARED_UNC')
                 if ((-not $isSharedConnection) -and ($row.PortKind -eq 'USB' -or $existingPort -match '(?i)^USB\d+')) {
                     $curPortExists = @(Get-PrinterPort -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq $existingPort }) | Select-Object -First 1
                     if (-not $curPortExists) {
@@ -3721,17 +3864,32 @@ function Invoke-PrinterRestoreEngine {
                         }
                     }
                 }
+                $appliedDatA = $false
+                $appliedRegA = $false
                 if ($spec.IsSpecial) {
                     if ($row.SpecialDatFile) {
                         $dFull = Join-Path $localTemp $row.SpecialDatFile
                         if (Test-Path -LiteralPath $dFull) {
-                            [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Sr', '/q', '/n', $pName, '/a', $dFull, 'd', 'g', 'u', 'r'))
+                            $srRes = Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Sr', '/q', '/n', $pName, '/a', $dFull, 'd', 'g', 'u', 'r')
+                            if ($srRes.ExitCode -eq 0) { $appliedDatA = $true }
                         }
                     }
                     if ($row.SpecialRegFile) {
                         $rFull = Join-Path $localTemp $row.SpecialRegFile
                         if (Test-Path -LiteralPath $rFull) {
                             $pendingRegImports.Add([pscustomobject]@{ PrinterName = $pName; OriginalPrinterName = $pName; RegFullPath = $rFull })
+                            $appliedRegA = $true
+                        }
+                    }
+                    if ($spec.Type -eq 'ZEBRA_ZT411') {
+                        $isUsbZtA = ($row.PortKind -eq 'USB' -or $existingPort -match '(?i)^USB\d+')
+                        if (($usedZtLocalUsbFallback -and $isUsbZtA) -or ((-not $brmRestoredOk) -and (-not $appliedDatA) -and (-not $appliedRegA))) {
+                            if (-not $ztManualPrefsList.Contains($pName)) { $ztManualPrefsList.Add($pName) }
+                            $ztWarnA = 'ZT411 백업 설정(.dat/.reg) 미확인 — 프린터 속성 > 인쇄 기본 설정(용지/농도 또는 .drx/.drs 가져오기)을 직접 마무리하세요.'
+                            if ($usedZtLocalUsbFallback -and $isUsbZtA) {
+                                $ztWarnA = '기존 PC USB ZT411 드라이버 미추출로 골든 이미지 로컬 드라이버가 폴백 등록됨 — 프린터 속성 > 인쇄 기본 설정(용지/농도 또는 .drx/.drs 가져오기)을 직접 마무리하세요.'
+                            }
+                            $restoreLog.Add([pscustomobject]@{ Level = 'Warning'; Target = $pName; Message = $ztWarnA })
                         }
                     }
                 }
@@ -3811,7 +3969,8 @@ function Invoke-PrinterRestoreEngine {
                 }
             }
 
-            $drvRes = Resolve-BestDriverForPrinter -PrinterName $pName -WantedDriverName $row.DriverName -ModelHint $row.WsdModelName -DriverIndexCache $driverIndexCache -ExcludeFromPcl6:$spec.ExcludeFromPcl6
+            $preferExpFirst = ($spec.Type -eq 'ZEBRA_ZT411')
+            $drvRes = Resolve-BestDriverForPrinter -PrinterName $pName -WantedDriverName $row.DriverName -ModelHint $row.WsdModelName -DriverIndexCache $driverIndexCache -ExcludeFromPcl6:$spec.ExcludeFromPcl6 -PreExistingDrivers $preExistingDrivers -PreferExportedFirst:$preferExpFirst
             if (-not $drvRes.Success) {
                 $failures.Add([pscustomobject]@{ PrinterName = $pName; PortName = $targetPortName; DriverName = $row.DriverName; Reason = $drvRes.ProtocolNotice; HostName = $null })
                 continue
@@ -3834,23 +3993,40 @@ function Invoke-PrinterRestoreEngine {
 
             try {
                 Add-Printer -Name $pName -DriverName $drvRes.DriverName -PortName $pRes.PortName -ErrorAction Stop
+                $appliedDatC = $false
+                $appliedRegC = $false
                 if ($spec.IsSpecial) {
                     if ($row.SpecialDatFile) {
                         $dFull = Join-Path $localTemp $row.SpecialDatFile
                         if (Test-Path -LiteralPath $dFull) {
-                            [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Sr', '/q', '/n', $pName, '/a', $dFull, 'd', 'g', 'u', 'r'))
+                            $srResC = Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Sr', '/q', '/n', $pName, '/a', $dFull, 'd', 'g', 'u', 'r')
+                            if ($srResC.ExitCode -eq 0) { $appliedDatC = $true }
                         }
                     }
                     if ($row.SpecialRegFile) {
                         $rFull = Join-Path $localTemp $row.SpecialRegFile
                         if (Test-Path -LiteralPath $rFull) {
                             $pendingRegImports.Add([pscustomobject]@{ PrinterName = $pName; OriginalPrinterName = $pName; RegFullPath = $rFull })
+                            $appliedRegC = $true
                         }
                     }
                 }
                 $msg = "복원 완료 (드라이버: $($drvRes.DriverName) [$($drvRes.Source)] / 포트: $($pRes.PortName))"
                 if ($row.PortKind -eq 'WSD') { $msg = "[WSD 전환 성공] $msg" }
                 $restoreLog.Add([pscustomobject]@{ Level = 'Success'; Target = $pName; Message = $msg })
+
+                if ($spec.Type -eq 'ZEBRA_ZT411') {
+                    $isUsbZtC          = ($row.PortKind -eq 'USB' -or [string]$pRes.PortName -match '(?i)^USB\d+')
+                    $usedZtFallbackDrv = ($drvRes.Source -notin @('OriginalRestored', 'ExportedBackupDriver')) -or ($usedZtLocalUsbFallback -and $isUsbZtC)
+                    if ($usedZtFallbackDrv -or (-not $appliedDatC -and -not $appliedRegC)) {
+                        if (-not $ztManualPrefsList.Contains($pName)) { $ztManualPrefsList.Add($pName) }
+                        $ztWarnMsg = "백업된 ZT411 인쇄 기본 설정(.dat/.reg)이 없어 기본값으로 복원됨 — 프린터 속성 > 인쇄 기본 설정(용지/농도 또는 .drx/.drs 가져오기)을 반드시 마무리하세요."
+                        if ($usedZtFallbackDrv) {
+                            $ztWarnMsg = "기존 PC 드라이버 복원 불가로 로컬 골든 이미지 드라이버($($drvRes.DriverName) [$($drvRes.Source)])로 대체 복원됨 — 프린터 속성 > 인쇄 기본 설정(용지/농도 또는 .drx/.drs 가져오기)을 반드시 마무리하세요."
+                        }
+                        $restoreLog.Add([pscustomobject]@{ Level = 'Warning'; Target = $pName; Message = $ztWarnMsg })
+                    }
+                }
 
                 if ($drvRes.UsedSamFallback -or $drvRes.DriverName -match '(?i)Samsung Universal Print Driver 3') {
                     if (-not $samFallbackList.Contains($pName)) { $samFallbackList.Add($pName) }
@@ -3898,16 +4074,17 @@ function Invoke-PrinterRestoreEngine {
 
         Write-ProgressSafe -OnProgress $OnProgress -Percent 100 -Message '복원 파이프라인 완료!'
         return [pscustomobject]@{
-            Success           = $true
-            BlockedByWpp      = $false
-            WppInfo           = $wppCheck
-            RestoreLog        = $restoreLog.ToArray()
-            Failures          = $failures.ToArray()
-            AuthFailedHosts   = $authHosts.ToArray()
-            DetectedSpecials  = $detectedSpecials.ToArray()
-            SamFallbackNames  = $samFallbackList.ToArray()
-            RestoredScanCount = $restoredScanCnt
-            NeedsUsbReplug    = $needsUsbReplug
+            Success            = $true
+            BlockedByWpp       = $false
+            WppInfo            = $wppCheck
+            RestoreLog         = $restoreLog.ToArray()
+            Failures           = $failures.ToArray()
+            AuthFailedHosts    = $authHosts.ToArray()
+            DetectedSpecials   = $detectedSpecials.ToArray()
+            SamFallbackNames   = $samFallbackList.ToArray()
+            ZtManualPrefsNames = $ztManualPrefsList.ToArray()
+            RestoredScanCount  = $restoredScanCnt
+            NeedsUsbReplug     = $needsUsbReplug
         }
     }
     finally {
@@ -3933,62 +4110,100 @@ function Find-LocalSpecialInstaller {
     )
 
     if ($SpecialType -eq 'ZEBRA_ZT411') {
+        # [정책] 원격 드라이버 서버 접근 금지 -> 모든 골든 이미지 공통 로컬 경로 최우선 탐색 (-SkipRemoteProbe는 하위호환 유지)
         $ztSearchDirs = [System.Collections.Generic.List[string]]::new()
+        foreach ($exactDir in @(
+            'C:\Users\admin\드라이버(win10_x64)\AMIS 3.0 장비\ZT411 (약국용 신형라벨프린터)',
+            'C:\Users\admin\드라이버(win10x64)\AMIS 3.0 장비\ZT411 (약국용 신형라벨프린터)'
+        )) {
+            if ((Test-Path -LiteralPath $exactDir) -and -not $ztSearchDirs.Contains($exactDir)) {
+                $ztSearchDirs.Add($exactDir)
+            }
+        }
+        # 1순위: 로컬 *ZT411* 폴더 (ZD410/ZD411 오인식 엄격 차단)
         foreach ($r in $baseRoots) {
             if (-not (Test-Path -LiteralPath $r)) { continue }
-            foreach ($pat in @('*ZT411*', '*PRT*\*ZT411*', '*AMIS*\*ZT411*', '*Zebra*')) {
+            foreach ($pat in @('*ZT411*', '*AMIS*\*ZT411*', '*PRT*\*ZT411*')) {
                 foreach ($md in @(Get-ChildItem -Path (Join-Path $r $pat) -Directory -ErrorAction SilentlyContinue)) {
+                    if ($md.FullName -match '(?i)ZD410|ZD411') { continue }
                     if (-not $ztSearchDirs.Contains($md.FullName)) { $ztSearchDirs.Add($md.FullName) }
                 }
             }
         }
-        # 사내 드라이버 서버(\\172.23.2.130)는 백그라운드 Runspace에서만 탐색 (-SkipRemoteProbe 시 UI 스레드 차단 방지)
-        if (-not $SkipRemoteProbe) {
-            if (Test-TcpPortFast -HostIp '172.23.2.130' -Port 445 -TimeoutMs 600) {
-                $srvZtDir = '\\172.23.2.130\driver\기종별드라이버(PC,PRT)\PRT\ZT411 (약국용 신형 라벨 프린터)'
-                if (Test-Path -LiteralPath $srvZtDir) { $ztSearchDirs.Add($srvZtDir) }
+        # 2순위: 기타 *Zebra* 폴더 (ZD410/ZD411 폴더 반드시 제외)
+        foreach ($r in $baseRoots) {
+            if (-not (Test-Path -LiteralPath $r)) { continue }
+            foreach ($pat in @('*Zebra*', '*AMIS*\*Zebra*')) {
+                foreach ($md in @(Get-ChildItem -Path (Join-Path $r $pat) -Directory -ErrorAction SilentlyContinue)) {
+                    if ($md.FullName -match '(?i)ZD410|ZD411') { continue }
+                    if (-not $ztSearchDirs.Contains($md.FullName)) { $ztSearchDirs.Add($md.FullName) }
+                }
             }
         }
 
         $ztFolder  = $null
         $ztExePath = $null
+        $ztDrxPath = $null
         $ztDrsPath = $null
         $ztInfPath = $null
-        # C:\ZD5-1-17-7412는 압축 해제 결과(ZBRN.inf) 확인 전용 (내부 PrnInst.exe 마법사 오인식 방지!)
-        if (Test-Path -LiteralPath 'C:\ZD5-1-17-7412\ZBRN\ZBRN.inf') {
-            $ztInfPath = 'C:\ZD5-1-17-7412\ZBRN\ZBRN.inf'
-        }
 
         foreach ($sd in $ztSearchDirs) {
             if (-not $ztFolder) { $ztFolder = $sd }
             if (-not $ztExePath) {
                 $allExes = @(Get-ChildItem -LiteralPath $sd -Filter '*.exe' -File -Recurse -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -notmatch '(?i)PrnInst' } |
-                    Sort-Object FullName)
-                $exeHit = $allExes | Where-Object { $_.Name -match '(?i)(zd51177412|certified|zd5)' } | Select-Object -First 1
+                    Where-Object { $_.Name -notmatch '(?i)PrnInst' -and $_.FullName -notmatch '(?i)ZD410|ZD411' } |
+                    Sort-Object @{ Expression = { $_.FullName.Length } }, FullName)
+                $exeHit = $allExes | Where-Object { $_.Name -match '(?i)(zd86526125|zd8)' } | Select-Object -First 1
+                if (-not $exeHit) {
+                    $exeHit = $allExes | Where-Object { $_.Name -match '(?i)(zd51177412|zd5|certified)' } | Select-Object -First 1
+                }
                 if (-not $exeHit) {
                     $exeHit = $allExes | Where-Object { $_.Name -match '(?i)(zebra|setup|driver)' } | Select-Object -First 1
                 }
-                if ($exeHit) { $ztExePath = $exeHit.FullName; $ztFolder = $exeHit.DirectoryName }
-            }
-            if (-not $ztDrsPath) {
-                $drsHit = @(Get-ChildItem -LiteralPath $sd -Filter '*.drs' -File -Recurse -ErrorAction SilentlyContinue | Sort-Object FullName) | Select-Object -First 1
-                if ($drsHit) { $ztDrsPath = $drsHit.FullName }
+                if ($exeHit) { $ztExePath = $exeHit.FullName }
             }
             if (-not $ztInfPath) {
-                $infHit = @(Get-ChildItem -LiteralPath $sd -Filter 'ZBRN.inf' -File -Recurse -ErrorAction SilentlyContinue | Sort-Object FullName) | Select-Object -First 1
+                # 골든 이미지에 사전 압축 해제된 ZD8-6-5-26125\ZDesigner.inf 최우선, 구형 ZBRN.inf 차순위 (ZD410/ZD411 하위 폴더 차단)
+                $infHit = @(Get-ChildItem -LiteralPath $sd -Filter 'ZDesigner.inf' -File -Recurse -ErrorAction SilentlyContinue |
+                    Where-Object { $_.FullName -notmatch '(?i)ZD410|ZD411' } |
+                    Sort-Object @{ Expression = { $_.FullName.Length } }, FullName) | Select-Object -First 1
+                if (-not $infHit) {
+                    $infHit = @(Get-ChildItem -LiteralPath $sd -Filter 'ZBRN.inf' -File -Recurse -ErrorAction SilentlyContinue |
+                        Where-Object { $_.FullName -notmatch '(?i)ZD410|ZD411' } |
+                        Sort-Object @{ Expression = { $_.FullName.Length } }, FullName) | Select-Object -First 1
+                }
                 if ($infHit) { $ztInfPath = $infHit.FullName }
             }
+            if (-not $ztDrxPath) {
+                $drxHit = @(Get-ChildItem -LiteralPath $sd -Filter '*.drx' -File -Recurse -ErrorAction SilentlyContinue |
+                    Where-Object { $_.FullName -notmatch '(?i)ZD410|ZD411' } |
+                    Sort-Object @{ Expression = { $_.FullName.Length } }, FullName) | Select-Object -First 1
+                if ($drxHit) { $ztDrxPath = $drxHit.FullName }
+            }
+            if (-not $ztDrsPath) {
+                $drsHit = @(Get-ChildItem -LiteralPath $sd -Filter '*.drs' -File -Recurse -ErrorAction SilentlyContinue |
+                    Where-Object { $_.FullName -notmatch '(?i)ZD410|ZD411' } |
+                    Sort-Object FullName) | Select-Object -First 1
+                if ($drsHit) { $ztDrsPath = $drsHit.FullName }
+            }
         }
-        if (-not $ztFolder -and (Test-Path -LiteralPath 'C:\ZD5-1-17-7412')) {
-            $ztFolder = 'C:\ZD5-1-17-7412'
+        # C:\ZD8-* / C:\ZD5-* 직접 압축 해제 폴더 보조 확인 (INF 전용, PrnInst.exe 오인식 방지)
+        if (-not $ztInfPath) {
+            foreach ($candInf in @('C:\ZD8-6-5-26125\ZDesigner.inf', 'C:\ZD5-1-17-7412\ZBRN\ZBRN.inf')) {
+                if (Test-Path -LiteralPath $candInf) { $ztInfPath = $candInf; break }
+            }
+        }
+        if (-not $ztFolder) {
+            foreach ($candDir in @('C:\ZD8-6-5-26125', 'C:\ZD5-1-17-7412')) {
+                if (Test-Path -LiteralPath $candDir) { $ztFolder = $candDir; break }
+            }
         }
 
         return [pscustomobject]@{
-            Found   = ($null -ne $ztFolder -or $null -ne $ztExePath -or $null -ne $ztInfPath -or $null -ne $ztDrsPath)
+            Found   = ($null -ne $ztFolder -or $null -ne $ztExePath -or $null -ne $ztInfPath -or $null -ne $ztDrxPath -or $null -ne $ztDrsPath)
             Folder  = $ztFolder
             ExePath = $ztExePath
-            DrxPath = $null
+            DrxPath = $ztDrxPath
             DrsPath = $ztDrsPath
             InfPath = $ztInfPath
         }
@@ -4074,25 +4289,30 @@ function Get-SpecialPrinterAssistantInfo {
         }
         'ZEBRA_ZT411' {
             $isTcpLabel = ([string]$SpecialRow.PortKind -eq 'TCPIP') -or (-not [string]::IsNullOrWhiteSpace([string]$SpecialRow.HostAddress))
-            $connHint   = 'USB 직결 — 셋업 종료 후 USB 연결 시 자동 설치(미인식 시 상단 [USB 재인식] 클릭)'
+            $connHint   = 'USB 직결 — 기존 PC 드라이버 선등록 후 자동 설치(미인식 시 상단 [USB 재인식] 클릭)'
             if ($isTcpLabel) {
                 $connHint = "TCP/IP 네트워크 연결($($SpecialRow.PortName)) — Standard TCP/IP(Generic Network Card, SNMP OFF) + ZDesigner ZT411-203dpi ZPL 자동 복원 대상"
             }
-            $drsHint = '\\172.23.2.130\driver\기종별드라이버(PC,PRT)\PRT\ZT411 (약국용 신형 라벨 프린터)\ZebraDriver 설정.drs'
-            if ($inst.DrsPath) { $drsHint = $inst.DrsPath }
-            $infHint = 'C:\ZD5-1-17-7412\ZBRN\ZBRN.inf'
+            $ztRootDefault = 'C:\Users\admin\드라이버(win10_x64)\AMIS 3.0 장비\ZT411 (약국용 신형라벨프린터)'
+            $infHint = "$ztRootDefault\ZD8-6-5-26125\ZDesigner.inf"
             if ($inst.InfPath) { $infHint = $inst.InfPath }
+            $cfgHint = "$ztRootDefault\약국 라벨 용지크기별 설정파일\*.drx"
+            if ($inst.DrxPath) { $cfgHint = $inst.DrxPath }
+            elseif ($inst.DrsPath) { $cfgHint = $inst.DrsPath }
+            $exeHint = 'zd86526125-certified.exe'
+            if ($inst.ExePath) { $exeHint = [IO.Path]::GetFileName($inst.ExePath) }
 
             $chk = @(
-                "[Zebra ZT410/ZT411 약제팀 라벨 프린터 — 공식 설치·용지 설정(.drs) 안내]",
+                "[Zebra ZT410/ZT411 약제팀 라벨 프린터 — 기존 PC 복원 우선 / 골든 이미지 폴백 안내]",
                 "• 연결 방식: $connHint",
-                "1. [드라이버 수동 재설치 필요 시] zd51177412-certified.exe 실행 -> C:\ZD5-1-17-7412 생성 후",
-                "   ★ 주의: 마법사 화면에서 절대 프린터 설정하지 말고 반드시 [나가기] 버튼으로 종료하세요!",
-                "   • USB 연결: 종료 후 케이블 연결 시 'ZDesigner ZT411-203dpi ZPL' 자동 설치",
-                "   • IP 연결 : Standard TCP/IP(자동 검색 해제 / Generic Network Card) -> 디스크 있음 -> $infHint -> 'ZDesigner ZT411-203dpi ZPL'",
-                "2. [용지 설정(필수)] 용지 값을 직접 손으로 입력하지 말고, 자동 복원(.dat/.reg) 미반영 시",
-                "   프린터 속성 > 기본 설정 > [가져오기/내보내기 설정] > [가져오기...]에서 'ZebraDriver 설정.drs'를 불러오세요.",
-                "   • 설정 파일(.drs): $drsHint"
+                "1. [최우선 원칙] 기존 PC에서 추출된 드라이버와 인쇄 기본 설정(.dat/.reg) 자동 복원이 먼저 시도됩니다.",
+                "2. [부득이한 대체 설치 시] 골든 이미지 로컬 폴더($ztRootDefault)의 사전 추출 드라이버를 사용합니다.",
+                "   • 사전 압축 해제 INF: $infHint",
+                "   • 셋업 재실행 시($exeHint): 드라이버 폴더(ZD8-6-5-26125)만 생성 후 ★ 마법사에서 프린터 설정하지 말고 반드시 [나가기]로 종료!",
+                "   • IP 수동 추가 시: Standard TCP/IP(자동 검색 해제 / Generic Network Card) -> 디스크 있음 -> $infHint -> 'ZDesigner ZT411-203dpi ZPL'",
+                "3. [인쇄 기본 설정 마무리(필수)] 대체 드라이버로 설치되었거나 기존 설정이 미반영된 경우,",
+                "   [속성 열기] > 인쇄 기본 설정에서 용지/농도를 직접 마무리하거나 [가져오기/내보내기 설정]에서 용지별 설정 파일(.drx/.drs)을 불러오세요.",
+                "   • 로컬 용지 설정 파일: $cfgHint"
             ) -join "`r`n"
             return [pscustomobject]@{ Type = 'ZEBRA_ZT411'; TargetIp = $SpecialRow.HostAddress; Installer = $inst; HasStep2 = $false; Checklist = $chk }
         }

@@ -21,22 +21,26 @@ $script:Tab3Ui = @{
 }
 
 $script:Tab4Ui = @{
-    TxtSearch       = $null
-    BtnRefreshSrv   = $null
-    BtnCleanOld5    = $null
-    LblSrvSummary   = $null
-    DgvServer       = $null
-    TxtPreview      = $null
-    BtnLoadToTab2   = $null
-    BtnOpenFolder   = $null
-    BtnDeleteOne    = $null
-    PreviewCache    = @{}
-    PreviewGen      = 0
-    PreviewPs       = $null
-    PreviewRs       = $null
-    PreviewAsync    = $null
-    PreviewTimer    = $null
-    PreviewCacheKey = $null
+    TxtSearch            = $null
+    BtnRefreshSrv        = $null
+    BtnCleanOld5         = $null
+    LblSrvSummary        = $null
+    DgvServer            = $null
+    TxtPreview           = $null
+    BtnLoadToTab2        = $null
+    BtnOpenFolder        = $null
+    BtnDeleteOne         = $null
+    PreviewCache         = @{}
+    PreviewGen           = 0
+    PreviewReqGen        = 0
+    PreviewPs            = $null
+    PreviewRs            = $null
+    PreviewAsync         = $null
+    PreviewTimer         = $null
+    PreviewDebounceTimer = $null
+    PreviewCacheKey      = $null
+    SuppressPreviewEvent = $false
+    RetiredPreviews      = [System.Collections.Generic.List[object]]::new()
 }
 
 # ============================================================================
@@ -395,6 +399,7 @@ function Render-Tab4ServerGrid {
     $old5  = (@($all | Where-Object { $_.IsOld5Days })).Count
     $shown = 0
 
+    $script:Tab4Ui.SuppressPreviewEvent = $true
     $dgv.SuspendLayout()
     try {
         $dgv.Rows.Clear()
@@ -432,6 +437,7 @@ function Render-Tab4ServerGrid {
     }
     finally {
         $dgv.ResumeLayout()
+        $script:Tab4Ui.SuppressPreviewEvent = $false
     }
 
     $net      = $script:AppState.NetworkInfo
@@ -454,21 +460,86 @@ function Get-Tab4SelectedBackupEntry {
     return $dgv.SelectedRows[0].Tag
 }
 
-# [H3 Fix + 비동기 경량 로더] 탭 4 활성 시에만 SMB 조회 + PreviewCache + UI 스레드 멈춤 차단
+# [H3 Fix + 비동기 경량 로더] 탭 4 활성 시에만 SMB 조회 + PreviewCache + 디바운스 + Dispose 보장
+function Clear-RetiredTab4Previews {
+    if (-not $script:Tab4Ui -or -not $script:Tab4Ui.RetiredPreviews) { return }
+    $remain = [System.Collections.Generic.List[object]]::new()
+    foreach ($item in $script:Tab4Ui.RetiredPreviews) {
+        if ($null -eq $item) { continue }
+        $arDone = ($null -eq $item.Async) -or $item.Async.IsCompleted
+        $rsDone = ($null -eq $item.Rs) -or ($item.Rs.RunspaceStateInfo.State -in @(
+            [System.Management.Automation.Runspaces.RunspaceState]::Closed,
+            [System.Management.Automation.Runspaces.RunspaceState]::Broken,
+            [System.Management.Automation.Runspaces.RunspaceState]::BeforeOpen
+        ))
+        if ($arDone -and $rsDone) {
+            if ($item.Ps) { try { $item.Ps.Dispose() } catch {} }
+            if ($item.Rs) { try { $item.Rs.Dispose() } catch {} }
+        } else {
+            $remain.Add($item)
+        }
+    }
+    $script:Tab4Ui.RetiredPreviews = $remain
+}
+
 function Stop-Tab4PreviewAsync {
+    if ($script:Tab4Ui.PreviewDebounceTimer) {
+        try { $script:Tab4Ui.PreviewDebounceTimer.Stop() } catch {}
+    }
     if ($script:Tab4Ui.PreviewTimer) {
         try { $script:Tab4Ui.PreviewTimer.Stop() } catch {}
     }
-    if ($script:Tab4Ui.PreviewPs) {
-        try { [void]$script:Tab4Ui.PreviewPs.BeginStop($null, $null) } catch {}
-        $script:Tab4Ui.PreviewPs = $null
-    }
-    if ($script:Tab4Ui.PreviewRs) {
-        try { $script:Tab4Ui.PreviewRs.CloseAsync() } catch {}
-        $script:Tab4Ui.PreviewRs = $null
-    }
+    $psRef = $script:Tab4Ui.PreviewPs
+    $rsRef = $script:Tab4Ui.PreviewRs
+    $arRef = $script:Tab4Ui.PreviewAsync
+    $script:Tab4Ui.PreviewPs       = $null
+    $script:Tab4Ui.PreviewRs       = $null
     $script:Tab4Ui.PreviewAsync    = $null
     $script:Tab4Ui.PreviewCacheKey = $null
+    $script:Tab4Ui.PreviewReqGen   = 0
+
+    if ($psRef -or $rsRef) {
+        $isIdleOrDone = ($null -eq $arRef) -or $arRef.IsCompleted
+        if ($isIdleOrDone) {
+            if ($psRef) { try { $psRef.Dispose() } catch {} }
+            if ($rsRef) {
+                try {
+                    if ($rsRef.RunspaceStateInfo.State -eq [System.Management.Automation.Runspaces.RunspaceState]::Opened) {
+                        $rsRef.Close()
+                    }
+                } catch {}
+                try { $rsRef.Dispose() } catch {}
+            }
+        } else {
+            if ($psRef) { try { [void]$psRef.BeginStop($null, $null) } catch {} }
+            if ($rsRef) { try { $rsRef.CloseAsync() } catch {} }
+            if ($script:Tab4Ui.RetiredPreviews) {
+                $script:Tab4Ui.RetiredPreviews.Add([pscustomobject]@{ Ps = $psRef; Rs = $rsRef; Async = $arRef })
+            }
+        }
+    }
+    Clear-RetiredTab4Previews
+}
+
+function Request-Tab4PreviewDebounced {
+    if ($script:Tab4Ui.SuppressPreviewEvent) { return }
+    if ($script:Ui.TabMain -and $script:Ui.TabMain.SelectedIndex -ne 3) { return }
+    $sel = Get-Tab4SelectedBackupEntry
+    if (-not $sel) {
+        Update-Tab4PreviewBox
+        return
+    }
+    $cacheKey = ([string]$sel.FullPath).ToLowerInvariant()
+    if ($script:Tab4Ui.PreviewCache.ContainsKey($cacheKey)) {
+        Update-Tab4PreviewBox
+        return
+    }
+    if ($script:Tab4Ui.PreviewDebounceTimer) {
+        $script:Tab4Ui.PreviewDebounceTimer.Stop()
+        $script:Tab4Ui.PreviewDebounceTimer.Start()
+    } else {
+        Update-Tab4PreviewBox
+    }
 }
 
 function Update-Tab4PreviewBox {
@@ -498,24 +569,29 @@ function Update-Tab4PreviewBox {
 
     try {
         $rs = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+        $script:Tab4Ui.PreviewRs = $rs
         $rs.ApartmentState = [System.Threading.ApartmentState]::MTA
         $rs.Open()
         $ps = [System.Management.Automation.PowerShell]::Create()
+        $script:Tab4Ui.PreviewPs = $ps
         $ps.Runspace = $rs
 
         $previewScript = {
             param([string]$FolderPath, [string]$FolderName, [int]$Gen)
             $outText = ''
+            $readOk  = $false
             try {
                 $repFile = Join-Path $FolderPath 'Migration_Report.txt'
                 if (Test-Path -LiteralPath $repFile) {
                     $outText = [IO.File]::ReadAllText($repFile, [Text.Encoding]::UTF8)
+                    $readOk  = $true
                 } else {
                     $jsonFile = Join-Path $FolderPath 'PrinterBackup.json'
                     if (Test-Path -LiteralPath $jsonFile) {
                         $d = [IO.File]::ReadAllText($jsonFile, [Text.Encoding]::UTF8) | ConvertFrom-Json
                         $pNames = @($d.Printers | Where-Object { $null -ne $_ } | ForEach-Object { "  - $($_.Name) [$($_.PortName)]" }) -join "`r`n"
                         $outText = "원본 PC: $($d.SourceComputer) ($($d.SourceIP)) | 일시: $($d.ExportedAt)`r`n프린터 목록:`r`n$pNames"
+                        $readOk  = $true
                     } else {
                         $outText = "선택한 폴더($FolderName)에 Migration_Report.txt 또는 PrinterBackup.json이 없습니다."
                     }
@@ -523,12 +599,11 @@ function Update-Tab4PreviewBox {
             } catch {
                 $outText = "미리보기 읽기 실패: $($_.Exception.Message)"
             }
-            return [pscustomobject]@{ Gen = $Gen; Text = $outText }
+            return [pscustomobject]@{ Gen = $Gen; Ok = $readOk; Text = $outText }
         }
 
         [void]$ps.AddScript($previewScript).AddArgument([string]$sel.FullPath).AddArgument([string]$sel.Name).AddArgument($genNow)
-        $script:Tab4Ui.PreviewRs       = $rs
-        $script:Tab4Ui.PreviewPs       = $ps
+        $script:Tab4Ui.PreviewReqGen   = $genNow
         $script:Tab4Ui.PreviewCacheKey = $cacheKey
         $script:Tab4Ui.PreviewAsync    = $ps.BeginInvoke()
         if ($script:Tab4Ui.PreviewTimer) { $script:Tab4Ui.PreviewTimer.Start() }
@@ -568,7 +643,10 @@ function Initialize-Tab4ServerUi {
     $txtSearch = New-Object System.Windows.Forms.TextBox
     $txtSearch.Size   = New-Object System.Drawing.Size(220, 24)
     $txtSearch.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 0)
-    $txtSearch.Add_TextChanged({ Render-Tab4ServerGrid })
+    $txtSearch.Add_TextChanged({
+        Render-Tab4ServerGrid
+        Request-Tab4PreviewDebounced
+    })
 
     $btnRefSrv = New-StyledButton -Text '서버 목록 새로고침' -Width 138 -Height 28 -BackColor ([System.Drawing.Color]::FromArgb(51, 65, 85)) -RegisterBusy
     $btnRefSrv.Margin = New-Object System.Windows.Forms.Padding(0, 1, 0, 0)
@@ -650,8 +728,10 @@ function Initialize-Tab4ServerUi {
         [void]$dgv.Columns.Add($c)
     }
     $dgv.Add_SelectionChanged({
-        Update-Tab4PreviewBox
-        Sync-AllUiButtonStates
+        if (-not $script:Tab4Ui.SuppressPreviewEvent) {
+            Request-Tab4PreviewDebounced
+            Sync-AllUiButtonStates
+        }
     })
 
     # [3] 하단 리포트 미리보기 창
@@ -760,36 +840,72 @@ function Initialize-Tab4ServerUi {
     $parent.Controls.Add($pnlTop)
     $dgv.BringToFront()
 
+    $prevDebounceTimer = New-Object System.Windows.Forms.Timer
+    $prevDebounceTimer.Interval = 150
+    $prevDebounceTimer.Add_Tick({
+        try {
+            if ($script:Tab4Ui.PreviewDebounceTimer) { $script:Tab4Ui.PreviewDebounceTimer.Stop() }
+            Update-Tab4PreviewBox
+        } catch {
+            if ($script:Tab4Ui.PreviewDebounceTimer) { try { $script:Tab4Ui.PreviewDebounceTimer.Stop() } catch {} }
+        }
+    })
+    $script:Tab4Ui.PreviewDebounceTimer = $prevDebounceTimer
+
     $prevTimer = New-Object System.Windows.Forms.Timer
     $prevTimer.Interval = 120
     $prevTimer.Add_Tick({
         try {
             if ($script:Tab4Ui.PreviewAsync -and $script:Tab4Ui.PreviewAsync.IsCompleted) {
                 $script:Tab4Ui.PreviewTimer.Stop()
-                $psRef   = $script:Tab4Ui.PreviewPs
-                $rsRef   = $script:Tab4Ui.PreviewRs
-                $arRef   = $script:Tab4Ui.PreviewAsync
-                $cKeyRef = $script:Tab4Ui.PreviewCacheKey
+                $psRef     = $script:Tab4Ui.PreviewPs
+                $rsRef     = $script:Tab4Ui.PreviewRs
+                $arRef     = $script:Tab4Ui.PreviewAsync
+                $cKeyRef   = $script:Tab4Ui.PreviewCacheKey
+                $reqGenRef = [int]$script:Tab4Ui.PreviewReqGen
                 $script:Tab4Ui.PreviewPs       = $null
                 $script:Tab4Ui.PreviewRs       = $null
                 $script:Tab4Ui.PreviewAsync    = $null
                 $script:Tab4Ui.PreviewCacheKey = $null
+                $script:Tab4Ui.PreviewReqGen   = 0
                 try {
                     $out = @($psRef.EndInvoke($arRef)) | Select-Object -Last 1
-                    if ($out -and [int]$out.Gen -eq [int]$script:Tab4Ui.PreviewGen) {
-                        if ($cKeyRef) { $script:Tab4Ui.PreviewCache[$cKeyRef] = [string]$out.Text }
-                        if ($script:Tab4Ui.TxtPreview -and -not $script:Tab4Ui.TxtPreview.IsDisposed) {
-                            $script:Tab4Ui.TxtPreview.Text = [string]$out.Text
+                    if ($reqGenRef -eq [int]$script:Tab4Ui.PreviewGen) {
+                        if ($out -and [int]$out.Gen -eq [int]$script:Tab4Ui.PreviewGen) {
+                            if ($cKeyRef -and [bool]$out.Ok) {
+                                $script:Tab4Ui.PreviewCache[$cKeyRef] = [string]$out.Text
+                            }
+                            if ($script:Tab4Ui.TxtPreview -and -not $script:Tab4Ui.TxtPreview.IsDisposed) {
+                                $script:Tab4Ui.TxtPreview.Text = [string]$out.Text
+                            }
+                        } else {
+                            $errInfo = '미리보기 응답 없음'
+                            if ($psRef.HadErrors -and $psRef.Streams.Error.Count -gt 0) {
+                                $errInfo = ($psRef.Streams.Error | ForEach-Object { $_.ToString() }) -join '; '
+                            }
+                            if ($script:Tab4Ui.TxtPreview -and -not $script:Tab4Ui.TxtPreview.IsDisposed) {
+                                $script:Tab4Ui.TxtPreview.Text = "미리보기 읽기 실패: $errInfo"
+                            }
                         }
                     }
-                } catch {}
+                } catch {
+                    if ($reqGenRef -eq [int]$script:Tab4Ui.PreviewGen -and $script:Tab4Ui.TxtPreview -and -not $script:Tab4Ui.TxtPreview.IsDisposed) {
+                        $script:Tab4Ui.TxtPreview.Text = "미리보기 읽기 실패: $($_.Exception.Message)"
+                    }
+                }
                 finally {
                     if ($psRef) { try { $psRef.Dispose() } catch {} }
                     if ($rsRef) { try { $rsRef.Close(); $rsRef.Dispose() } catch {} }
+                    Clear-RetiredTab4Previews
                 }
+            } else {
+                Clear-RetiredTab4Previews
             }
         } catch {
-            try { $script:Tab4Ui.PreviewTimer.Stop() } catch {}
+            try { Stop-Tab4PreviewAsync } catch {}
+            if ($script:Tab4Ui.TxtPreview -and -not $script:Tab4Ui.TxtPreview.IsDisposed) {
+                $script:Tab4Ui.TxtPreview.Text = "미리보기 처리 오류: $($_.Exception.Message)"
+            }
         }
     })
     $script:Tab4Ui.PreviewTimer = $prevTimer
@@ -822,9 +938,12 @@ function Start-AsanPrinterManagerApp {
     Initialize-Tab4ServerUi
     Sync-AllUiButtonStates
 
-    # 탭 전환 시 지연 로드 처리 (탭 3 자동 갱신 / [H3] 탭 4 진입 시 미리보기 갱신)
+    # 탭 전환 시 지연 로드 처리 (탭 4 이탈 시 미리보기 중단 / 탭 3 자동 갱신 / 탭 4 진입 시 미리보기 갱신)
     $script:Ui.TabMain.Add_SelectedIndexChanged({
         $idx = $script:Ui.TabMain.SelectedIndex
+        if ($idx -ne 3) {
+            Stop-Tab4PreviewAsync
+        }
         if ($idx -eq 2 -and (-not $script:AsyncState.IsBusy)) {
             if (-not $script:Tab3Ui.HasLoadedOnce -or $script:Tab3Ui.NeedsRefresh) {
                 Invoke-Tab3RefreshAsync
@@ -862,8 +981,10 @@ function Start-AsanPrinterManagerApp {
         [void]$script:Ui.Form.ShowDialog()
     } finally {
         Stop-Tab4PreviewAsync
-        if ($script:Tab4Ui.PreviewTimer) { try { $script:Tab4Ui.PreviewTimer.Dispose() } catch {} }
-        if ($script:AsyncState.PollTimer) { try { $script:AsyncState.PollTimer.Dispose() } catch {} }
+        if ($script:Tab4Ui.PreviewDebounceTimer) { try { $script:Tab4Ui.PreviewDebounceTimer.Dispose() } catch {}; $script:Tab4Ui.PreviewDebounceTimer = $null }
+        if ($script:Tab4Ui.PreviewTimer) { try { $script:Tab4Ui.PreviewTimer.Dispose() } catch {}; $script:Tab4Ui.PreviewTimer = $null }
+        try { Clear-RetiredTab4Previews } catch {}
+        if ($script:AsyncState.PollTimer) { try { $script:AsyncState.PollTimer.Dispose() } catch {}; $script:AsyncState.PollTimer = $null }
         if ($script:Ui.Form) { try { $script:Ui.Form.Dispose() } catch {} }
     }
 }

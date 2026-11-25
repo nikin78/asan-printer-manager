@@ -414,7 +414,7 @@ function Load-Tab2BackupSourceAsync {
         $deferred  = Test-BackupDataDeferred -BackupData $meta.Data -RunLiveProbe:$shouldProbe
         $localLpts = @(Get-DeviceManagerLptPorts)
 
-        # 특수장비 설치파일/서버(.drs)/LPT 정보를 백그라운드에서 선계산하여 UI 스레드 멈춤 원천 차단
+        # 특수장비 설치파일/로컬(.drx/.drs)/LPT 정보를 백그라운드에서 선계산하여 UI 스레드 멈춤 원천 차단
         $specInfoMap = @{}
         foreach ($sr in @($deferred.Printers | Where-Object { $_.SpecialType -ne 'STANDARD' })) {
             $ck = "$($sr.SpecialType)|$($sr.PrinterName)"
@@ -638,8 +638,15 @@ function Start-Tab2RestoreExecution {
 
         $extra   = [System.Collections.Generic.List[string]]::new()
         $samList = @($data.SamFallbackNames)
+        $ztPrefsList = @()
+        if ($data.PSObject.Properties.Name -contains 'ZtManualPrefsNames' -and $data.ZtManualPrefsNames) {
+            $ztPrefsList = @($data.ZtManualPrefsNames)
+        }
         if ($samList.Count -gt 0) {
             $extra.Add("[중요 경고] 삼성 범용 드라이버(UPD 3) 사용 프린터: $($samList -join ', ') — 테스트 페이지 오류 시 모델 전용 드라이버 교체 및 장치설정(PCL6) 필요!")
+        }
+        if ($ztPrefsList.Count -gt 0) {
+            $extra.Add("[ZT411 인쇄 기본 설정 마무리 필요] 대상: $($ztPrefsList -join ', ') — 골든 이미지 드라이버로 대체 복원되었거나 백업된 인쇄 기본 설정(.dat/.reg)이 미확인되었습니다. 프린터 속성 > 인쇄 기본 설정(또는 폴더 내 용지별 .drx/.drs 가져오기)을 직접 마무리하세요.")
         }
         foreach ($f in @($data.Failures)) {
             $extra.Add("[복원 실패] $($f.PrinterName) ($($f.PortName)): $($f.Reason)")
@@ -659,7 +666,7 @@ function Start-Tab2RestoreExecution {
         $manualSpecs = @($script:Tab2Ui.SpecialRows | Where-Object { -not ($_.SpecialType -eq 'ZEBRA_ZT411' -and $_.PortKind -eq 'TCPIP') })
         if ($script:AppState.AuthFailedHosts.Count -gt 0) {
             Set-Tab2HelperVisibility -Expanded $true -SelectTabIndex 0
-        } elseif ($manualSpecs.Count -gt 0 -or $data.NeedsUsbReplug) {
+        } elseif ($manualSpecs.Count -gt 0 -or $data.NeedsUsbReplug -or $ztPrefsList.Count -gt 0) {
             Set-Tab2HelperVisibility -Expanded $true -SelectTabIndex 1
         }
         Sync-AllUiButtonStates
@@ -679,6 +686,13 @@ function Start-Tab2RestoreExecution {
         $sumLines.Add("• 복원 실패 항목 : ${failCnt}건")
         $sumLines.Add("• 감지된 특수장비: ${specCnt}대 (하단 특수 프린터 도우미 확인)")
 
+        if ($ztPrefsList.Count -gt 0) {
+            $sumLines.Add("")
+            $sumLines.Add("[ZT411 인쇄 기본 설정 마무리 필요]")
+            $sumLines.Add("대상: $($ztPrefsList -join ', ')")
+            $sumLines.Add("-> 골든 이미지 드라이버로 대체 복원되었거나 백업된 인쇄 기본 설정(.dat/.reg)이 미확인되었습니다.")
+            $sumLines.Add("-> 하단 특수 프린터 도우미의 [속성 열기] > 인쇄 기본 설정에서 용지/농도를 마무리하거나 폴더 내 용지별 .drx/.drs 파일을 불러와 주세요.")
+        }
         if ($data.NeedsUsbReplug) {
             $sumLines.Add("")
             $sumLines.Add("[USB 바코드 재연결 안내]")
@@ -695,7 +709,7 @@ function Start-Tab2RestoreExecution {
             $sumLines.Add("[공유 호스트 인증 / 동일 SID 충돌 감지]")
             $sumLines.Add("-> 하단 [공유 인증/SID 조치] 탭에서 암호 재입력 또는 스풀러 초기화 후 [실패 항목만 재시도]를 누르세요.")
         }
-        if ($failCnt -eq 0 -and $manualSpecs.Count -eq 0) {
+        if ($failCnt -eq 0 -and $manualSpecs.Count -eq 0 -and $ztPrefsList.Count -eq 0) {
             $sumLines.Add("")
             $sumLines.Add("[3. 검증/테스트] 탭으로 이동하여 일반 프린터 테스트 인쇄를 진행하세요.")
         }
@@ -711,7 +725,7 @@ function Start-Tab2RestoreExecution {
             }
         } else {
             $icon = [System.Windows.Forms.MessageBoxIcon]::Information
-            if ($samList.Count -gt 0 -or $data.NeedsUsbReplug) { $icon = [System.Windows.Forms.MessageBoxIcon]::Warning }
+            if ($samList.Count -gt 0 -or $data.NeedsUsbReplug -or $ztPrefsList.Count -gt 0) { $icon = [System.Windows.Forms.MessageBoxIcon]::Warning }
             [void](Show-AsanMessageBox -Text ($sumLines -join "`r`n") -Caption '복원 완료 요약' -Buttons 'OK' -Icon $icon)
         }
     }
@@ -1253,7 +1267,7 @@ function Initialize-Tab2RestoreUi {
     $cmbSpec.Margin        = New-Object System.Windows.Forms.Padding(0, 2, 6, 2)
     $cmbSpec.Add_SelectedIndexChanged({ Update-Tab2SpecialSelection })
 
-    $btnSpecInst = New-StyledButton -Text '1단계: 전용 설치 실행' -Width 146 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(124, 58, 237))
+    $btnSpecInst = New-StyledButton -Text '1단계: 전용 설치 실행' -Width 146 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(124, 58, 237)) -RegisterBusy
     $btnSpecInst.Font    = $script:FontSmall
     $btnSpecInst.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 6, 2)
     $btnSpecInst.Enabled = $false
@@ -1292,7 +1306,7 @@ function Initialize-Tab2RestoreUi {
     })
 
     # [H4 Fix] 프린터 미설치 시 오류 팝업 대신 친절한 안내 표시
-    $btnSpecProps = New-StyledButton -Text '속성 열기' -Width 72 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(51, 65, 85))
+    $btnSpecProps = New-StyledButton -Text '속성 열기' -Width 72 -Height 26 -BackColor ([System.Drawing.Color]::FromArgb(51, 65, 85)) -RegisterBusy
     $btnSpecProps.Font    = $script:FontSmall
     $btnSpecProps.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 0, 2)
     $btnSpecProps.Enabled = $false

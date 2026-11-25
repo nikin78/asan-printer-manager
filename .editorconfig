@@ -1,0 +1,13 @@
+root = true
+
+[*.ps1]
+charset = utf-8-bom
+end_of_line = crlf
+
+[*.bat]
+charset = utf-8
+end_of_line = crlf
+
+[*.md]
+charset = utf-8
+end_of_line = crlf
