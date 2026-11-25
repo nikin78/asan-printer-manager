@@ -45,30 +45,29 @@ function Test-WindowsProtectedPrintMode {
     }
 
     if ($policyEnabled) {
-        $title = '[경고] 그룹 정책으로 Windows 보호 인쇄 모드(WPP)가 활성화되어 있습니다! (서드파티 드라이버 복원 차단)'
+        $title = '그룹 정책으로 Windows 보호 인쇄 모드가 켜져 있어 드라이버 복원이 차단됩니다.'
         $guide = @(
-            '현재 PC에 그룹 정책(GPO)으로 Windows 보호 인쇄 모드(WPP)가 강제 적용되어 있어,',
-            '교세라·삼성·바코드·진료카드(SIP-30M) 등 서드파티 프린터 드라이버 설치 및 복원이 전면 차단됩니다.',
+            '현재 PC에 그룹 정책(GPO)으로 Windows 보호 인쇄 모드가 적용되어 있어',
+            '교세라, 삼성, 바코드, 진료카드 등 제조사 전용 드라이버를 설치하거나 복원할 수 없습니다.',
             '',
-            '[조치 후 프로그램 이용 방법]',
-            '1. 실행(Win+R) -> gpedit.msc 실행',
-            '2. [컴퓨터 구성] -> [관리 템플릿] -> [프린터] -> [Windows 보호 인쇄 구성] 더블클릭',
-            '3. [사용 안 함] 또는 [구성되지 않음] 선택 후 확인 -> 관리자 CMD에서 gpupdate /force 실행',
-            '4. 도메인/보안 정책으로 변경이 불가하면 IT서비스팀 시스템 관리자에게 정책 해제를 요청하세요.',
-            '5. 정책 해제 완료 후 본 프로그램 상단 [새로고침(F5)]을 눌러 경고가 사라진 뒤 복원을 진행하세요.'
+            '해결 방법',
+            '1. 아래 그룹 정책 열기 버튼을 누르거나 Win+R에서 gpedit.msc를 실행해 주세요.',
+            '2. 컴퓨터 구성 > 관리 템플릿 > 프린터 > Windows 보호 인쇄 구성을 열어 주세요.',
+            '3. 사용 안 함 또는 구성되지 않음으로 변경한 뒤 관리자 CMD에서 gpupdate /force를 실행해 주세요.',
+            '4. 보안 정책으로 변경할 수 없다면 IT서비스팀 시스템 관리자에게 정책 해제를 요청해 주세요.',
+            '5. 정책을 해제한 뒤 상단 새로고침을 눌러 경고가 사라지면 복원을 진행해 주세요.'
         ) -join "`r`n"
     } else {
-        $title = '[경고] Windows 보호 인쇄 모드(WPP)가 켜져 있습니다! 해제 후 복원을 진행하세요.'
+        $title = 'Windows 보호 인쇄 모드가 켜져 있어 새 PC 드라이버 복원이 차단됩니다.'
         $guide = @(
-            '현재 PC에 Windows 11 [Windows 보호 인쇄 모드]가 활성화되어 있어,',
-            '기존 Win 10 백업 드라이버 및 제조사 전용 드라이버(v3/v4) 복원이 차단됩니다.',
+            '현재 PC에 Windows 보호 인쇄 모드가 켜져 있어',
+            '기존 PC에서 백업한 드라이버와 제조사 전용 드라이버를 복원할 수 없습니다.',
             '',
-            '[조치 후 프로그램 이용 방법]',
-            '1. 아래 [Windows 프린터 설정 열기] 버튼을 누르거나 Windows 설정(Win+I) 실행',
-            '2. [Bluetooth 및 장치] -> [프린터 및 스캐너]로 이동',
-            '3. 하단 [프린터 기본 설정] 항목의 [Windows 보호 인쇄 모드]에서 [끄기] 클릭 후 확인',
-            '4. 해제가 끝나면 본 프로그램 상단 [새로고침(F5)]을 눌러 경고 배너가 사라진 것을 확인한 뒤',
-            '   [선택 항목 복원 시작]을 진행하세요.'
+            '해결 방법',
+            '1. 아래 Windows 프린터 설정 열기 버튼을 눌러 주세요.',
+            '2. Bluetooth 및 장치 > 프린터 및 스캐너 화면으로 이동해 주세요.',
+            '3. 아래쪽 프린터 기본 설정에서 Windows 보호 인쇄 모드를 끄기로 변경해 주세요.',
+            '4. 설정을 끄고 상단 새로고침을 눌러 경고 배너가 사라지면 복원을 진행해 주세요.'
         ) -join "`r`n"
     }
 
@@ -547,7 +546,7 @@ function Get-SpecialPrinterProfile {
         return [pscustomobject]@{
             IsSpecial          = $true
             Type               = 'SIP30M_IDCARD'
-            Label              = '진료카드(SIP-30M)'
+            Label              = '진료카드 SIP-30M'
             ExcludeFromPcl6    = $true
             ExcludeBulkTest    = $true
             Win11ReinstallOnly = $false
@@ -560,7 +559,7 @@ function Get-SpecialPrinterProfile {
         return [pscustomobject]@{
             IsSpecial          = $true
             Type               = 'SEWOO_TE201'
-            Label              = '네임바코드(세우)'
+            Label              = '네임바코드 세우'
             ExcludeFromPcl6    = $true
             ExcludeBulkTest    = $true
             Win11ReinstallOnly = $true
@@ -573,7 +572,7 @@ function Get-SpecialPrinterProfile {
         return [pscustomobject]@{
             IsSpecial          = $true
             Type               = 'ZEBRA_ZT411'
-            Label              = '라벨(ZT410/411)'
+            Label              = '라벨 ZT410/411'
             ExcludeFromPcl6    = $true
             ExcludeBulkTest    = $true
             Win11ReinstallOnly = $false
@@ -586,7 +585,7 @@ function Get-SpecialPrinterProfile {
         return [pscustomobject]@{
             IsSpecial          = $true
             Type               = 'ZD410_411'
-            Label              = '검사/투약(ZD410)'
+            Label              = '검사·투약 ZD410'
             ExcludeFromPcl6    = $true
             ExcludeBulkTest    = $true
             Win11ReinstallOnly = $false
@@ -599,7 +598,7 @@ function Get-SpecialPrinterProfile {
         return [pscustomobject]@{
             IsSpecial          = $true
             Type               = 'BIXOLON_TX220'
-            Label              = '팔찌바코드(TX220)'
+            Label              = '팔찌바코드 TX220'
             ExcludeFromPcl6    = $true
             ExcludeBulkTest    = $true
             Win11ReinstallOnly = $false
@@ -614,7 +613,7 @@ function Get-SpecialPrinterProfile {
             return [pscustomobject]@{
                 IsSpecial          = $true
                 Type               = 'EPSON_TMT88_LPT'
-                Label              = 'LPT1무드라이버(TM-T88)'
+                Label              = 'LPT1 무드라이버'
                 ExcludeFromPcl6    = $true
                 ExcludeBulkTest    = $true
                 Win11ReinstallOnly = $false
@@ -626,7 +625,7 @@ function Get-SpecialPrinterProfile {
         return [pscustomobject]@{
             IsSpecial          = $true
             Type               = 'OTHER_SPECIAL'
-            Label              = '영수증/라벨(TM-T88)'
+            Label              = '영수증 TM-T88'
             ExcludeFromPcl6    = $true
             ExcludeBulkTest    = $true
             Win11ReinstallOnly = $false
@@ -639,7 +638,7 @@ function Get-SpecialPrinterProfile {
         return [pscustomobject]@{
             IsSpecial          = $true
             Type               = 'OTHER_SPECIAL'
-            Label              = '기타 라벨/특수'
+            Label              = '기타 특수장비'
             ExcludeFromPcl6    = $true
             ExcludeBulkTest    = $true
             Win11ReinstallOnly = $false
@@ -1659,20 +1658,20 @@ function Get-LocalPrinterDiagnostics {
             $wsdTargetMode  = $wsd.RecommendedMode
             $wsdTargetShare = $wsd.RecommendedShare
             $statusCode     = $wsd.Status
-            $statusText     = '애매함(WSD)'
-            if ($wsd.Status -eq 'WsdConvert') { $statusText = 'WSD전환대상' }
+            $statusText     = 'WSD 확인 필요'
+            if ($wsd.Status -eq 'WsdConvert') { $statusText = 'WSD 전환' }
             $reason         = $wsd.Reason
         } elseif ($OfflineMode) {
             $statusCode = 'OfflineUnverified'
-            $statusText = '미검증(오프라인)'
-            $reason     = '오프라인 모드 — 생존 검증 생략 후 전체 백업 (새 PC 복원 시 지연 검증 수행)'
+            $statusText = '오프라인 대기'
+            $reason     = '오프라인 상태라 연결 확인을 건너뛰었습니다. 새 PC에서 사내망 연결 시 자동으로 확인합니다.'
         } elseif ($portKind -eq 'TCPIP') {
             $chk = Test-TcpIpPrinterHealth -HostAddress $hostAddress -Protocol $protocol -PortNumber ([int]$portNumber) -SkipAliveFilter:$spec.SkipAliveFilter
             $statusCode = $chk.Status
             $reason     = $chk.Reason
             if ($statusCode -eq 'Healthy') { $statusText = '정상' }
-            elseif ($statusCode -eq 'Ambiguous') { $statusText = '애매함' }
-            else { $statusText = '비활성의심' }
+            elseif ($statusCode -eq 'Ambiguous') { $statusText = '응답 확인 필요' }
+            else { $statusText = '응답 없음' }
         } elseif ($portKind -eq 'LOCAL_UNC' -or $portKind -eq 'SHARED_UNC') {
             $targetUnc = $port
             if ($connName) { $targetUnc = $connName }
@@ -1680,19 +1679,19 @@ function Get-LocalPrinterDiagnostics {
             $statusCode = $chk.Status
             $reason     = $chk.Reason
             if ($statusCode -eq 'Healthy') { $statusText = '정상' }
-            elseif ($statusCode -eq 'AuthOrSidConflict') { $statusText = '인증/SID의심' }
-            elseif ($statusCode -eq 'Ambiguous') { $statusText = '애매함' }
-            else { $statusText = '비활성의심' }
+            elseif ($statusCode -eq 'AuthOrSidConflict') { $statusText = '인증 확인 필요' }
+            elseif ($statusCode -eq 'Ambiguous') { $statusText = '응답 확인 필요' }
+            else { $statusText = '응답 없음' }
         } elseif ($portKind -in @('USB', 'LPT', 'COM')) {
             $statusCode = 'Healthy'
-            $statusText = '정상(직결)'
-            $reason     = "로컬 직결 포트($portKind)"
+            $statusText = '정상'
+            $reason     = "로컬 직결 포트 ($portKind)"
         }
 
         if ($spec.IsSpecial) {
-            if ($spec.Win11ReinstallOnly) { $reason = "[Win11 전용 재설치 필수] $reason" }
-            if ($spec.IsSubPcShared)      { $reason = "[서브 PC 공유 바코드 — 출력 불가 시 유지보수팀 인계] $reason" }
-            if ($statusCode -eq 'Healthy') { $statusText = "특수($($spec.Label))" }
+            if ($spec.Win11ReinstallOnly) { $reason = "새 PC 전용 설치 필요 · $reason" }
+            if ($spec.IsSubPcShared)      { $reason = "공유 바코드 장비 · 출력 불가 시 유지보수팀 인계 · $reason" }
+            if ($statusCode -eq 'Healthy') { $statusText = '특수 장비' }
         }
 
         $results.Add([pscustomobject]@{

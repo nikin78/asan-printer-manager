@@ -67,7 +67,7 @@ function Update-Tab2HelperHeightSafe {
     if ($script:Ui.TabRestore -and -not $script:Ui.TabRestore.IsDisposed) {
         $tabH = [int]$script:Ui.TabRestore.ClientSize.Height
         if ($tabH -gt 200) {
-            $nonGridFixed = 56 + 46 + 30 + 44 + 10  # Source + Notes + GridBar + Action + TabPadding
+            $nonGridFixed = 56 + 44 + 30 + 44 + 10  # Source + Notes + GridBar + Action + TabPadding
             $maxHelperH   = $tabH - $nonGridFixed - 84
             $minHelperH   = 104 + $extra
             if ($maxHelperH -lt $minHelperH) { $maxHelperH = $minHelperH }
@@ -94,8 +94,8 @@ function Set-Tab2HelperVisibility {
         $script:Tab2Ui.PnlHelper.Visible = $Expanded
     }
     if ($script:Tab2Ui.BtnToggleHelper) {
-        if ($Expanded) { $script:Tab2Ui.BtnToggleHelper.Text = '도우미 접기 ▼' }
-        else { $script:Tab2Ui.BtnToggleHelper.Text = '특수·공유 도우미 ▲' }
+        if ($Expanded) { $script:Tab2Ui.BtnToggleHelper.Text = '도우미 접기' }
+        else { $script:Tab2Ui.BtnToggleHelper.Text = '특수·공유 도우미 열기' }
     }
     if ($Expanded -and $SelectTabIndex -ge 0 -and $script:Tab2Ui.TabHelper -and $SelectTabIndex -lt $script:Tab2Ui.TabHelper.TabPages.Count) {
         $script:Tab2Ui.TabHelper.SelectedIndex = $SelectTabIndex
@@ -124,11 +124,11 @@ function Update-Tab2ServerDropdown {
         for ($i = 0; $i -lt $sorted.Count; $i++) {
             $e      = $sorted[$i]
             $prefix = ''
-            if ($e.MatchRank -eq 1) { $prefix = '[자동매칭★] ' }
-            elseif ($e.IsMatched)   { $prefix = '[유사매칭] ' }
+            if ($e.MatchRank -eq 1) { $prefix = '자동 매칭 · ' }
+            elseif ($e.IsMatched)   { $prefix = '유사 매칭 · ' }
 
             $dtStr = $e.LastWriteTime.ToString('MM-dd HH:mm')
-            $label = "$prefix$($e.Name)  ($dtStr)"
+            $label = "$prefix$($e.Name)  $dtStr"
             [void]$cmb.Items.Add($label)
 
             if ($prevPath -and $e.FullPath -ieq $prevPath) { $selIdx = $i }
@@ -161,13 +161,17 @@ function Render-Tab2NotesBanner {
         $tgt = [string]$n.Target
         $msg = [string]$n.Message
         if ([string]::IsNullOrWhiteSpace($lvl) -and [string]::IsNullOrWhiteSpace($tgt) -and [string]::IsNullOrWhiteSpace($msg)) { continue }
-        $lines.Add("[$lvl] $tgt`: $msg")
+        if ([string]::IsNullOrWhiteSpace($tgt)) {
+            $lines.Add($msg)
+        } else {
+            $lines.Add("$tgt · $msg")
+        }
     }
 
     if ($lines.Count -eq 0) {
         $txt.BackColor = $script:Theme.AsanMint
         $txt.ForeColor = $script:Theme.AsanDeep
-        $txt.Text      = '백업 시점 특이사항 없음 — 아래 체크된 프린터를 확인한 뒤 [선택 항목 복원 시작] 버튼을 누르세요.'
+        $txt.Text      = '특이사항이 없습니다. 아래에서 복원할 프린터를 확인한 뒤 복원을 시작해 주세요.'
     } else {
         $txt.BackColor = $script:Theme.AsanOrangeTint
         $txt.ForeColor = $script:Theme.AsanOrangeText
@@ -183,7 +187,7 @@ function Update-Tab2GridSummary {
     foreach ($r in $dgv.Rows) {
         if ($r.Cells[0].Value -eq $true) { $sel++ }
     }
-    $script:Tab2Ui.LblGridSummary.Text = "복원 대상 선택: ${sel} / ${total}대"
+    $script:Tab2Ui.LblGridSummary.Text = "선택 ${sel} / ${total}대"
     Sync-AllUiButtonStates
 }
 
@@ -198,7 +202,7 @@ function Render-Tab2RestoreGrid {
 
         foreach ($p in $rows) {
             $defMark = ''
-            if ($p.IsDefault) { $defMark = '★' }
+            if ($p.IsDefault) { $defMark = '기본' }
 
             $portDisp = [string]$p.PortName
             if ($p.PortKind -eq 'WSD' -and -not [string]::IsNullOrWhiteSpace([string]$p.WsdTargetIp)) {
@@ -226,7 +230,12 @@ function Render-Tab2RestoreGrid {
             $gridRow     = $dgv.Rows[$rIdx]
             $gridRow.Tag = $p
 
-            # [H4 Fix] Win 11 전용 설치(세우테크) 및 LPT1 무드라이버(EPSON TM-T88) 체크박스 셀 잠금
+            if ($p.IsDefault) {
+                $gridRow.Cells[1].Style.ForeColor = $script:Theme.AsanGreen
+                $gridRow.Cells[1].Style.Font      = $script:FontBold
+            }
+
+            # [H4 Fix] 전용 설치(세우테크) 및 LPT1 무드라이버(EPSON TM-T88) 체크박스 셀 잠금
             $stCell = $gridRow.Cells[2]
             $stCell.Style.Font = $script:FontBold
             if ($isLockedSpec) {
@@ -239,7 +248,7 @@ function Render-Tab2RestoreGrid {
                 $stCell.Style.BackColor = $script:Theme.SpecialTint
                 $stCell.Style.ForeColor = $script:Theme.SpecialPurple
             } elseif ($p.StatusCode -eq 'WsdConvert') {
-                $stCell.Style.BackColor = [System.Drawing.Color]::FromArgb(232, 243, 243)
+                $stCell.Style.BackColor = [System.Drawing.Color]::FromArgb(226, 243, 249)
                 $stCell.Style.ForeColor = $script:Theme.AsanLight
             } elseif ($p.StatusCode -eq 'AuthOrSidConflict') {
                 $gridRow.DefaultCellStyle.BackColor = $script:Theme.DangerRedTint
@@ -250,7 +259,7 @@ function Render-Tab2RestoreGrid {
                 $stCell.Style.ForeColor = $script:Theme.AsanOrangeText
             } else {
                 $stCell.Style.BackColor = $script:Theme.AsanMint
-                $stCell.Style.ForeColor = $script:Theme.AsanGreen
+                $stCell.Style.ForeColor = $script:Theme.AsanDeep
             }
         }
     }
@@ -280,7 +289,7 @@ function Sync-Tab2GridSelectionToState {
 # ============================================================================
 function Update-Tab2AuthPanel {
     $hosts = @($script:AppState.AuthFailedHosts)
-    $script:Tab2Ui.TpAuth.Text = " 공유 인증 / SID 조치 ($($hosts.Count)건) "
+    $script:Tab2Ui.TpAuth.Text = " 공유 인증 · SID 해결 ($($hosts.Count)) "
 
     $cmb = $script:Tab2Ui.CmbAuthHost
     $cmb.BeginUpdate()
@@ -304,13 +313,13 @@ function Update-Tab2AuthPanel {
         $first = $hosts[0]
         $mySid = $script:AppState.LocalSid
         $script:Tab2Ui.TxtAuthInfo.Text = @(
-            "[인증/SID 충돌 의심 호스트: $($first.HostName)] $($first.Reason)",
-            "• 1단계: 메인 PC 로그인 암호가 변경된 경우 위 칸에 ID/암호를 입력하고 [재인증 및 검증]을 누르세요.",
-            "• 2단계: 암호가 맞는데도 거부되면 골든 이미지 동일 SID 충돌입니다. (내 PC SID: $mySid)",
-            "         메인 PC에서도 본 도구를 열어 상단 SID를 대조한 뒤, 메인 PC SID 변경/스풀러 초기화 후 [스풀러·자격증명 초기화 후 재연결]을 누르세요."
+            "인증 확인 대상: $($first.HostName) · $($first.Reason)",
+            "1. 공유 메인 PC 암호가 바뀌었다면 위 칸에 아이디와 암호를 입력하고 '다시 인증'을 눌러 주세요.",
+            "2. 암호가 맞는데도 연결이 거부되면 동일 SID 충돌입니다. 현재 PC SID는 $mySid 입니다.",
+            "   메인 PC의 SID를 변경한 뒤 위 '스풀러 초기화 후 재연결'을 눌러 주세요."
         ) -join "`r`n"
     } else {
-        $script:Tab2Ui.TxtAuthInfo.Text = "인증 실패 또는 SID 충돌이 감지된 공유 호스트가 없습니다. (특정 호스트 IP를 직접 입력해 수동 재인증/스풀러 초기화도 가능합니다.)"
+        $script:Tab2Ui.TxtAuthInfo.Text = '인증 오류가 감지된 공유 PC가 없습니다. 필요하면 호스트 IP를 직접 입력해 다시 인증하거나 스풀러를 초기화할 수 있습니다.'
     }
 }
 
@@ -356,11 +365,11 @@ function Update-Tab2SpecialSelection {
     $script:Tab2Ui.BtnSpecProps.Enabled   = $true
 
     if ($selRow.SpecialType -eq 'SEWOO_TE201') {
-        $script:Tab2Ui.BtnSpecInstall.Text = '1단계: Win11 설치'
+        $script:Tab2Ui.BtnSpecInstall.Text = '세우 전용 설치'
     } elseif ($selRow.SpecialType -eq 'SIP30M_IDCARD') {
-        $script:Tab2Ui.BtnSpecInstall.Text = '1단계: sip30inst'
+        $script:Tab2Ui.BtnSpecInstall.Text = 'SIP-30M 설치'
     } elseif ($selRow.SpecialType -eq 'ZEBRA_ZT411') {
-        $script:Tab2Ui.BtnSpecInstall.Text = 'ZT411 셋업 실행'
+        $script:Tab2Ui.BtnSpecInstall.Text = 'ZT411 설치'
     } else {
         $script:Tab2Ui.BtnSpecInstall.Text = '전용 설치 실행'
     }
@@ -371,7 +380,7 @@ function Update-Tab2SpecialSelection {
 function Update-Tab2SpecialPanel {
     $specRows = @($script:AppState.RestoreRows | Where-Object { $_.SpecialType -ne 'STANDARD' })
     $script:Tab2Ui.SpecialRows    = $specRows
-    $script:Tab2Ui.TpSpecial.Text = " 특수 프린터 도우미 ($($specRows.Count)건) "
+    $script:Tab2Ui.TpSpecial.Text = " 특수 프린터 설치 도우미 ($($specRows.Count)) "
 
     $cmb = $script:Tab2Ui.CmbSpecialList
     $script:Tab2Ui.SuppressSpecEvent = $true
@@ -379,7 +388,7 @@ function Update-Tab2SpecialPanel {
     try {
         $cmb.Items.Clear()
         foreach ($sr in $specRows) {
-            [void]$cmb.Items.Add("[$($sr.Category)] $($sr.PrinterName)  ($($sr.PortName))")
+            [void]$cmb.Items.Add("$($sr.Category) · $($sr.PrinterName)  $($sr.PortName)")
         }
         if ($specRows.Count -gt 0) { $cmb.SelectedIndex = 0 }
     }
@@ -475,14 +484,18 @@ function Load-Tab2BackupSourceAsync {
         if ($meta.HasBrm) { $brmTxt = 'PrintBrm 포함' }
         $modeTxt = '서버 백업'
         if ($meta.IsZip) { $modeTxt = '오프라인 ZIP' }
+        $osPart = ''
+        if ($bd.PSObject.Properties.Name -contains 'SourceOsName' -and -not [string]::IsNullOrWhiteSpace([string]$bd.SourceOsName)) {
+            $osPart = " · $($bd.SourceOsName)"
+        }
         $probeTxt = ''
-        if ($data.DidLiveProbe) { $probeTxt = ' | 지연 검증 완료' }
+        if ($data.DidLiveProbe) { $probeTxt = ' · 실시간 확인 완료' }
 
-        $script:Tab2Ui.LblSourceInfo.Text = "[$modeTxt] 원본: $($bd.SourceComputer) ($($bd.SourceIP)) | 일시: $($bd.ExportedAt) | $brmTxt$probeTxt"
+        $script:Tab2Ui.LblSourceInfo.Text = "$modeTxt · 원본 $($bd.SourceComputer) ($($bd.SourceIP))$osPart · $($bd.ExportedAt) · $brmTxt$probeTxt"
 
         $extraWarns = [System.Collections.Generic.List[string]]::new()
         if ($bd.SourceMachineSID -and $script:AppState.LocalSid -and ($bd.SourceMachineSID -eq $script:AppState.LocalSid)) {
-            $extraWarns.Add("[참고] 원본 PC와 현재 새 PC의 Machine SID가 동일합니다 ($($bd.SourceMachineSID)).")
+            $extraWarns.Add("참고 · 원본 PC와 현재 PC의 Machine SID가 같습니다. ($($bd.SourceMachineSID))")
         }
         $bakLpts = @()
         if ($bd.PSObject.Properties.Name -contains 'LptPorts' -and $bd.LptPorts) {
@@ -494,18 +507,18 @@ function Load-Tab2BackupSourceAsync {
             $lpt1Now   = $nowLpts | Where-Object { $_.PortName -ieq 'LPT1' } | Select-Object -First 1
             $otherLpts = @($nowLpts | Where-Object { $_.PortName -ine 'LPT1' })
             if ($lpt1Now -and $lpt1Now.IsHealthy) {
-                $extraWarns.Add("[LPT1 확인 완료] 현재 새 PC 장치관리자에서 LPT1 정상 감지됨 ($($lpt1Now.Name)) — EPSON TM-T88VI 등 무드라이버 장비는 드라이버·에이전트 설치 없이 AMIS에서 직접 사용하세요.")
+                $extraWarns.Add("LPT1 정상 감지 · $($lpt1Now.Name). EPSON TM-T88VI 등 무드라이버 장비는 드라이버 설치 없이 AMIS에서 바로 사용해 주세요.")
             } elseif ($lpt1Now) {
-                $extraWarns.Add("[LPT1 주의] 현재 새 PC 장치관리자 LPT1 상태 이상 ($($lpt1Now.Name) / Status=$($lpt1Now.Status)) — 장치관리자에서 LPT1 포트 상태를 확인하세요.")
+                $extraWarns.Add("LPT1 상태 확인 필요 · $($lpt1Now.Name) ($($lpt1Now.Status)). 장치관리자에서 LPT1 포트 상태를 확인해 주세요.")
             } elseif ($otherLpts.Count -gt 0) {
-                $otherDesc = ($otherLpts | ForEach-Object { "$($_.PortName)($($_.Name))" }) -join ', '
-                $extraWarns.Add("[LPT1 번호 변경 필요] LPT1은 미감지이나 타 LPT 포트($otherDesc)가 감지되었습니다 — 장치관리자 포트 설정에서 LPT1으로 변경하세요.")
+                $otherDesc = ($otherLpts | ForEach-Object { "$($_.PortName) ($($_.Name))" }) -join ', '
+                $extraWarns.Add("LPT1 번호 변경 필요 · 대신 $otherDesc 포트가 감지되었습니다. 장치관리자에서 LPT1으로 변경해 주세요.")
             } else {
-                $extraWarns.Add("[LPT1 미감지 주의] 구 PC에 LPT 포트($($bakLpts -join ', '))가 있었으나 현재 새 PC 장치관리자에서 LPT1이 감지되지 않습니다 — LPT 케이블/PCIe 포트 장착 여부를 확인하세요.")
+                $extraWarns.Add("LPT1 미감지 · 기존 PC에 있던 LPT 포트($($bakLpts -join ', '))가 현재 PC에서 보이지 않습니다. 케이블과 포트 장착을 확인해 주세요.")
             }
         }
         if ($script:AppState.AuthFailedHosts.Count -gt 0) {
-            $extraWarns.Add("[주의] 공유 호스트 $($script:AppState.AuthFailedHosts.Count)곳 인증/SID 충돌 감지 — 하단 [공유 인증/SID 조치] 탭에서 확인하세요.")
+            $extraWarns.Add("공유 인증 확인 필요 · 공유 PC $($script:AppState.AuthFailedHosts.Count)곳에서 연결이 거부되었습니다. 아래 공유 인증 탭에서 해결해 주세요.")
         }
 
         Render-Tab2NotesBanner -BackupNotes @($bd.BackupNotes) -ExtraWarnings $extraWarns.ToArray()
@@ -696,44 +709,41 @@ function Start-Tab2RestoreExecution {
         $specCnt = (@($script:Tab2Ui.SpecialRows)).Count
 
         $sumLines = [System.Collections.Generic.List[string]]::new()
-        $sumLines.Add("프린터 및 드라이버 복원이 완료되었습니다.")
+        $sumLines.Add("프린터와 드라이버 복원을 마쳤습니다.")
         $sumLines.Add("")
-        $sumLines.Add("• 복원 성공 항목 : ${succCnt}건 (WIA 스캐너 $($data.RestoredScanCount)개)")
-        $sumLines.Add("• 복원 실패 항목 : ${failCnt}건")
-        $sumLines.Add("• 감지된 특수장비: ${specCnt}대 (하단 특수 프린터 도우미 확인)")
+        $sumLines.Add("복원 성공: ${succCnt}건 (스캐너 드라이버 $($data.RestoredScanCount)개)")
+        $sumLines.Add("복원 실패: ${failCnt}건")
+        $sumLines.Add("특수 장비: ${specCnt}대")
 
         if ($ztPrefsList.Count -gt 0) {
             $sumLines.Add("")
-            $sumLines.Add("[ZT411 인쇄 기본 설정 마무리 필요]")
-            $sumLines.Add("대상: $($ztPrefsList -join ', ')")
-            $sumLines.Add("-> 골든 이미지 드라이버로 대체 복원되었거나 백업된 인쇄 기본 설정(.dat/.reg)이 미확인되었습니다.")
-            $sumLines.Add("-> 하단 특수 프린터 도우미의 [속성 열기] > 인쇄 기본 설정에서 용지/농도를 마무리하거나 폴더 내 용지별 .drx/.drs 파일을 불러와 주세요.")
+            $sumLines.Add("ZT411 인쇄 기본 설정 확인 필요: $($ztPrefsList -join ', ')")
+            $sumLines.Add("대체 드라이버로 설치되었거나 기존 설정이 빠져 있습니다. 아래 특수 프린터 도우미에서 프린터 속성을 열어 용지·농도를 확인하거나 설정 파일(.drx/.drs)을 불러와 주세요.")
         }
         if ($data.NeedsUsbReplug) {
             $sumLines.Add("")
-            $sumLines.Add("[USB 바코드 재연결 안내]")
-            $sumLines.Add("-> 소프트웨어 자동 재인식을 시도했으나 USB 포트가 미생성되었습니다. USB 케이블을 1회 뽑았다 다시 꽂은 뒤 [실패 항목만 재시도]를 눌러주세요.")
+            $sumLines.Add("USB 바코드 재연결 필요")
+            $sumLines.Add("자동 재인식으로 USB 포트가 생기지 않았습니다. USB 케이블을 한 번 뺐다가 다시 꽂은 뒤 '실패 항목 다시 시도'를 눌러 주세요.")
         }
         if ($samList.Count -gt 0) {
             $sumLines.Add("")
-            $sumLines.Add("[삼성 범용 드라이버(UPD 3) 주의]")
-            $sumLines.Add("대상: $($samList -join ', ')")
-            $sumLines.Add("-> [3. 검증/테스트] 탭에서 테스트 페이지 출력 후 오류 발생 시 모델 전용 드라이버로 교체하세요.")
+            $sumLines.Add("삼성 범용 드라이버(UPD 3) 확인: $($samList -join ', ')")
+            $sumLines.Add("출력 확인 탭에서 테스트 인쇄 후 문제가 있으면 모델 전용 드라이버로 교체해 주세요.")
         }
         if ($script:AppState.AuthFailedHosts.Count -gt 0) {
             $sumLines.Add("")
-            $sumLines.Add("[공유 호스트 인증 / 동일 SID 충돌 감지]")
-            $sumLines.Add("-> 하단 [공유 인증/SID 조치] 탭에서 암호 재입력 또는 스풀러 초기화 후 [실패 항목만 재시도]를 누르세요.")
+            $sumLines.Add("공유 PC 인증 또는 SID 충돌 감지")
+            $sumLines.Add("아래 공유 인증 탭에서 암호를 다시 입력하거나 스풀러 초기화 후 '실패 항목 다시 시도'를 눌러 주세요.")
         }
         if ($failCnt -eq 0 -and $manualSpecs.Count -eq 0 -and $ztPrefsList.Count -eq 0) {
             $sumLines.Add("")
-            $sumLines.Add("[3. 검증/테스트] 탭으로 이동하여 일반 프린터 테스트 인쇄를 진행하세요.")
+            $sumLines.Add("이제 '3. 출력 확인' 탭으로 이동해 테스트 인쇄를 진행해 주세요.")
         }
 
         if ($failCnt -gt 0) {
             $sumLines.Add("")
-            $sumLines.Add("복원 실패 항목을 서버 리포트함(_PRTBAK\_REPORTS)으로 지금 전송하시겠습니까?")
-            $repAns = Show-AsanMessageBox -Text ($sumLines -join "`r`n") -Caption '복원 완료 요약 (일부 실패)' -Buttons 'YesNo' -Icon 'Warning'
+            $sumLines.Add("실패한 항목의 진단 로그를 서버 리포트함으로 보내시겠습니까?")
+            $repAns = Show-AsanMessageBox -Text ($sumLines -join "`r`n") -Caption '복원 결과 요약' -Buttons 'YesNo' -Icon 'Warning'
             if ($repAns -eq [System.Windows.Forms.DialogResult]::Yes) {
                 $firstFailPrt = [string](@($data.Failures)[0].PrinterName)
                 $failSummary  = (@($data.Failures | ForEach-Object { "$($_.PrinterName) ($($_.PortName)): $($_.Reason)" }) -join "`r`n")
@@ -742,7 +752,7 @@ function Start-Tab2RestoreExecution {
         } else {
             $icon = [System.Windows.Forms.MessageBoxIcon]::Information
             if ($samList.Count -gt 0 -or $data.NeedsUsbReplug -or $ztPrefsList.Count -gt 0) { $icon = [System.Windows.Forms.MessageBoxIcon]::Warning }
-            [void](Show-AsanMessageBox -Text ($sumLines -join "`r`n") -Caption '복원 완료 요약' -Buttons 'OK' -Icon $icon)
+            [void](Show-AsanMessageBox -Text ($sumLines -join "`r`n") -Caption '복원 완료' -Buttons 'OK' -Icon $icon)
         }
     }
 
@@ -1011,20 +1021,22 @@ function Initialize-Tab2RestoreUi {
     $flpSrcRow.Padding       = New-Object System.Windows.Forms.Padding(0, 1, 0, 0)
 
     $lblSrc = New-Object System.Windows.Forms.Label
-    $lblSrc.Text      = '① 백업 선택:'
-    $lblSrc.Font      = $script:FontBold
-    $lblSrc.ForeColor = $script:Theme.AsanGreen
+    $lblSrc.Text      = ' 1단계 '
+    $lblSrc.Font      = $script:FontSmallB
+    $lblSrc.BackColor = $script:Theme.AsanGreen
+    $lblSrc.ForeColor = [System.Drawing.Color]::White
     $lblSrc.AutoSize  = $true
-    $lblSrc.Margin    = New-Object System.Windows.Forms.Padding(0, 6, 6, 0)
+    $lblSrc.Padding   = New-Object System.Windows.Forms.Padding(4, 3, 4, 3)
+    $lblSrc.Margin    = New-Object System.Windows.Forms.Padding(0, 3, 8, 0)
 
     $cmbBackups = New-Object System.Windows.Forms.ComboBox
     $cmbBackups.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $cmbBackups.Size          = New-Object System.Drawing.Size(295, 24)
+    $cmbBackups.Size          = New-Object System.Drawing.Size(290, 24)
     $cmbBackups.Font          = $script:FontBase
     $cmbBackups.Margin        = New-Object System.Windows.Forms.Padding(0, 2, 6, 0)
     $script:Ui.BusyControls.Add($cmbBackups)
 
-    $btnLoadSrv = New-StyledButton -Text '불러오기' -Width 82 -Height 26 -Variant 'SoftTeal' -RegisterBusy
+    $btnLoadSrv = New-StyledButton -Text '불러오기' -Width 84 -Height 26 -Variant 'SoftTeal' -RegisterBusy
     $btnLoadSrv.Margin = New-Object System.Windows.Forms.Padding(0, 1, 6, 0)
     $btnLoadSrv.Add_Click({
         $idx = $script:Tab2Ui.CmbServerBackups.SelectedIndex
@@ -1033,12 +1045,12 @@ function Initialize-Tab2RestoreUi {
         }
     })
 
-    $btnOpenZip = New-StyledButton -Text '오프라인 ZIP 열기' -Width 138 -Height 26 -Variant 'Secondary' -RegisterBusy
+    $btnOpenZip = New-StyledButton -Text 'ZIP 파일 열기' -Width 116 -Height 26 -Variant 'Secondary' -RegisterBusy
     $btnOpenZip.Font   = $script:FontSmallB
     $btnOpenZip.Margin = New-Object System.Windows.Forms.Padding(0, 1, 6, 0)
     $btnOpenZip.Add_Click({
         $ofd = New-Object System.Windows.Forms.OpenFileDialog
-        $ofd.Title  = '오프라인 백업 ZIP 파일 선택 (로컬 또는 외장 SSD)'
+        $ofd.Title  = '오프라인 백업 ZIP 파일 선택'
         $ofd.Filter = 'ZIP 백업 파일 (*.zip)|*.zip|모든 파일 (*.*)|*.*'
         if (Test-Path -LiteralPath $global:AsanCtx.OfflineLocalRoot) {
             $ofd.InitialDirectory = $global:AsanCtx.OfflineLocalRoot
@@ -1049,8 +1061,8 @@ function Initialize-Tab2RestoreUi {
         $ofd.Dispose()
     })
 
-    $btnDeferred = New-StyledButton -Text '실시간 재확인' -Width 106 -Height 26 -Variant 'Secondary' -RegisterBusy
-    $btnDeferred.Font    = $script:FontSmall
+    $btnDeferred = New-StyledButton -Text '연결 다시 확인' -Width 114 -Height 26 -Variant 'Secondary' -RegisterBusy
+    $btnDeferred.Font    = $script:FontSmallB
     $btnDeferred.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 0, 0)
     $btnDeferred.Enabled = $false
     $btnDeferred.Add_Click({
@@ -1062,9 +1074,9 @@ function Initialize-Tab2RestoreUi {
     $flpSrcRow.Controls.AddRange(@($lblSrc, $cmbBackups, $btnLoadSrv, $btnOpenZip, $btnDeferred))
 
     $lblSourceInfo = New-Object System.Windows.Forms.Label
-    $lblSourceInfo.Text      = '서버 백업을 선택하거나 [오프라인 ZIP 열기]로 복원 대상을 불러오세요. (동일 PC 백업은 자동 매칭됨)'
+    $lblSourceInfo.Text      = '서버 백업을 선택하거나 ZIP 파일 열기로 복원 대상을 불러와 주세요.'
     $lblSourceInfo.Font      = $script:FontSmall
-    $lblSourceInfo.ForeColor = $script:Theme.InkMuted
+    $lblSourceInfo.ForeColor = $script:Theme.InkSecondary
     $lblSourceInfo.Dock      = [System.Windows.Forms.DockStyle]::Fill
     $lblSourceInfo.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
 
@@ -1077,7 +1089,7 @@ function Initialize-Tab2RestoreUi {
     # ---------------- [2] 영속 리포트(BackupNotes + 복원 경고) 배너 (SMK-C 최소 높이 40px 이상 준수) ----------------
     $pnlNotes = New-Object System.Windows.Forms.Panel
     $pnlNotes.Dock    = [System.Windows.Forms.DockStyle]::Top
-    $pnlNotes.Height  = 46
+    $pnlNotes.Height  = 44
     $pnlNotes.Padding = New-Object System.Windows.Forms.Padding(0, 0, 0, 4)
 
     $txtNotes = New-Object System.Windows.Forms.TextBox
@@ -1089,7 +1101,7 @@ function Initialize-Tab2RestoreUi {
     $txtNotes.BackColor   = $script:Theme.AsanMint
     $txtNotes.ForeColor   = $script:Theme.AsanDeep
     $txtNotes.Font        = $script:FontSmall
-    $txtNotes.Text        = '백업을 불러오면 주의 사항(WSD 전환 · 특수장비 · LPT1 · 공유 인증 안내 등)이 여기에 고정 표시됩니다.'
+    $txtNotes.Text        = '백업을 불러오면 복원 전에 확인할 주의 사항이 여기에 표시됩니다.'
     $pnlNotes.Controls.Add($txtNotes)
 
     # ---------------- [3] 2단계 프린터 선택 툴바 (FlowLayoutPanel + RightFlowStrip — DPI 안전) ----------------
@@ -1105,14 +1117,16 @@ function Initialize-Tab2RestoreUi {
     $flpGridLeft.Padding       = New-Object System.Windows.Forms.Padding(0, 3, 0, 0)
 
     $lblStep2 = New-Object System.Windows.Forms.Label
-    $lblStep2.Text      = '② 대상 선택:'
-    $lblStep2.Font      = $script:FontBold
-    $lblStep2.ForeColor = $script:Theme.AsanGreen
+    $lblStep2.Text      = ' 2단계 '
+    $lblStep2.Font      = $script:FontSmallB
+    $lblStep2.BackColor = $script:Theme.AsanGreen
+    $lblStep2.ForeColor = [System.Drawing.Color]::White
     $lblStep2.AutoSize  = $true
-    $lblStep2.Margin    = New-Object System.Windows.Forms.Padding(0, 4, 8, 0)
+    $lblStep2.Padding   = New-Object System.Windows.Forms.Padding(4, 2, 4, 2)
+    $lblStep2.Margin    = New-Object System.Windows.Forms.Padding(0, 2, 8, 0)
 
-    $btnSelAll = New-StyledButton -Text '전체 선택' -Width 72 -Height 24 -Variant 'Secondary' -RegisterBusy
-    $btnSelAll.Font   = $script:FontSmall
+    $btnSelAll = New-StyledButton -Text '전체 선택' -Width 76 -Height 24 -Variant 'Secondary' -RegisterBusy
+    $btnSelAll.Font   = $script:FontSmallB
     $btnSelAll.Margin = New-Object System.Windows.Forms.Padding(0, 0, 4, 0)
     $btnSelAll.Add_Click({
         foreach ($r in $script:Tab2Ui.DgvRestore.Rows) {
@@ -1122,8 +1136,8 @@ function Initialize-Tab2RestoreUi {
         Update-Tab2GridSummary
     })
 
-    $btnSelHealthy = New-StyledButton -Text '정상만 선택' -Width 84 -Height 24 -Variant 'Secondary' -RegisterBusy
-    $btnSelHealthy.Font   = $script:FontSmall
+    $btnSelHealthy = New-StyledButton -Text '정상만 선택' -Width 88 -Height 24 -Variant 'Secondary' -RegisterBusy
+    $btnSelHealthy.Font   = $script:FontSmallB
     $btnSelHealthy.Margin = New-Object System.Windows.Forms.Padding(0, 0, 4, 0)
     $btnSelHealthy.Add_Click({
         foreach ($r in $script:Tab2Ui.DgvRestore.Rows) {
@@ -1136,8 +1150,8 @@ function Initialize-Tab2RestoreUi {
         Update-Tab2GridSummary
     })
 
-    $btnSelNone = New-StyledButton -Text '선택 해제' -Width 72 -Height 24 -Variant 'Secondary' -RegisterBusy
-    $btnSelNone.Font   = $script:FontSmall
+    $btnSelNone = New-StyledButton -Text '모두 해제' -Width 76 -Height 24 -Variant 'Secondary' -RegisterBusy
+    $btnSelNone.Font   = $script:FontSmallB
     $btnSelNone.Margin = New-Object System.Windows.Forms.Padding(0, 0, 12, 0)
     $btnSelNone.Add_Click({
         foreach ($r in $script:Tab2Ui.DgvRestore.Rows) { $r.Cells[0].Value = $false }
@@ -1146,7 +1160,7 @@ function Initialize-Tab2RestoreUi {
     })
 
     $lblGridSum = New-Object System.Windows.Forms.Label
-    $lblGridSum.Text      = '복원 대상 선택: 0 / 0대'
+    $lblGridSum.Text      = '선택 0 / 0대'
     $lblGridSum.Font      = $script:FontBold
     $lblGridSum.ForeColor = $script:Theme.InkPrimary
     $lblGridSum.AutoSize  = $true
@@ -1155,7 +1169,7 @@ function Initialize-Tab2RestoreUi {
     $flpGridLeft.Controls.AddRange(@($lblStep2, $btnSelAll, $btnSelHealthy, $btnSelNone, $lblGridSum))
 
     $flpGridRight = New-RightFlowStrip -TopPadding 3 -RightPadding 0
-    $btnToggleHelper = New-StyledButton -Text '특수·공유 도우미 ▲' -Width 148 -Height 24 -Variant 'SoftTeal'
+    $btnToggleHelper = New-StyledButton -Text '특수·공유 도우미 열기' -Width 160 -Height 24 -Variant 'SoftTeal'
     $btnToggleHelper.Font = $script:FontSmallB
     $btnToggleHelper.Add_Click({
         Set-Tab2HelperVisibility -Expanded (-not $script:Tab2Ui.HelperExpanded)
@@ -1176,13 +1190,13 @@ function Initialize-Tab2RestoreUi {
     [void]$dgv.Columns.Add($colChk)
 
     foreach ($cDef in @(
-        @{ Name = 'Default';  Header = '기본';               Width = 48;  Fill = $false },
-        @{ Name = 'Status';   Header = '검증 상태';           Width = 108; Fill = $false },
-        @{ Name = 'Category'; Header = '구분';               Width = 104; Fill = $false },
-        @{ Name = 'Printer';  Header = '프린터 이름';         Width = 170; Fill = $false },
-        @{ Name = 'Port';     Header = '포트 / 전환 대상';    Width = 158; Fill = $false },
-        @{ Name = 'Driver';   Header = '백업 드라이버';       Width = 170; Fill = $false },
-        @{ Name = 'Reason';   Header = '검증 및 상세 사유';   Width = 180; Fill = $true }
+        @{ Name = 'Default';  Header = '기본';           Width = 50;  Fill = $false },
+        @{ Name = 'Status';   Header = '상태';           Width = 108; Fill = $false },
+        @{ Name = 'Category'; Header = '구분';           Width = 112; Fill = $false },
+        @{ Name = 'Printer';  Header = '프린터 이름';     Width = 170; Fill = $false },
+        @{ Name = 'Port';     Header = '포트 / 전환 대상'; Width = 158; Fill = $false },
+        @{ Name = 'Driver';   Header = '드라이버';       Width = 170; Fill = $false },
+        @{ Name = 'Reason';   Header = '상세 내용';      Width = 180; Fill = $true }
     )) {
         $c = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
         $c.Name       = $cDef.Name
@@ -1223,10 +1237,10 @@ function Initialize-Tab2RestoreUi {
     $tabHelper.Add_SelectedIndexChanged({ Update-Tab2HelperHeightSafe })
 
     # -- [5-A] 공유 인증 / 동일 SID 조치 탭 --
-    $tpAuth = New-Object System.Windows.Forms.TabPage(' 공유 인증 / SID 조치 (0건) ')
+    $tpAuth = New-Object System.Windows.Forms.TabPage(' 공유 인증 · SID 해결 (0) ')
     $tpAuth.BackColor = [System.Drawing.Color]::FromArgb(254, 248, 247)
     $tpAuth.Font      = $script:FontBase
-    $tpAuth.Padding   = New-Object System.Windows.Forms.Padding(6)
+    $tpAuth.Padding   = New-Object System.Windows.Forms.Padding(5)
 
     $pnlAuthTop = New-Object System.Windows.Forms.FlowLayoutPanel
     $pnlAuthTop.Dock          = [System.Windows.Forms.DockStyle]::Top
@@ -1235,10 +1249,11 @@ function Initialize-Tab2RestoreUi {
     $pnlAuthTop.AutoSize      = $true
     $pnlAuthTop.AutoSizeMode  = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
     $pnlAuthTop.BackColor     = [System.Drawing.Color]::Transparent
-    $pnlAuthTop.Padding       = New-Object System.Windows.Forms.Padding(0, 2, 0, 4)
+    $pnlAuthTop.Padding       = New-Object System.Windows.Forms.Padding(0, 2, 0, 3)
 
     $lblH = New-Object System.Windows.Forms.Label
-    $lblH.Text     = '호스트 IP:'
+    $lblH.Text     = '호스트 IP'
+    $lblH.Font     = $script:FontSmallB
     $lblH.AutoSize = $true
     $lblH.Margin   = New-Object System.Windows.Forms.Padding(0, 6, 4, 2)
 
@@ -1248,31 +1263,33 @@ function Initialize-Tab2RestoreUi {
     $cmbAuthHost.Margin        = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
 
     $lblU = New-Object System.Windows.Forms.Label
-    $lblU.Text     = 'ID:'
+    $lblU.Text     = '아이디'
+    $lblU.Font     = $script:FontSmallB
     $lblU.AutoSize = $true
     $lblU.Margin   = New-Object System.Windows.Forms.Padding(0, 6, 4, 2)
 
     $txtAuthUser = New-Object System.Windows.Forms.TextBox
     $txtAuthUser.Text   = $global:AsanCtx.DefaultUser
-    $txtAuthUser.Size   = New-Object System.Drawing.Size(80, 24)
+    $txtAuthUser.Size   = New-Object System.Drawing.Size(78, 24)
     $txtAuthUser.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
 
     $lblP = New-Object System.Windows.Forms.Label
-    $lblP.Text     = '암호:'
+    $lblP.Text     = '암호'
+    $lblP.Font     = $script:FontSmallB
     $lblP.AutoSize = $true
     $lblP.Margin   = New-Object System.Windows.Forms.Padding(0, 6, 4, 2)
 
     $txtAuthPass = New-Object System.Windows.Forms.TextBox
     $txtAuthPass.UseSystemPasswordChar = $true
-    $txtAuthPass.Size                  = New-Object System.Drawing.Size(116, 24)
+    $txtAuthPass.Size                  = New-Object System.Drawing.Size(112, 24)
     $txtAuthPass.Margin                = New-Object System.Windows.Forms.Padding(0, 2, 8, 2)
 
-    $btnAuthRetry = New-StyledButton -Text '재인증 및 검증' -Width 112 -Height 26 -Variant 'Primary' -RegisterBusy
+    $btnAuthRetry = New-StyledButton -Text '다시 인증' -Width 92 -Height 26 -Variant 'Primary' -RegisterBusy
     $btnAuthRetry.Font   = $script:FontSmallB
     $btnAuthRetry.Margin = New-Object System.Windows.Forms.Padding(0, 1, 6, 2)
     $btnAuthRetry.Add_Click({ Invoke-Tab2HostAuthActionAsync })
 
-    $btnSidReset = New-StyledButton -Text '스풀러·자격증명 초기화 후 재연결' -Width 214 -Height 26 -Variant 'DangerOutline' -RegisterBusy
+    $btnSidReset = New-StyledButton -Text '스풀러 초기화 후 재연결' -Width 176 -Height 26 -Variant 'DangerOutline' -RegisterBusy
     $btnSidReset.Font   = $script:FontSmallB
     $btnSidReset.Margin = New-Object System.Windows.Forms.Padding(0, 1, 0, 2)
     $btnSidReset.Add_Click({ Invoke-Tab2HostAuthActionAsync -WithSpoolerReset })
@@ -1294,10 +1311,10 @@ function Initialize-Tab2RestoreUi {
     $txtAuthInfo.BringToFront()
 
     # -- [5-B] 특수 프린터 반자동 도우미 탭 (DPI 125~150% 대응 FlowLayoutPanel) --
-    $tpSpec = New-Object System.Windows.Forms.TabPage(' 특수 프린터 도우미 (0건) ')
-    $tpSpec.BackColor = [System.Drawing.Color]::FromArgb(247, 250, 250)
+    $tpSpec = New-Object System.Windows.Forms.TabPage(' 특수 프린터 설치 도우미 (0) ')
+    $tpSpec.BackColor = [System.Drawing.Color]::FromArgb(245, 249, 249)
     $tpSpec.Font      = $script:FontBase
-    $tpSpec.Padding   = New-Object System.Windows.Forms.Padding(6)
+    $tpSpec.Padding   = New-Object System.Windows.Forms.Padding(5)
 
     $pnlSpecTop = New-Object System.Windows.Forms.FlowLayoutPanel
     $pnlSpecTop.Dock          = [System.Windows.Forms.DockStyle]::Top
@@ -1306,20 +1323,21 @@ function Initialize-Tab2RestoreUi {
     $pnlSpecTop.AutoSize      = $true
     $pnlSpecTop.AutoSizeMode  = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
     $pnlSpecTop.BackColor     = [System.Drawing.Color]::Transparent
-    $pnlSpecTop.Padding       = New-Object System.Windows.Forms.Padding(0, 2, 0, 4)
+    $pnlSpecTop.Padding       = New-Object System.Windows.Forms.Padding(0, 2, 0, 3)
 
     $lblSp = New-Object System.Windows.Forms.Label
-    $lblSp.Text     = '특수 장비:'
+    $lblSp.Text     = '장비'
+    $lblSp.Font     = $script:FontSmallB
     $lblSp.AutoSize = $true
     $lblSp.Margin   = New-Object System.Windows.Forms.Padding(0, 6, 4, 2)
 
     $cmbSpec = New-Object System.Windows.Forms.ComboBox
     $cmbSpec.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $cmbSpec.Size          = New-Object System.Drawing.Size(176, 24)
+    $cmbSpec.Size          = New-Object System.Drawing.Size(166, 24)
     $cmbSpec.Margin        = New-Object System.Windows.Forms.Padding(0, 2, 6, 2)
     $cmbSpec.Add_SelectedIndexChanged({ Update-Tab2SpecialSelection })
 
-    $btnSpecInst = New-StyledButton -Text '1단계: 전용 설치' -Width 132 -Height 26 -Variant 'Primary' -RegisterBusy
+    $btnSpecInst = New-StyledButton -Text '전용 설치 실행' -Width 120 -Height 26 -Variant 'Primary' -RegisterBusy
     $btnSpecInst.Font    = $script:FontSmallB
     $btnSpecInst.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 6, 2)
     $btnSpecInst.Enabled = $false
@@ -1335,19 +1353,19 @@ function Initialize-Tab2RestoreUi {
         }
     })
 
-    $btnSpecStep2 = New-StyledButton -Text '2단계: SIP-30M 마무리' -Width 154 -Height 26 -Variant 'SoftTeal' -RegisterBusy
+    $btnSpecStep2 = New-StyledButton -Text 'SIP-30M 설정 마무리' -Width 148 -Height 26 -Variant 'SoftTeal' -RegisterBusy
     $btnSpecStep2.Font    = $script:FontSmallB
     $btnSpecStep2.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 6, 2)
     $btnSpecStep2.Enabled = $false
     $btnSpecStep2.Add_Click({ Invoke-Tab2Sip30mStep2Async })
 
-    $btnUsbReenum = New-StyledButton -Text 'USB 재인식' -Width 86 -Height 26 -Variant 'SoftOrange' -RegisterBusy
+    $btnUsbReenum = New-StyledButton -Text 'USB 다시 인식' -Width 104 -Height 26 -Variant 'SoftOrange' -RegisterBusy
     $btnUsbReenum.Font   = $script:FontSmallB
     $btnUsbReenum.Margin = New-Object System.Windows.Forms.Padding(0, 1, 6, 2)
     $btnUsbReenum.Add_Click({ Invoke-Tab2UsbReenumAsync })
 
-    $btnSpecDir = New-StyledButton -Text '폴더 열기' -Width 72 -Height 26 -Variant 'Secondary'
-    $btnSpecDir.Font    = $script:FontSmall
+    $btnSpecDir = New-StyledButton -Text '폴더 열기' -Width 76 -Height 26 -Variant 'Secondary'
+    $btnSpecDir.Font    = $script:FontSmallB
     $btnSpecDir.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 6, 2)
     $btnSpecDir.Enabled = $false
     $btnSpecDir.Add_Click({
@@ -1358,8 +1376,8 @@ function Initialize-Tab2RestoreUi {
     })
 
     # [H4 Fix] 프린터 미설치 시 오류 팝업 대신 친절한 안내 표시
-    $btnSpecProps = New-StyledButton -Text '속성 열기' -Width 72 -Height 26 -Variant 'Secondary' -RegisterBusy
-    $btnSpecProps.Font    = $script:FontSmall
+    $btnSpecProps = New-StyledButton -Text '프린터 속성' -Width 86 -Height 26 -Variant 'Secondary' -RegisterBusy
+    $btnSpecProps.Font    = $script:FontSmallB
     $btnSpecProps.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 0, 2)
     $btnSpecProps.Enabled = $false
     $btnSpecProps.Add_Click({
@@ -1368,7 +1386,7 @@ function Initialize-Tab2RestoreUi {
         $pName        = [string]$cur.Row.PrinterName
         $installedPrt = @(Get-Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $pName }) | Select-Object -First 1
         if (-not $installedPrt) {
-            [void](Show-AsanMessageBox -Text "'$pName' 프린터가 아직 이 PC에 설치되어 있지 않습니다.`r`n복원 또는 1단계 전용 설치를 먼저 완료한 뒤 속성을 열어주세요." -Caption '프린터 미설치' -Buttons 'OK' -Icon 'Information')
+            [void](Show-AsanMessageBox -Text "'$pName' 프린터가 아직 이 PC에 설치되어 있지 않습니다.`r`n복원 또는 전용 설치를 먼저 완료한 뒤 속성을 열어 주세요." -Caption '프린터 미설치' -Buttons 'OK' -Icon 'Information')
             return
         }
         $safeArg = 'printui.dll,PrintUIEntry /p /n "' + ($pName -replace '"', '\"') + '"'
@@ -1404,20 +1422,20 @@ function Initialize-Tab2RestoreUi {
     $pnlAction.BackColor     = [System.Drawing.Color]::Transparent
     $pnlAction.Padding       = New-Object System.Windows.Forms.Padding(0, 6, 0, 0)
 
-    $btnStart = New-StyledButton -Text '③ 선택 항목 복원 시작' -Width 200 -Height 34 -Variant 'Primary' -RegisterBusy
+    $btnStart = New-StyledButton -Text '선택 항목 복원하기' -Width 176 -Height 34 -Variant 'Primary' -RegisterBusy
     $btnStart.Margin  = New-Object System.Windows.Forms.Padding(0, 0, 10, 0)
     $btnStart.Enabled = $false
     $btnStart.Add_Click({ Start-Tab2RestoreExecution })
 
-    $btnRetry = New-StyledButton -Text '실패 항목만 재시도' -Width 150 -Height 34 -Variant 'Orange' -RegisterBusy
+    $btnRetry = New-StyledButton -Text '실패 항목 다시 시도' -Width 152 -Height 34 -Variant 'Orange' -RegisterBusy
     $btnRetry.Margin  = New-Object System.Windows.Forms.Padding(0, 0, 14, 0)
     $btnRetry.Enabled = $false
     $btnRetry.Add_Click({ Start-Tab2RestoreExecution -RetryFailedOnly })
 
     $lblHint = New-Object System.Windows.Forms.Label
-    $lblHint.Text      = '※ 비활성의심 및 Win 11 전용 기종(세우테크)은 안전을 위해 자동 해제됩니다.'
+    $lblHint.Text      = '응답 없는 프린터와 전용 설치 기종은 안전을 위해 자동 해제됩니다.'
     $lblHint.Font      = $script:FontSmall
-    $lblHint.ForeColor = $script:Theme.InkMuted
+    $lblHint.ForeColor = $script:Theme.InkSecondary
     $lblHint.AutoSize  = $true
     $lblHint.Margin    = New-Object System.Windows.Forms.Padding(0, 10, 0, 0)
 

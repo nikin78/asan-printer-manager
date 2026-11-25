@@ -173,10 +173,10 @@ function Get-SpecialPrinterAssistantInfo {
             }
 
             $chk = @(
-                "[SIP-30M 진료카드 발급기 — 2단계 반자동 안내]",
-                "1단계: [설치 실행] 클릭 -> '표준 로컬(USB) 설치' 선택 -> 장치 미연결 경고창에서 [아니오] -> [마침]",
-                "2단계: [포트/이름/설정 자동 마무리] 클릭 -> TCP/IP($ipHint, SNMP OFF), 이름 'id카드', 4개 탭 설정 자동 주입",
-                "3단계: 자동 팝업되는 인쇄 기본 설정(리본/코팅/농도/MS쓰기) 확인 후 담당자에게 AMIS 테스트 요청"
+                "SIP-30M 진료카드 발급기 설치 순서",
+                "1. 위 'SIP-30M 설치'를 눌러 '표준 로컬(USB) 설치'를 선택하고, 장치 미연결 창에서 '아니오' 후 '마침'을 눌러 주세요.",
+                "2. 'SIP-30M 설정 마무리'를 누르면 TCP/IP 포트($ipHint, SNMP 해제), 이름 'id카드', 4개 탭 설정이 자동 적용됩니다.",
+                "3. 자동으로 열리는 인쇄 기본 설정에서 리본·코팅·농도·MS쓰기를 확인한 뒤 담당자에게 AMIS 테스트를 요청해 주세요."
             ) -join "`r`n"
             return [pscustomobject]@{ Type = 'SIP30M_IDCARD'; TargetIp = $ipHint; Installer = $inst; HasStep2 = $true; Checklist = $chk }
         }
@@ -184,18 +184,18 @@ function Get-SpecialPrinterAssistantInfo {
             $pHint = 'USB(USBPOS0)'
             if ($SpecialRow.PortName -match '(?i)LPT') { $pHint = 'Parallel(LPT1)' }
             $chk = @(
-                "[Sewoo SLK-TE201 네임바코드 — Win 11 전용 필수 설치]",
-                "1단계: [Win 11 설치 실행] 클릭 -> 모델 [SLK-TE201] 체크 -> [기본 프린터 설정] 해제 -> 포트 [$pHint] 선택",
-                "2단계: AMIS 3.0 로그인 -> 개인환경설정 -> PC별 환경설정 -> 바코드 Agent '실행'",
-                "3단계: 트레이 Barcode Print Agent 재실행 -> 자동 등록된 SLK-TE201(7.2x327.5) 삭제 -> 수동 등록(8.0 x 8.5) 추가"
+                "Sewoo SLK-TE201 네임바코드 설치 순서",
+                "1. 위 '세우 전용 설치'를 눌러 모델 SLK-TE201을 체크하고, 기본 프린터 설정을 해제한 뒤 포트 $pHint 를 선택해 주세요.",
+                "2. AMIS 3.0에 로그인한 뒤 개인환경설정 > PC별 환경설정에서 바코드 Agent를 실행해 주세요.",
+                "3. 트레이의 Barcode Print Agent를 다시 열어 자동 등록된 7.2x327.5 항목을 지우고 8.0x8.5로 수동 등록해 주세요."
             ) -join "`r`n"
             return [pscustomobject]@{ Type = 'SEWOO_TE201'; TargetIp = $null; Installer = $inst; HasStep2 = $false; Checklist = $chk }
         }
         'ZEBRA_ZT411' {
             $isTcpLabel = ([string]$SpecialRow.PortKind -eq 'TCPIP') -or (-not [string]::IsNullOrWhiteSpace([string]$SpecialRow.HostAddress))
-            $connHint   = 'USB 직결 — 기존 PC 드라이버 선등록 후 자동 설치(미인식 시 상단 [USB 재인식] 클릭)'
+            $connHint   = 'USB 직결 장비입니다. 인식되지 않으면 위 USB 다시 인식을 눌러 주세요.'
             if ($isTcpLabel) {
-                $connHint = "TCP/IP 네트워크 연결($($SpecialRow.PortName)) — Standard TCP/IP(Generic Network Card, SNMP OFF) + ZDesigner ZT411-203dpi ZPL 자동 복원 대상"
+                $connHint = "TCP/IP 네트워크 연결 ($($SpecialRow.PortName)) · ZDesigner ZT411-203dpi ZPL 자동 복원 대상입니다."
             }
             $ztRootDefault = 'C:\Users\admin\드라이버(win10_x64)\AMIS 3.0 장비\ZT411 (약국용 신형라벨프린터)'
             $infHint = "$ztRootDefault\ZD8-6-5-26125\ZDesigner.inf"
@@ -207,16 +207,12 @@ function Get-SpecialPrinterAssistantInfo {
             if ($inst.ExePath) { $exeHint = [IO.Path]::GetFileName($inst.ExePath) }
 
             $chk = @(
-                "[Zebra ZT410/ZT411 약제팀 라벨 프린터 — 기존 PC 복원 우선 / 골든 이미지 폴백 안내]",
-                "• 연결 방식: $connHint",
-                "1. [최우선 원칙] 기존 PC에서 추출된 드라이버와 인쇄 기본 설정(.dat/.reg) 자동 복원이 먼저 시도됩니다.",
-                "2. [부득이한 대체 설치 시] 골든 이미지 로컬 폴더($ztRootDefault)의 사전 추출 드라이버를 사용합니다.",
-                "   • 사전 압축 해제 INF: $infHint",
-                "   • 셋업 재실행 시($exeHint): 드라이버 폴더(ZD8-6-5-26125)만 생성 후 ★ 마법사에서 프린터 설정하지 말고 반드시 [나가기]로 종료!",
-                "   • IP 수동 추가 시: Standard TCP/IP(자동 검색 해제 / Generic Network Card) -> 디스크 있음 -> $infHint -> 'ZDesigner ZT411-203dpi ZPL'",
-                "3. [인쇄 기본 설정 마무리(필수)] 대체 드라이버로 설치되었거나 기존 설정이 미반영된 경우,",
-                "   [속성 열기] > 인쇄 기본 설정에서 용지/농도를 직접 마무리하거나 [가져오기/내보내기 설정]에서 용지별 설정 파일(.drx/.drs)을 불러오세요.",
-                "   • 로컬 용지 설정 파일: $cfgHint"
+                "Zebra ZT410/ZT411 약제팀 라벨 프린터 안내",
+                "연결 방식: $connHint",
+                "1. 기존 PC에서 추출한 드라이버와 인쇄 기본 설정을 최우선으로 자동 복원합니다.",
+                "2. 대체 설치가 필요한 경우 로컬 경로($ztRootDefault)의 드라이버($infHint)를 사용합니다.",
+                "   설치 파일($exeHint)을 실행했다면 드라이버 폴더 생성 후 마법사에서 프린터를 추가하지 말고 반드시 '나가기'로 닫아 주세요.",
+                "3. 대체 드라이버로 설치되었거나 기존 설정이 빠져 있다면 '프린터 속성' > 인쇄 기본 설정에서 용지·농도를 맞추거나 설정 파일($cfgHint)을 불러와 주세요."
             ) -join "`r`n"
             return [pscustomobject]@{ Type = 'ZEBRA_ZT411'; TargetIp = $SpecialRow.HostAddress; Installer = $inst; HasStep2 = $false; Checklist = $chk }
         }
@@ -224,19 +220,19 @@ function Get-SpecialPrinterAssistantInfo {
             $drxHint = 'admin\드라이버(win10_x64)\AMIS3.0장비\ZD410(Zebra바코드)\*.drx'
             if ($inst.DrxPath) { $drxHint = $inst.DrxPath }
             $chk = @(
-                "[Zebra ZD-410/411 검사·투약 바코드 확인 사항]",
-                "1. USB 연결 장비가 [지정되지 않음]으로 보이면 상단 [USB 재인식] 버튼을 먼저 실행하세요 (실패 시에만 USB 1회 재연결).",
-                "2. 프린터 속성 -> 드라이버 설정 -> [상태확인: 사용안함] 및 용지설정(.drx) 유지 확인 ($drxHint)",
-                "3. 용지/상단 여백 확인: 검사바코드(5.5x3.0 / 2.6mm) | 투약바코드(5.5x6.0 / 1.0mm) -> AMIS Barcode Print Agent 확인"
+                "Zebra ZD-410/411 검사·투약 바코드 확인 순서",
+                "1. USB 연결이 지정되지 않음으로 보이면 위 'USB 다시 인식'을 눌러 주세요. 해결되지 않으면 케이블을 한 번 뺐다가 다시 꽂아 주세요.",
+                "2. 프린터 속성 > 드라이버 설정에서 상태확인 사용 안 함과 용지 설정 파일($drxHint) 적용 여부를 확인해 주세요.",
+                "3. 용지와 상단 여백(검사 5.5x3.0 / 2.6mm, 투약 5.5x6.0 / 1.0mm)과 AMIS Barcode Print Agent를 확인해 주세요."
             ) -join "`r`n"
             return [pscustomobject]@{ Type = 'ZD410_411'; TargetIp = $null; Installer = $inst; HasStep2 = $false; Checklist = $chk }
         }
         'BIXOLON_TX220' {
             $chk = @(
-                "[BIXOLON SLP-TX220 팔찌 바코드 확인 사항]",
-                "1. USB 연결 장비가 [지정되지 않음]으로 보이면 상단 [USB 재인식] 버튼을 먼저 실행하세요 (실패 시에만 USB 1회 재연결).",
-                "2. 기본 설정 -> Options: Darkness 11~12 (13이상 QR오류), mm, Landscape, Rotate 180, 20x250(성인)/20x150(소아)",
-                "3. Advanced Setup: 감열지(Direct Thermal) / 리본(Thermal Transfer) 구분, Sensor: Black Mark -> AMIS Barcode Print Agent 확인"
+                "BIXOLON SLP-TX220 팔찌 바코드 확인 순서",
+                "1. USB 연결이 지정되지 않음으로 보이면 위 'USB 다시 인식'을 눌러 주세요. 해결되지 않으면 케이블을 한 번 뺐다가 다시 꽂아 주세요.",
+                "2. 기본 설정 > Options에서 Darkness 11~12, mm, Landscape, Rotate 180, 성인 20x250 또는 소아 20x150을 확인해 주세요.",
+                "3. Advanced Setup에서 감열지/리본 구분과 Sensor Black Mark를 맞춘 뒤 AMIS Barcode Print Agent를 확인해 주세요."
             ) -join "`r`n"
             return [pscustomobject]@{ Type = 'BIXOLON_TX220'; TargetIp = $null; Installer = $inst; HasStep2 = $false; Checklist = $chk }
         }
@@ -244,24 +240,24 @@ function Get-SpecialPrinterAssistantInfo {
             $lptsNow   = if ($null -ne $PreloadedLpts) { @($PreloadedLpts) } else { @(Get-DeviceManagerLptPorts) }
             $lpt1Now   = $lptsNow | Where-Object { $_.PortName -ieq 'LPT1' } | Select-Object -First 1
             $otherLpts = @($lptsNow | Where-Object { $_.PortName -ine 'LPT1' })
-            $lptStatLine = '현재 PC 장치관리자 LPT1 상태: 미감지 (패럴렐 케이블 연결 및 PCIe LPT 포트 확인 필요)'
+            $lptStatLine = '현재 PC 장치관리자에서 LPT1이 감지되지 않았습니다. 패럴렐 케이블과 LPT 포트를 확인해 주세요.'
             if ($lpt1Now) {
-                $lptStatLine = "현재 PC 장치관리자 LPT1 상태: 정상 감지됨 ($($lpt1Now.Name) / $($lpt1Now.Status))"
+                $lptStatLine = "현재 PC 장치관리자에서 LPT1이 정상 감지되었습니다. ($($lpt1Now.Name))"
             } elseif ($otherLpts.Count -gt 0) {
-                $otherDesc = ($otherLpts | ForEach-Object { "$($_.PortName)($($_.Name))" }) -join ', '
-                $lptStatLine = "현재 PC 장치관리자 LPT1 미감지 — 대신 타 LPT 포트 감지됨: $otherDesc (장치관리자 포트 설정에서 LPT1으로 번호 변경 필요)"
+                $otherDesc = ($otherLpts | ForEach-Object { "$($_.PortName) ($($_.Name))" }) -join ', '
+                $lptStatLine = "현재 PC에서 LPT1 대신 $otherDesc 포트가 감지되었습니다. 장치관리자 포트 설정에서 LPT1으로 변경해 주세요."
             }
             $chk = @(
-                "[EPSON TM-T88VI — LPT1 유선 직결 무드라이버 장비 (백업/설치 제외)]",
-                "• $lptStatLine",
-                "1. Windows 프린터 드라이버·별도 포트 설정·바코드 에이전트를 절대 설치하지 마세요.",
-                "2. LPT 패럴렐 케이블 유선 연결 후 장치관리자(devmgmt.msc) > [포트(COM & LPT)]에 LPT1 인식 여부만 확인하세요.",
-                "3. LPT1이 정상 인식된 상태에서 AMIS 3.0에서 별도 작업 없이 그대로 출력하여 확인하세요."
+                "EPSON TM-T88VI LPT1 직결 장비 안내 (드라이버 설치 제외)",
+                "감지 상태: $lptStatLine",
+                "1. Windows 프린터 드라이버, 포트 설정, 바코드 에이전트를 설치하지 마세요.",
+                "2. LPT 패럴렐 케이블을 연결한 뒤 장치관리자(devmgmt.msc)의 포트(COM & LPT)에 LPT1이 보이는지 확인해 주세요.",
+                "3. LPT1이 정상 인식되면 AMIS 3.0에서 별도 설정 없이 바로 출력 테스트를 진행해 주세요."
             ) -join "`r`n"
             return [pscustomobject]@{ Type = 'EPSON_TMT88_LPT'; TargetIp = $null; Installer = [pscustomobject]@{ Found = $false; Folder = $null; ExePath = $null; DrxPath = $null; DrsPath = $null; InfPath = $null }; HasStep2 = $false; Checklist = $chk }
         }
         default {
-            return [pscustomobject]@{ Type = $SpecialRow.SpecialType; TargetIp = $null; Installer = $inst; HasStep2 = $false; Checklist = "특수 프린터($($SpecialRow.PrinterName)): 드라이버 및 용지 기본 설정을 확인한 뒤 AMIS에서 직접 테스트하세요." }
+            return [pscustomobject]@{ Type = $SpecialRow.SpecialType; TargetIp = $null; Installer = $inst; HasStep2 = $false; Checklist = "특수 프린터 $($SpecialRow.PrinterName)의 드라이버와 용지 기본 설정을 확인한 뒤 AMIS에서 테스트해 주세요." }
         }
     }
 }

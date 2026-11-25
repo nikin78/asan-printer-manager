@@ -651,7 +651,7 @@ function Resolve-BestDriverForPrinter {
         DriverName      = $null
         Source          = 'NotFound'
         UsedSamFallback = $false
-        ProtocolNotice  = '백업 원본, Win 11 내장, PRT 폴더 어디에서도 일치하는 드라이버를 찾지 못함'
+        ProtocolNotice  = '백업 파일, Windows 기본 드라이버, 로컬 드라이버 폴더에서 일치하는 드라이버를 찾지 못했습니다.'
     }
 }
 

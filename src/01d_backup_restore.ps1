@@ -194,7 +194,7 @@ function Invoke-PrinterBackupEngine {
             $backupNotes.Add([pscustomobject]@{
                 Level   = 'Info'
                 Target  = '오프라인 백업'
-                Message = '오프라인 상태에서 검증 생략 후 전체 백업됨 — 새 Win 11 PC(온라인)에서 복원 전 지연 검증이 자동 실행됩니다.'
+                Message = '오프라인 상태에서 전체 백업했습니다. 새 PC에서 사내망 연결 후 복원 전에 연결 상태를 자동으로 확인합니다.'
             })
         }
 
@@ -211,12 +211,31 @@ function Invoke-PrinterBackupEngine {
         }
 
         Write-ProgressSafe -OnProgress $OnProgress -Percent 75 -Message '[4/5] PrinterBackup.json 및 영속 Migration_Report.txt 생성 중...'
-        $localSid = Get-LocalMachineSID
+        $localSid  = Get-LocalMachineSID
+        $srcOsName = 'Windows'
+        $srcOsBld  = 0
+        try {
+            $osInfo = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
+            if ($osInfo) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$osInfo.Caption)) {
+                    $srcOsName = ([string]$osInfo.Caption) -replace '^Microsoft\s+', ''
+                }
+                [void][int]::TryParse([string]$osInfo.BuildNumber, [ref]$srcOsBld)
+            }
+        } catch {}
+        if ($srcOsBld -le 0) {
+            try { $srcOsBld = [int][System.Environment]::OSVersion.Version.Build } catch {}
+        }
+        $srcIsWin11 = ($srcOsBld -ge 22000 -or $srcOsName -match 'Windows 11')
+
         $backupJson = [pscustomobject]@{
             FormatVersion    = 6
             AppVersion       = $global:AsanCtx.AppVersion
             SourceComputer   = $env:COMPUTERNAME
             SourceIP         = $PcIp
+            SourceOsName     = $srcOsName
+            SourceOsBuild    = $srcOsBld
+            SourceIsWin11    = [bool]$srcIsWin11
             SourceMachineSID = $localSid
             IsOfflineBackup  = [bool]$OfflineZipMode
             ExportedAt       = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
@@ -235,16 +254,17 @@ function Invoke-PrinterBackupEngine {
         [IO.File]::WriteAllText((Join-Path $localTemp 'PrinterBackup.json'), $jsonText, (New-Object Text.UTF8Encoding($true)))
 
         $modeStr = '온라인 사내 서버'
-        if ($OfflineZipMode) { $modeStr = '오프라인 ZIP (지연 검증 대상)' }
+        if ($OfflineZipMode) { $modeStr = '오프라인 ZIP (복원 시 연결 재확인)' }
         $brmStr = '실패'
         if ($brmOk) { $brmStr = '성공' }
 
         $repLines = [System.Collections.Generic.List[string]]::new()
         $repLines.Add("=========================================================================")
-        $repLines.Add(" 아산병원 프린터/드라이버 마이그레이션 백업 리포트 (v$($global:AsanCtx.AppVersion))")
+        $repLines.Add(" 프린터·드라이버 마이그레이션 백업 리포트 (v$($global:AsanCtx.AppVersion))")
         $repLines.Add("=========================================================================")
         $repLines.Add(" 백업 일시       : $($backupJson.ExportedAt)")
         $repLines.Add(" 원본 PC (IP)    : $($env:COMPUTERNAME) ($PcIp)")
+        $repLines.Add(" 원본 운영체제   : $srcOsName (Build $srcOsBld)")
         $repLines.Add(" 원본 MachineSID : $localSid")
         $repLines.Add(" 백업 모드       : $modeStr")
         $repLines.Add(" 백업 프린터 수  : $($printerRecords.Count)대 (가상 제외: ${excludedCount}대)")
@@ -505,31 +525,33 @@ function Test-BackupDataDeferred {
 
                 $chk = Test-TcpIpPrinterHealth -HostAddress $hostAddr -Protocol $protoVal -PortNumber $pNumVal -SkipAliveFilter:$spec.SkipAliveFilter
                 $liveStatus = $chk.Status
-                $liveReason = "[지연검증] $($chk.Reason)"
+                $liveReason = "실시간 확인 · $($chk.Reason)"
                 if ($liveStatus -eq 'Healthy') { $liveStatusText = '정상' }
-                elseif ($liveStatus -eq 'Ambiguous') { $liveStatusText = '애매함' }
-                else { $liveStatusText = '비활성의심' }
+                elseif ($liveStatus -eq 'Ambiguous') { $liveStatusText = '응답 확인 필요' }
+                else { $liveStatusText = '응답 없음' }
             } elseif ($pKind -eq 'LOCAL_UNC' -or $pKind -eq 'SHARED_UNC') {
                 $targetUnc = $port
                 if ($p.ConnectionName) { $targetUnc = [string]$p.ConnectionName }
                 $chk = Test-UncSharePrinterAlive -UncPath $targetUnc
                 $liveStatus = $chk.Status
-                $liveReason = "[지연검증] $($chk.Reason)"
+                $liveReason = "실시간 확인 · $($chk.Reason)"
                 if ($liveStatus -eq 'Healthy') {
                     $liveStatusText = '정상'
                 } elseif ($liveStatus -eq 'AuthOrSidConflict') {
-                    $liveStatusText = '인증/SID의심'
+                    $liveStatusText = '인증 확인 필요'
                     if ($chk.HostName -and -not $seenAuthHost.ContainsKey($chk.HostName.ToLowerInvariant())) {
                         $seenAuthHost[$chk.HostName.ToLowerInvariant()] = $true
                         $authFailedHosts.Add([pscustomobject]@{ HostName = $chk.HostName; Reason = $chk.Reason })
                     }
+                } elseif ($liveStatus -eq 'Ambiguous') {
+                    $liveStatusText = '응답 확인 필요'
                 } else {
-                    $liveStatusText = '비활성의심'
+                    $liveStatusText = '응답 없음'
                 }
             } elseif ($pKind -eq 'WSD' -and -not [string]::IsNullOrWhiteSpace([string]$wsdIp)) {
                 if ((Test-TcpPortFast -HostIp $wsdIp -Port 9100 -TimeoutMs 1200) -or (Test-TcpPortFast -HostIp $wsdIp -Port 515 -TimeoutMs 1000)) {
-                    $wsdMode = 'TCPIP'; $wsdShare = $null; $liveStatus = 'WsdConvert'; $liveStatusText = 'WSD->TCP/IP'
-                    $liveReason = "[지연검증] WSD IP($wsdIp) 인쇄 포트 정상 -> TCP/IP 전환 예정"
+                    $wsdMode = 'TCPIP'; $wsdShare = $null; $liveStatus = 'WsdConvert'; $liveStatusText = 'WSD 전환'
+                    $liveReason = "실시간 확인 · WSD IP($wsdIp) 인쇄 포트 정상, TCP/IP로 자동 전환됩니다."
                 } elseif (Test-TcpPortFast -HostIp $wsdIp -Port 445 -TimeoutMs 1200) {
                     $auth = Connect-SharedHostSmart -HostName $wsdIp
                     if ($auth.Success) {
@@ -539,30 +561,30 @@ function Test-BackupDataDeferred {
                             $hintCombo = "$dName $wsdModel"
                             if ($hintCombo -match '(?i)Kyocera' -and ($shs -contains 'kyoceraf')) { $bestS = 'kyoceraf' }
                             elseif ($hintCombo -match '(?i)Samsung' -and ($shs -contains 'samsungm')) { $bestS = 'samsungm' }
-                            $wsdMode = 'LOCAL_UNC'; $wsdShare = "\\$wsdIp\$bestS"; $liveStatus = 'WsdConvert'; $liveStatusText = 'WSD->LocalPort'
-                            $liveReason = "[지연검증] WSD IP($wsdIp) 공유 프린터($bestS) 확인 -> Local Port 전환 예정"
+                            $wsdMode = 'LOCAL_UNC'; $wsdShare = "\\$wsdIp\$bestS"; $liveStatus = 'WsdConvert'; $liveStatusText = 'WSD 전환'
+                            $liveReason = "실시간 확인 · WSD IP($wsdIp) 공유 프린터($bestS) 확인, Local Port로 자동 전환됩니다."
                         } else {
-                            $liveStatus = 'Ambiguous'; $liveStatusText = '애매함(WSD)'
-                            $liveReason = "[지연검증] WSD IP($wsdIp) SMB 접속은 성공했으나 공유 프린터가 없음"
+                            $liveStatus = 'Ambiguous'; $liveStatusText = 'WSD 확인 필요'
+                            $liveReason = "실시간 확인 · WSD IP($wsdIp) 접속은 되었으나 공유 프린터가 없습니다."
                         }
                     } elseif ($auth.Status -eq 'AuthOrSidConflict') {
-                        $liveStatus = 'AuthOrSidConflict'; $liveStatusText = '인증/SID의심'
-                        $liveReason = "[지연검증] WSD 호스트($wsdIp) $($auth.Reason)"
+                        $liveStatus = 'AuthOrSidConflict'; $liveStatusText = '인증 확인 필요'
+                        $liveReason = "실시간 확인 · WSD 호스트($wsdIp) $($auth.Reason)"
                         if (-not $seenAuthHost.ContainsKey($wsdIp.ToLowerInvariant())) {
                             $seenAuthHost[$wsdIp.ToLowerInvariant()] = $true
                             $authFailedHosts.Add([pscustomobject]@{ HostName = $wsdIp; Reason = $liveReason })
                         }
                     } else {
-                        $liveStatus = 'Ambiguous'; $liveStatusText = '애매함(WSD)'
-                        $liveReason = "[지연검증] WSD IP($wsdIp) SMB 연결 실패 ($($auth.Reason))"
+                        $liveStatus = 'Ambiguous'; $liveStatusText = 'WSD 확인 필요'
+                        $liveReason = "실시간 확인 · WSD IP($wsdIp) SMB 연결 실패: $($auth.Reason)"
                     }
                 } else {
                     if ((Test-PingFast -HostIp $wsdIp -TimeoutMs 1000) -or (Test-TcpPortFast -HostIp $wsdIp -Port 80 -TimeoutMs 1000)) {
-                        $liveStatus = 'Ambiguous'; $liveStatusText = '애매함(WSD)'
-                        $liveReason = "[지연검증] WSD IP($wsdIp) 호스트 응답은 있으나 인쇄 포트(9100/515/445) 닫힘"
+                        $liveStatus = 'Ambiguous'; $liveStatusText = 'WSD 확인 필요'
+                        $liveReason = "실시간 확인 · WSD IP($wsdIp) 응답은 있으나 인쇄 포트가 닫혀 있습니다."
                     } else {
-                        $liveStatus = 'SuspectedInactive'; $liveStatusText = '비활성의심'
-                        $liveReason = "[지연검증] WSD IP($wsdIp) 무응답 (프린터 전원 꺼짐 또는 IP 변경 의심)"
+                        $liveStatus = 'SuspectedInactive'; $liveStatusText = '응답 없음'
+                        $liveReason = "실시간 확인 · WSD IP($wsdIp) 응답 없음. 전원 꺼짐이나 IP 변경을 확인해 주세요."
                     }
                 }
             }
@@ -580,12 +602,12 @@ function Test-BackupDataDeferred {
         if ($liveStatus -eq 'SuspectedInactive') { $defaultCheck = $false }
         if ($spec.Win11ReinstallOnly) {
             $defaultCheck   = $false
-            $liveStatusText = 'Win11수동설치'
+            $liveStatusText = '전용 설치 필요'
         }
         if ($spec.NoDriverBackup) {
             $defaultCheck   = $false
-            $liveStatusText = '무드라이버(LPT1확인)'
-            $liveReason     = '[드라이버 설치 금지] LPT1 유선 직결 후 AMIS 직접 사용 장비 — 장치관리자 LPT1 인식 여부만 확인 (드라이버/에이전트 불필요)'
+            $liveStatusText = 'LPT1 확인 전용'
+            $liveReason     = '드라이버를 설치하지 않는 LPT1 직결 장비입니다. 장치관리자에서 LPT1 인식 여부만 확인해 주세요.'
         }
 
         $rows.Add([pscustomobject]@{
@@ -1006,7 +1028,7 @@ function Invoke-PrinterRestoreEngine {
 
         # [4/6] 사후 정제 ([H1 Fix] -SkipPrintBrm 시 생략)
         if (-not $SkipPrintBrm) {
-            Write-ProgressSafe -OnProgress $OnProgress -Percent 48 -Message '[4/6] 사후 정제 실행 중 (미선택/유입 가상/WSD원본/Win10 구형 세우테크 격리)...'
+            Write-ProgressSafe -OnProgress $OnProgress -Percent 48 -Message '[4/6] 미선택·가상 프린터 및 전용 설치 대상 정리 중...'
             $allBackupRowsByName = @{}
             foreach ($r in @($SelectedRows)) { $allBackupRowsByName[[string]$r.PrinterName] = $r }
             $sewooDriversToClean = [System.Collections.Generic.List[string]]::new()
@@ -1022,7 +1044,7 @@ function Invoke-PrinterRestoreEngine {
                 }
 
                 $specNow = Get-SpecialPrinterProfile -PrinterName $cName -DriverName $curPrt.DriverName -PortName $curPrt.PortName
-                # 이미 새 Win 11 PC에 선설치된 정상 세우테크 큐는 보호($wasPreExisting 확인)
+                # 이미 새 PC에 선설치된 정상 세우테크 큐는 보호($wasPreExisting 확인)
                 if ((-not $wasPreExisting) -and ($specNow.Win11ReinstallOnly -or $specNow.NoDriverBackup)) {
                     $isoDrv = [string]$curPrt.DriverName
                     Remove-Printer -InputObject $curPrt -ErrorAction SilentlyContinue
@@ -1030,9 +1052,9 @@ function Invoke-PrinterRestoreEngine {
                         $sewooDriversToClean.Add($isoDrv)
                     }
                     if ($specNow.NoDriverBackup) {
-                        $restoreLog.Add([pscustomobject]@{ Level = 'Special'; Target = $cName; Message = 'EPSON TM-T88(LPT1 무드라이버) 유입 큐/드라이버 자동 격리 삭제 — 드라이버 설치 금지, 장치관리자 LPT1 인식만 확인' })
+                        $restoreLog.Add([pscustomobject]@{ Level = 'Special'; Target = $cName; Message = 'EPSON TM-T88 유입 큐와 드라이버를 자동 격리 삭제했습니다. 드라이버를 설치하지 말고 장치관리자 LPT1 인식만 확인해 주세요.' })
                     } else {
-                        $restoreLog.Add([pscustomobject]@{ Level = 'Special'; Target = $cName; Message = 'Win 10 구형 세우테크 큐/드라이버 자동 격리 삭제 (Win 11 전용 설치 도우미 사용 필수)' })
+                        $restoreLog.Add([pscustomobject]@{ Level = 'Special'; Target = $cName; Message = '세우테크 유입 큐와 드라이버를 자동 격리 삭제했습니다. 새 PC 전용 설치 도우미로 직접 설치해 주세요.' })
                     }
                     continue
                 }

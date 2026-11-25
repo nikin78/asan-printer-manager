@@ -109,8 +109,11 @@ try {
     $synJsonObj = [pscustomobject]@{
         FormatVersion    = 6
         AppVersion       = '1.0.0-beta.3'
-        SourceComputer   = 'WIN10-TEST-PC'
+        SourceComputer   = 'WIN11-OLD-PC'
         SourceIP         = '172.25.99.99'
+        SourceOsName     = 'Windows 11 Enterprise'
+        SourceOsBuild    = 22631
+        SourceIsWin11    = $true
         SourceMachineSID = 'S-1-5-21-1111111111-2222222222-3333333333'
         IsOfflineBackup  = $false
         ExportedAt       = '2026-11-25 03:55:00'
@@ -385,7 +388,7 @@ if (-not `$meta -or -not `$meta.IsZip -or `$meta.Data.FormatVersion -ne 6) { thr
 `$rowSew  = `$def.Printers | Where-Object { `$_.SpecialType -eq 'SEWOO_TE201' } | Select-Object -First 1
 `$rowInac = `$def.Printers | Where-Object { `$_.StatusCode -eq 'SuspectedInactive' } | Select-Object -First 1
 `$rowNorm = `$def.Printers | Where-Object { `$_.PrinterName -eq '병동_교세라_5000' } | Select-Object -First 1
-if (`$rowSew.Selected -or `$rowSew.StatusText -ne 'Win11수동설치') { throw 'SEWOO 기본 체크해제 규칙 실패' }
+if (`$rowSew.Selected -or `$rowSew.StatusText -ne '전용 설치 필요') { throw "SEWOO 기본 체크해제 규칙 실패: Status=`$(`$rowSew.StatusText)" }
 if (`$rowInac.Selected) { throw '비활성의심 기본 체크해제 규칙 실패' }
 if (-not `$rowNorm.Selected) { throw '정상 프린터 기본 체크 규칙 실패' }
 
@@ -483,9 +486,10 @@ Sync-AllUiButtonStates
 })
 
 `$script:Ui.Form.Add_Shown({
-    Add-UiLog -Message "아산병원 프린터/드라이버 통합 마이그레이션 도구 v`$(`$global:AsanCtx.AppVersion) 기동됨 (Smoke Test)" -Level 'INFO'
+    Add-UiLog -Message "프린터·드라이버 마이그레이션 도구 v`$(`$global:AsanCtx.AppVersion) 기동됨 (Smoke Test)" -Level 'INFO'
     Invoke-EnvironmentRefreshAsync -AfterRefresh {
-        if (`$script:AppState.IsWin11) {
+        `$bestMatch = @(`$script:AppState.ServerBackups | Where-Object { `$_.MatchRank -le 2 } | Sort-Object MatchRank, @{ Expression = { `$_.LastWriteTime }; Descending = `$true }) | Select-Object -First 1
+        if (`$script:AppState.IsWin11 -and `$bestMatch) {
             `$script:Ui.TabMain.SelectedIndex = 1
         } else {
             `$script:Ui.TabMain.SelectedIndex = 0
@@ -510,15 +514,18 @@ Sync-AllUiButtonStates
 
         switch (`$script:SmokeStage) {
             0 {
-                # 초기 환경 진단(Runspace) 완료 확인 + Win11 자동 탭2 진입 확인
+                # 초기 환경 진단(Runspace) 완료 확인 + 스마트 시작 탭 검증 (일치 백업 없으면 Win 11 구 PC도 탭 1)
                 if (`$null -eq `$script:AppState.NetworkInfo) { return }
+                `$bestMatchNow = @(`$script:AppState.ServerBackups | Where-Object { `$_.MatchRank -le 2 }) | Select-Object -First 1
+                `$expectTab = 0
+                if (`$script:AppState.IsWin11 -and `$bestMatchNow) { `$expectTab = 1 }
                 `$script:SmokeMeta['InitSelectedTab'] = `$script:Ui.TabMain.SelectedIndex
                 `$script:SmokeMeta['IsWin11']         = `$script:AppState.IsWin11
                 `$script:SmokeMeta['NetStatus']       = `$script:AppState.NetworkInfo.Status
                 `$script:SmokeMeta['HeaderSid']       = `$script:Ui.LblSid.Text
                 `$script:SmokeMeta['HeaderOs']        = `$script:Ui.LblOs.Text
-                if (`$script:AppState.IsWin11 -and `$script:Ui.TabMain.SelectedIndex -ne 1) {
-                    `$script:SmokeErrors.Add("Win11에서 초기 탭이 1(복원)이 아님: `$(`$script:Ui.TabMain.SelectedIndex)")
+                if (`$script:Ui.TabMain.SelectedIndex -ne `$expectTab) {
+                    `$script:SmokeErrors.Add("초기 탭 불일치: 기대=`$expectTab, 실제=`$(`$script:Ui.TabMain.SelectedIndex)")
                 }
                 # 탭 1로 이동 후 오프라인 읽기 전용 사전 스캔 실행
                 `$script:Ui.TabMain.SelectedIndex = 0

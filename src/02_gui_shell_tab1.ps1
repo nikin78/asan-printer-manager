@@ -18,9 +18,10 @@ $script:Ui = @{
     TabRestore         = $null
     TabVerify          = $null
     TabServer          = $null
-    PicLogo            = $null
-    LogoImage          = $null
+    PicBadge           = $null
+    BadgeImage         = $null
     AppIcon            = $null
+    ToolTip            = $null
     LblTitle           = $null
     LblSubtitle        = $null
     LblOs              = $null
@@ -71,126 +72,144 @@ $script:AsyncState = @{
 }
 
 # ============================================================================
-# 서울아산병원 공식 CI 디자인 팔레트 · 로고/아이콘 · 공용 UI 스타일 팩토리
-# - ASAN GREEN #006769, ASAN ORANGE #F68B1F/#EC7A08, ASAN LIGHT #3F8C8B, ASAN GRAY #4C4D4F
+# 고시인성 아산 그린·오렌지 테마 팔레트 · 순수 GDI+ 프린터 심볼 · 공용 UI 팩토리
+# - 제3자 로고 이미지 미사용(저작권 리스크 0), 모든 아이콘/심볼 순수 GDI+ 생성
 # ============================================================================
-$script:AsanLogoB64 = 'iVBORw0KGgoAAAANSUhEUgAAAIwAAAAmCAYAAAAWR3O2AAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAA2ZpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDUuMC1jMDYwIDYxLjEzNDc3NywgMjAxMC8wMi8xMi0xNzozMjowMCAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wTU09Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9tbS8iIHhtbG5zOnN0UmVmPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvc1R5cGUvUmVzb3VyY2VSZWYjIiB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iIHhtcE1NOk9yaWdpbmFsRG9jdW1lbnRJRD0ieG1wLmRpZDpFMEIzRkE1RUI1NDZFMzExOTVDMDk1MUJGRUFGOEYxMCIgeG1wTU06RG9jdW1lbnRJRD0ieG1wLmRpZDo0RENGREEwOTgzMkIxMUUzODgxOEYyNEU2RUM3NTc1QiIgeG1wTU06SW5zdGFuY2VJRD0ieG1wLmlpZDo0RENGREEwODgzMkIxMUUzODgxOEYyNEU2RUM3NTc1QiIgeG1wOkNyZWF0b3JUb29sPSJBZG9iZSBQaG90b3Nob3AgQ1M2IChXaW5kb3dzKSI+IDx4bXBNTTpEZXJpdmVkRnJvbSBzdFJlZjppbnN0YW5jZUlEPSJ4bXAuaWlkOjA3RUUyREE3NzQ3RUUzMTE5QkJBRDNCQjIyRkMxOEUwIiBzdFJlZjpkb2N1bWVudElEPSJ4bXAuZGlkOkUwQjNGQTVFQjU0NkUzMTE5NUMwOTUxQkZFQUY4RjEwIi8+IDwvcmRmOkRlc2NyaXB0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'
-
 $script:Theme = @{
     AsanGreen      = [System.Drawing.Color]::FromArgb(0, 103, 105)
-    AsanDeep       = [System.Drawing.Color]::FromArgb(0, 79, 81)
-    AsanLight      = [System.Drawing.Color]::FromArgb(63, 140, 139)
-    AsanMint       = [System.Drawing.Color]::FromArgb(234, 243, 242)
-    AsanMintSoft   = [System.Drawing.Color]::FromArgb(230, 239, 238)
-    AsanMintHover  = [System.Drawing.Color]::FromArgb(217, 234, 232)
-    AsanMintBorder = [System.Drawing.Color]::FromArgb(183, 211, 209)
-    AsanOrange     = [System.Drawing.Color]::FromArgb(236, 122, 8)
-    AsanOrangeDeep = [System.Drawing.Color]::FromArgb(204, 101, 5)
-    AsanOrangeText = [System.Drawing.Color]::FromArgb(168, 84, 0)
-    AsanOrangeTint = [System.Drawing.Color]::FromArgb(255, 243, 227)
-    AsanOrangeBord = [System.Drawing.Color]::FromArgb(242, 201, 153)
+    AsanDeep       = [System.Drawing.Color]::FromArgb(0, 77, 79)
+    HeaderBg       = [System.Drawing.Color]::FromArgb(0, 86, 88)
+    HeaderSubFg    = [System.Drawing.Color]::FromArgb(202, 232, 231)
+    HeaderUtilBg   = [System.Drawing.Color]::FromArgb(16, 112, 114)
+    HeaderUtilHov  = [System.Drawing.Color]::FromArgb(24, 132, 134)
+    HeaderUtilBord = [System.Drawing.Color]::FromArgb(95, 170, 169)
+    GridHeadBg     = [System.Drawing.Color]::FromArgb(11, 79, 81)
+    GridHeadFg     = [System.Drawing.Color]::White
+    AsanLight      = [System.Drawing.Color]::FromArgb(2, 128, 168)
+    AsanMint       = [System.Drawing.Color]::FromArgb(228, 242, 241)
+    AsanMintSoft   = [System.Drawing.Color]::FromArgb(217, 231, 230)
+    AsanMintHover  = [System.Drawing.Color]::FromArgb(204, 229, 227)
+    AsanMintBorder = [System.Drawing.Color]::FromArgb(95, 160, 158)
+    MetaBarBg      = [System.Drawing.Color]::FromArgb(237, 243, 243)
+    BadgeOnlineBg  = [System.Drawing.Color]::FromArgb(20, 138, 94)
+    AsanOrange     = [System.Drawing.Color]::FromArgb(224, 112, 8)
+    AsanOrangeDeep = [System.Drawing.Color]::FromArgb(191, 90, 4)
+    AsanOrangeLine = [System.Drawing.Color]::FromArgb(246, 139, 31)
+    AsanOrangeText = [System.Drawing.Color]::FromArgb(154, 71, 0)
+    AsanOrangeTint = [System.Drawing.Color]::FromArgb(255, 241, 222)
+    AsanOrangeBord = [System.Drawing.Color]::FromArgb(224, 156, 82)
     DangerRed      = [System.Drawing.Color]::FromArgb(192, 57, 43)
-    DangerRedDeep  = [System.Drawing.Color]::FromArgb(169, 50, 38)
-    DangerRedTint  = [System.Drawing.Color]::FromArgb(252, 235, 232)
-    DangerRedBord  = [System.Drawing.Color]::FromArgb(229, 180, 174)
-    SpecialPurple  = [System.Drawing.Color]::FromArgb(109, 40, 217)
-    SpecialTint    = [System.Drawing.Color]::FromArgb(245, 240, 255)
-    CanvasBg       = [System.Drawing.Color]::FromArgb(243, 246, 245)
+    DangerRedDeep  = [System.Drawing.Color]::FromArgb(158, 38, 28)
+    DangerRedTint  = [System.Drawing.Color]::FromArgb(253, 236, 234)
+    DangerRedBord  = [System.Drawing.Color]::FromArgb(217, 130, 121)
+    SpecialPurple  = [System.Drawing.Color]::FromArgb(98, 36, 198)
+    SpecialTint    = [System.Drawing.Color]::FromArgb(242, 236, 255)
+    CanvasBg       = [System.Drawing.Color]::FromArgb(231, 238, 238)
     CardBg         = [System.Drawing.Color]::White
-    RowAltBg       = [System.Drawing.Color]::FromArgb(249, 251, 251)
-    Border         = [System.Drawing.Color]::FromArgb(224, 230, 229)
-    BorderBtn      = [System.Drawing.Color]::FromArgb(201, 207, 207)
-    InkPrimary     = [System.Drawing.Color]::FromArgb(31, 42, 43)
-    InkSecondary   = [System.Drawing.Color]::FromArgb(76, 77, 79)
-    InkMuted       = [System.Drawing.Color]::FromArgb(107, 109, 111)
-    DisabledBg     = [System.Drawing.Color]::FromArgb(237, 241, 240)
-    DisabledFg     = [System.Drawing.Color]::FromArgb(154, 165, 166)
-    DisabledBorder = [System.Drawing.Color]::FromArgb(220, 227, 226)
-    LogBg          = [System.Drawing.Color]::FromArgb(27, 38, 39)
-    LogFg          = [System.Drawing.Color]::FromArgb(220, 231, 230)
+    RowAltBg       = [System.Drawing.Color]::FromArgb(244, 248, 248)
+    Border         = [System.Drawing.Color]::FromArgb(198, 212, 211)
+    GridLine       = [System.Drawing.Color]::FromArgb(211, 223, 223)
+    BorderBtn      = [System.Drawing.Color]::FromArgb(142, 165, 164)
+    InkPrimary     = [System.Drawing.Color]::FromArgb(20, 34, 35)
+    InkSecondary   = [System.Drawing.Color]::FromArgb(47, 66, 68)
+    InkMuted       = [System.Drawing.Color]::FromArgb(80, 99, 101)
+    DisabledBg     = [System.Drawing.Color]::FromArgb(228, 235, 235)
+    DisabledFg     = [System.Drawing.Color]::FromArgb(132, 150, 151)
+    DisabledBorder = [System.Drawing.Color]::FromArgb(200, 212, 212)
+    LogBg          = [System.Drawing.Color]::FromArgb(22, 34, 35)
+    LogFg          = [System.Drawing.Color]::FromArgb(226, 236, 235)
 }
 
 $script:FontBase     = New-Object System.Drawing.Font('맑은 고딕', 9, [System.Drawing.FontStyle]::Regular)
 $script:FontBold     = New-Object System.Drawing.Font('맑은 고딕', 9, [System.Drawing.FontStyle]::Bold)
-$script:FontTitle    = New-Object System.Drawing.Font('맑은 고딕', 12, [System.Drawing.FontStyle]::Bold)
+$script:FontTab      = New-Object System.Drawing.Font('맑은 고딕', 9.5, [System.Drawing.FontStyle]::Bold)
+$script:FontTabIdle  = New-Object System.Drawing.Font('맑은 고딕', 9.5, [System.Drawing.FontStyle]::Regular)
+$script:FontTitle    = New-Object System.Drawing.Font('맑은 고딕', 12.5, [System.Drawing.FontStyle]::Bold)
 $script:FontSubtitle = New-Object System.Drawing.Font('맑은 고딕', 8.5, [System.Drawing.FontStyle]::Regular)
 $script:FontSmall    = New-Object System.Drawing.Font('맑은 고딕', 8.5, [System.Drawing.FontStyle]::Regular)
 $script:FontSmallB   = New-Object System.Drawing.Font('맑은 고딕', 8.5, [System.Drawing.FontStyle]::Bold)
 $script:FontMono     = New-Object System.Drawing.Font('Consolas', 8.5, [System.Drawing.FontStyle]::Regular)
 
-function New-AsanLogoImage {
-    if ([string]::IsNullOrWhiteSpace($script:AsanLogoB64) -or $script:AsanLogoB64.StartsWith('__')) { return $null }
+function New-AsanPrinterSymbolBitmap {
+    param(
+        [int]$Size = 64,
+        [switch]$OnDarkHeader
+    )
+    $bmp = New-Object System.Drawing.Bitmap($Size, $Size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $g   = [System.Drawing.Graphics]::FromImage($bmp)
     try {
-        $bytes = [Convert]::FromBase64String($script:AsanLogoB64)
-        $ms    = New-Object System.IO.MemoryStream(, $bytes)
-        try {
-            $tmp = [System.Drawing.Image]::FromStream($ms)
-            try { return (New-Object System.Drawing.Bitmap($tmp)) }
-            finally { $tmp.Dispose() }
+        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $g.Clear([System.Drawing.Color]::Transparent)
+        $scale = [float]($Size / 64.0)
+        $g.ScaleTransform($scale, $scale)
+
+        $bgColor = $script:Theme.AsanGreen
+        if ($OnDarkHeader) { $bgColor = [System.Drawing.Color]::FromArgb(14, 118, 120) }
+
+        # 둥근 사각 배경
+        $gp = New-Object System.Drawing.Drawing2D.GraphicsPath
+        $r = 14
+        $gp.AddArc(2, 2, $r * 2, $r * 2, 180, 90)
+        $gp.AddArc(62 - $r * 2, 2, $r * 2, $r * 2, 270, 90)
+        $gp.AddArc(62 - $r * 2, 62 - $r * 2, $r * 2, $r * 2, 0, 90)
+        $gp.AddArc(2, 62 - $r * 2, $r * 2, $r * 2, 90, 90)
+        $gp.CloseFigure()
+        $brBg = New-Object System.Drawing.SolidBrush($bgColor)
+        $g.FillPath($brBg, $gp)
+        if ($OnDarkHeader) {
+            $penFrame = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(115, 195, 194), 2.0)
+            $g.DrawPath($penFrame, $gp)
+            $penFrame.Dispose()
         }
-        finally { $ms.Dispose() }
-    } catch {
-        return $null
+        $brBg.Dispose()
+        $gp.Dispose()
+
+        # 흰색 프린터 실루엣 (상단 용지 + 본체 + 하단 출력지)
+        $brW = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+        $brT = New-Object System.Drawing.SolidBrush($bgColor)
+        $g.FillRectangle($brW, 20, 12, 24, 12)
+        $g.FillRectangle($brW, 12, 22, 40, 20)
+        $g.FillRectangle($brT, 18, 34, 28, 6)
+        $g.FillRectangle($brW, 20, 35, 24, 17)
+        $penLine = New-Object System.Drawing.Pen($script:Theme.AsanLight, 2)
+        $g.DrawLine($penLine, 24, 41, 40, 41)
+        $g.DrawLine($penLine, 24, 46, 36, 46)
+        $penLine.Dispose()
+        $brT.Dispose()
+        $brW.Dispose()
+
+        # 우측 하단 아산 오렌지 체크 배지
+        $brO = New-Object System.Drawing.SolidBrush($script:Theme.AsanOrangeLine)
+        $penRing = New-Object System.Drawing.Pen($bgColor, 2.5)
+        $g.FillEllipse($brO, 39, 39, 21, 21)
+        $g.DrawEllipse($penRing, 39, 39, 21, 21)
+        $penChk = New-Object System.Drawing.Pen([System.Drawing.Color]::White, 2.6)
+        $penChk.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+        $penChk.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
+        $penChk.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
+        $g.DrawLines($penChk, @(
+            (New-Object System.Drawing.PointF(44.5, 49.5)),
+            (New-Object System.Drawing.PointF(48.2, 53.2)),
+            (New-Object System.Drawing.PointF(55.0, 45.8))
+        ))
+        $penChk.Dispose()
+        $penRing.Dispose()
+        $brO.Dispose()
     }
+    finally { $g.Dispose() }
+    return $bmp
+}
+
+function New-AsanPrinterBadgeImage {
+    try { return (New-AsanPrinterSymbolBitmap -Size 40 -OnDarkHeader) }
+    catch { return $null }
 }
 
 function New-AsanPrinterAppIcon {
     # 순수 GDI+ 64x64 아산 그린 프린터 심볼 -> PNG-in-ICO 스트림으로 매니지드 Icon 생성 (HICON 누수 0)
     try {
-        $bmp = New-Object System.Drawing.Bitmap(64, 64, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $bmp = New-AsanPrinterSymbolBitmap -Size 64
         try {
-            $g = [System.Drawing.Graphics]::FromImage($bmp)
-            try {
-                $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-                $g.Clear([System.Drawing.Color]::Transparent)
-
-                # 아산 그린 둥근 사각 배경
-                $gp = New-Object System.Drawing.Drawing2D.GraphicsPath
-                $r = 14
-                $gp.AddArc(2, 2, $r * 2, $r * 2, 180, 90)
-                $gp.AddArc(62 - $r * 2, 2, $r * 2, $r * 2, 270, 90)
-                $gp.AddArc(62 - $r * 2, 62 - $r * 2, $r * 2, $r * 2, 0, 90)
-                $gp.AddArc(2, 62 - $r * 2, $r * 2, $r * 2, 90, 90)
-                $gp.CloseFigure()
-                $brBg = New-Object System.Drawing.SolidBrush($script:Theme.AsanGreen)
-                $g.FillPath($brBg, $gp)
-                $brBg.Dispose()
-                $gp.Dispose()
-
-                # 흰색 프린터 실루엣 (상단 용지 + 본체 + 하단 출력지)
-                $brW = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
-                $brT = New-Object System.Drawing.SolidBrush($script:Theme.AsanGreen)
-                $g.FillRectangle($brW, 20, 12, 24, 12)
-                $g.FillRectangle($brW, 12, 22, 40, 20)
-                $g.FillRectangle($brT, 18, 34, 28, 6)
-                $g.FillRectangle($brW, 20, 35, 24, 17)
-                $penLine = New-Object System.Drawing.Pen($script:Theme.AsanLight, 2)
-                $g.DrawLine($penLine, 24, 41, 40, 41)
-                $g.DrawLine($penLine, 24, 46, 36, 46)
-                $penLine.Dispose()
-                $brT.Dispose()
-                $brW.Dispose()
-
-                # 우측 하단 아산 오렌지 체크 배지
-                $brO = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(246, 139, 31))
-                $penRing = New-Object System.Drawing.Pen($script:Theme.AsanGreen, 2.5)
-                $g.FillEllipse($brO, 39, 39, 21, 21)
-                $g.DrawEllipse($penRing, 39, 39, 21, 21)
-                $penChk = New-Object System.Drawing.Pen([System.Drawing.Color]::White, 2.6)
-                $penChk.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
-                $penChk.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
-                $penChk.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
-                $g.DrawLines($penChk, @(
-                    (New-Object System.Drawing.PointF(44.5, 49.5)),
-                    (New-Object System.Drawing.PointF(48.2, 53.2)),
-                    (New-Object System.Drawing.PointF(55.0, 45.8))
-                ))
-                $penChk.Dispose()
-                $penRing.Dispose()
-                $brO.Dispose()
-            }
-            finally { $g.Dispose() }
-
             $pngMs = New-Object System.IO.MemoryStream
             try {
                 $bmp.Save($pngMs, [System.Drawing.Imaging.ImageFormat]::Png)
@@ -314,7 +333,12 @@ function New-StyledButton {
         'Secondary' {
             $bg = $script:Theme.CardBg; $fg = $script:Theme.InkPrimary
             $bd = $script:Theme.BorderBtn; $bdSz = 1; $hover = $script:Theme.AsanMint
-            $font = $script:FontBase
+            $font = $script:FontBold
+        }
+        'HeaderUtil' {
+            $bg = $script:Theme.HeaderUtilBg; $fg = [System.Drawing.Color]::White
+            $bd = $script:Theme.HeaderUtilBord; $bdSz = 1; $hover = $script:Theme.HeaderUtilHov
+            $font = $script:FontSmallB
         }
         'SoftTeal' {
             $bg = $script:Theme.AsanMint; $fg = $script:Theme.AsanDeep
@@ -328,7 +352,7 @@ function New-StyledButton {
         }
         'SoftOrange' {
             $bg = $script:Theme.AsanOrangeTint; $fg = $script:Theme.AsanOrangeText
-            $bd = $script:Theme.AsanOrangeBord; $bdSz = 1; $hover = [System.Drawing.Color]::FromArgb(255, 229, 196)
+            $bd = $script:Theme.AsanOrangeBord; $bdSz = 1; $hover = [System.Drawing.Color]::FromArgb(255, 226, 189)
             $font = $script:FontBold
         }
         'Danger' {
@@ -337,7 +361,7 @@ function New-StyledButton {
             $font = $script:FontBold
         }
         'DangerOutline' {
-            $bg = $script:Theme.CardBg; $fg = $script:Theme.DangerRedDeep
+            $bg = [System.Drawing.Color]::FromArgb(255, 244, 243); $fg = $script:Theme.DangerRedDeep
             $bd = $script:Theme.DangerRedBord; $bdSz = 1; $hover = $script:Theme.DangerRedTint
             $font = $script:FontBold
         }
@@ -398,24 +422,24 @@ function New-StyledGrid {
     $dgv.BorderStyle                 = [System.Windows.Forms.BorderStyle]::FixedSingle
     $dgv.CellBorderStyle             = [System.Windows.Forms.DataGridViewCellBorderStyle]::SingleHorizontal
     $dgv.ColumnHeadersBorderStyle    = [System.Windows.Forms.DataGridViewHeaderBorderStyle]::Single
-    $dgv.GridColor                   = $script:Theme.Border
+    $dgv.GridColor                   = $script:Theme.GridLine
     $dgv.EnableHeadersVisualStyles   = $false
     $dgv.ColumnHeadersHeightSizeMode = [System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode]::DisableResizing
     $dgv.ColumnHeadersHeight         = 32
-    $dgv.RowTemplate.Height          = 28
+    $dgv.RowTemplate.Height          = 30
     $dgv.Font                        = $script:FontBase
     $dgv.AutoSizeColumnsMode         = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::None
 
-    $dgv.ColumnHeadersDefaultCellStyle.BackColor = $script:Theme.AsanMintSoft
-    $dgv.ColumnHeadersDefaultCellStyle.ForeColor = $script:Theme.AsanDeep
+    $dgv.ColumnHeadersDefaultCellStyle.BackColor = $script:Theme.GridHeadBg
+    $dgv.ColumnHeadersDefaultCellStyle.ForeColor = $script:Theme.GridHeadFg
     $dgv.ColumnHeadersDefaultCellStyle.Font      = $script:FontBold
-    $dgv.ColumnHeadersDefaultCellStyle.Padding   = New-Object System.Windows.Forms.Padding(4, 0, 4, 0)
+    $dgv.ColumnHeadersDefaultCellStyle.Padding   = New-Object System.Windows.Forms.Padding(5, 0, 5, 0)
     $dgv.DefaultCellStyle.BackColor              = $script:Theme.CardBg
     $dgv.DefaultCellStyle.ForeColor              = $script:Theme.InkPrimary
-    $dgv.DefaultCellStyle.Padding                = New-Object System.Windows.Forms.Padding(4, 0, 4, 0)
+    $dgv.DefaultCellStyle.Padding                = New-Object System.Windows.Forms.Padding(5, 0, 5, 0)
     $dgv.AlternatingRowsDefaultCellStyle.BackColor = $script:Theme.RowAltBg
     $dgv.DefaultCellStyle.SelectionBackColor     = $script:Theme.AsanMintHover
-    $dgv.DefaultCellStyle.SelectionForeColor     = $script:Theme.AsanDeep
+    $dgv.DefaultCellStyle.SelectionForeColor     = $script:Theme.InkPrimary
 
     if (-not $AllowCheckEdit) {
         $dgv.ReadOnly = $true
@@ -445,8 +469,8 @@ function Set-FooterLogExpanded {
         else { $script:Ui.PnlFooter.Height = 38 }
     }
     if ($script:Ui.BtnToggleLog -and -not $script:Ui.BtnToggleLog.IsDisposed) {
-        if ($Expanded) { $script:Ui.BtnToggleLog.Text = '작업 로그 접기 ▼' }
-        else { $script:Ui.BtnToggleLog.Text = '작업 로그 보기 ▲' }
+        if ($Expanded) { $script:Ui.BtnToggleLog.Text = '상세 로그 접기' }
+        else { $script:Ui.BtnToggleLog.Text = '상세 로그 보기' }
     }
 }
 
@@ -713,7 +737,7 @@ function Show-WppRemediationDialog {
     if (-not $WppStatus -or -not $WppStatus.IsEnabled) { return }
 
     $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text            = 'Windows 보호 인쇄 모드(WPP) 해제 안내'
+    $dlg.Text            = 'Windows 보호 인쇄 모드 해제 안내'
     $dlg.Size            = New-Object System.Drawing.Size(620, 395)
     $dlg.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterParent
     $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
@@ -729,7 +753,7 @@ function Show-WppRemediationDialog {
     $lblHead.BackColor = $script:Theme.DangerRed
     $lblHead.ForeColor = [System.Drawing.Color]::White
     $lblHead.Font      = $script:FontBold
-    $lblHead.Padding   = New-Object System.Windows.Forms.Padding(12, 0, 12, 0)
+    $lblHead.Padding   = New-Object System.Windows.Forms.Padding(14, 0, 14, 0)
     $lblHead.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
 
     $pnlBot = New-Object System.Windows.Forms.Panel
@@ -737,8 +761,8 @@ function Show-WppRemediationDialog {
     $pnlBot.Height  = 52
     $pnlBot.Padding = New-Object System.Windows.Forms.Padding(14, 8, 14, 8)
 
-    $btnOpen = New-StyledButton -Text 'Windows 프린터 설정 열기' -Width 218 -Height 34 -Variant 'Danger'
-    if ($WppStatus.IsPolicyEnforced) { $btnOpen.Text = '로컬 그룹 정책(gpedit.msc) 열기' }
+    $btnOpen = New-StyledButton -Text 'Windows 프린터 설정 열기' -Width 210 -Height 34 -Variant 'Danger'
+    if ($WppStatus.IsPolicyEnforced) { $btnOpen.Text = '로컬 그룹 정책 열기' }
     $btnOpen.Dock = [System.Windows.Forms.DockStyle]::Left
     $btnOpen.Tag  = $WppStatus
     $btnOpen.Add_Click({
@@ -756,7 +780,7 @@ function Show-WppRemediationDialog {
         }
     })
 
-    $btnClose = New-StyledButton -Text '닫기 (해제 후 F5 새로고침)' -Width 208 -Height 34 -Variant 'Secondary'
+    $btnClose = New-StyledButton -Text '닫기' -Width 104 -Height 34 -Variant 'Secondary'
     $btnClose.Dock         = [System.Windows.Forms.DockStyle]::Right
     $btnClose.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
 
@@ -805,7 +829,7 @@ function Show-BugReportDialog {
     }
 
     $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text            = '오류 / 버그 리포트 전송 (_PRTBAK\_REPORTS)'
+    $dlg.Text            = '오류 리포트 보내기'
     $dlg.Size            = New-Object System.Drawing.Size(560, 420)
     $dlg.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterParent
     $dlg.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
@@ -816,10 +840,10 @@ function Show-BugReportDialog {
     $dlg.Padding         = New-Object System.Windows.Forms.Padding(14)
 
     $lblGuide = New-Object System.Windows.Forms.Label
-    $lblGuide.Text      = '현장 오류 상황·PC 환경·프린터/포트/LPT/USB 상태·실시간 로그를 서버 리포트함(_PRTBAK\_REPORTS)으로 자동 수집·전송합니다. (비밀번호 자동 마스킹 / 오프라인 시 로컬 저장)'
+    $lblGuide.Text      = 'PC 환경, 프린터·포트 상태, 작업 로그를 모아 서버 리포트함으로 전송합니다. 비밀번호는 자동으로 가려지며, 오프라인일 때는 PC에 저장됩니다.'
     $lblGuide.Dock      = [System.Windows.Forms.DockStyle]::Top
     $lblGuide.Height    = 40
-    $lblGuide.ForeColor = [System.Drawing.Color]::FromArgb(51, 65, 85)
+    $lblGuide.ForeColor = $script:Theme.InkSecondary
     $lblGuide.Font      = $script:FontSmall
 
     # DPI 125~150% 라벨-입력창 겹침 방지 TableLayoutPanel
@@ -907,7 +931,7 @@ function Show-BugReportDialog {
     $pnlMemo.Padding = New-Object System.Windows.Forms.Padding(0, 6, 0, 0)
 
     $lblMemo = New-Object System.Windows.Forms.Label
-    $lblMemo.Text   = '현장 상황 메모 (예: 어떤 프린터/단계에서 무슨 오류가 났는지 간단히 기입):'
+    $lblMemo.Text   = '발생한 문제나 현장 상황을 간단히 적어 주세요'
     $lblMemo.Font   = $script:FontBold
     $lblMemo.Dock   = [System.Windows.Forms.DockStyle]::Top
     $lblMemo.Height = 22
@@ -1030,32 +1054,32 @@ function Update-HeaderAndWppUi {
     $shortOs = ([string]$script:AppState.OsCaption) -replace '^Microsoft\s+', ''
     if ([string]::IsNullOrWhiteSpace($shortOs)) { $shortOs = 'Windows' }
     $script:Ui.LblOs.Text  = $shortOs
-    $script:Ui.LblSid.Text = "SID: $($script:AppState.LocalSid)"
+    $script:Ui.LblSid.Text = "SID  $($script:AppState.LocalSid)"
 
-    $ipText = '확인 중...'
+    $ipText = '확인 중'
     if ($net) { $ipText = $net.IPAddress }
-    $script:Ui.LblPcIp.Text = "PC: $($env:COMPUTERNAME) ($ipText)"
+    $script:Ui.LblPcIp.Text = "$($env:COMPUTERNAME)  $ipText"
 
     if (-not $net) {
         $script:Ui.LblNetBadge.Text      = ' ● 연결 확인 중 '
         $script:Ui.LblNetBadge.BackColor = $script:Theme.InkMuted
-        $script:Ui.LblServerPath.Text    = '서버 연결 확인 중...'
+        $script:Ui.LblServerPath.Text    = '서버 연결 확인 중'
         $script:Ui.PnlWppBanner.Visible  = $false
         return
     }
 
     if ($net.Status -eq 'Online') {
         $script:Ui.LblNetBadge.Text      = ' ● 서버 연결됨 '
-        $script:Ui.LblNetBadge.BackColor = $script:Theme.AsanGreen
-        $script:Ui.LblServerPath.Text    = "서버: $($global:AsanCtx.ServerIP) (_PRTBAK)"
+        $script:Ui.LblNetBadge.BackColor = $script:Theme.BadgeOnlineBg
+        $script:Ui.LblServerPath.Text    = "백업 서버  $($global:AsanCtx.ServerIP)"
     } elseif ($net.Status -eq 'IntranetOnly') {
         $script:Ui.LblNetBadge.Text      = ' ▲ 서버 응답 없음 '
         $script:Ui.LblNetBadge.BackColor = $script:Theme.AsanOrange
-        $script:Ui.LblServerPath.Text    = '서버 응답 없음 (오프라인 ZIP 사용 가능)'
+        $script:Ui.LblServerPath.Text    = '서버 응답 없음 · ZIP 백업/복원 가능'
     } else {
         $script:Ui.LblNetBadge.Text      = ' ■ 오프라인 '
         $script:Ui.LblNetBadge.BackColor = $script:Theme.DangerRed
-        $script:Ui.LblServerPath.Text    = '오프라인 (ZIP 백업/복원 가능)'
+        $script:Ui.LblServerPath.Text    = '오프라인 · ZIP 백업/복원 가능'
     }
 
     $wpp = $net.WppStatus
@@ -1133,11 +1157,11 @@ function Invoke-EnvironmentRefreshAsync {
 }
 
 # ============================================================================
-# [C2 Fix] 메인 WinForms 셸 조립 — 서울아산병원 CI 화이트 헤더 + 단계형 탭 셸
+# [C2 Fix] 메인 WinForms 셸 조립 — 고시인성 아산 딥그린 헤더 + 단계형 4탭 셸
 # ============================================================================
 function Initialize-MainGuiShell {
     $form = New-Object System.Windows.Forms.Form
-    $form.Text          = "서울아산병원 프린터 마이그레이션 도구 v$($global:AsanCtx.AppVersion)"
+    $form.Text          = "프린터 마이그레이션 도구 v$($global:AsanCtx.AppVersion)"
     $form.Size          = New-Object System.Drawing.Size(1040, 720)
     $form.MinimumSize   = New-Object System.Drawing.Size(960, 640)
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
@@ -1149,71 +1173,70 @@ function Initialize-MainGuiShell {
     $appIcon = New-AsanPrinterAppIcon
     if ($appIcon) { $form.Icon = $appIcon }
 
-    # ---------------- [1] 최상단 서울아산병원 화이트 헤더 + 3px 아산 그린 바 + 슬림 환경 바 ----------------
+    $tip = New-Object System.Windows.Forms.ToolTip
+    $tip.AutoPopDelay = 8000
+    $tip.InitialDelay = 350
+    $tip.ReshowDelay  = 200
+    $tip.ShowAlways   = $true
+
+    # ---------------- [1] 최상단 딥그린 헤더 + 2px 오렌지 포인트 바 + 고시인성 환경 요약 바 ----------------
     $pnlHeader = New-Object System.Windows.Forms.Panel
     $pnlHeader.Dock      = [System.Windows.Forms.DockStyle]::Top
-    $pnlHeader.Height    = 80
-    $pnlHeader.BackColor = $script:Theme.CardBg
+    $pnlHeader.Height    = 82
+    $pnlHeader.BackColor = $script:Theme.HeaderBg
 
-    # Row 1 (50px): 서울아산병원 로고 | 구분선 | 제목·부제 / 우측 상태배지 + 새로고침 + 오류신고
+    # Row 1 (52px): 자체 프린터 심볼 | 제목·부제 / 우측 상태 배지 + 새로고침 + 오류 신고
     $pnlBrand = New-Object System.Windows.Forms.Panel
     $pnlBrand.Dock      = [System.Windows.Forms.DockStyle]::Top
-    $pnlBrand.Height    = 50
-    $pnlBrand.BackColor = $script:Theme.CardBg
-    $pnlBrand.Padding   = New-Object System.Windows.Forms.Padding(14, 5, 14, 5)
+    $pnlBrand.Height    = 52
+    $pnlBrand.BackColor = $script:Theme.HeaderBg
+    $pnlBrand.Padding   = New-Object System.Windows.Forms.Padding(14, 6, 14, 6)
 
-    $logoImg = New-AsanLogoImage
-    $picLogo = New-Object System.Windows.Forms.PictureBox
-    $picLogo.Dock      = [System.Windows.Forms.DockStyle]::Left
-    $picLogo.Width     = 134
-    $picLogo.SizeMode  = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
-    $picLogo.BackColor = [System.Drawing.Color]::Transparent
-    if ($logoImg) { $picLogo.Image = $logoImg } else { $picLogo.Visible = $false }
-
-    $pnlBrandDiv = New-Object System.Windows.Forms.Panel
-    $pnlBrandDiv.Dock      = [System.Windows.Forms.DockStyle]::Left
-    $pnlBrandDiv.Width     = 17
-    $pnlBrandDiv.Padding   = New-Object System.Windows.Forms.Padding(8, 3, 8, 3)
-    $pnlBrandDiv.BackColor = [System.Drawing.Color]::Transparent
-    $pnlBrandLine = New-Object System.Windows.Forms.Panel
-    $pnlBrandLine.Dock      = [System.Windows.Forms.DockStyle]::Fill
-    $pnlBrandLine.BackColor = $script:Theme.Border
-    $pnlBrandDiv.Controls.Add($pnlBrandLine)
-    if (-not $logoImg) { $pnlBrandDiv.Visible = $false }
+    $badgeImg = New-AsanPrinterBadgeImage
+    $picBadge = New-Object System.Windows.Forms.PictureBox
+    $picBadge.Dock      = [System.Windows.Forms.DockStyle]::Left
+    $picBadge.Width     = 42
+    $picBadge.Padding   = New-Object System.Windows.Forms.Padding(0, 1, 6, 1)
+    $picBadge.SizeMode  = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
+    $picBadge.BackColor = [System.Drawing.Color]::Transparent
+    if ($badgeImg) { $picBadge.Image = $badgeImg } else { $picBadge.Visible = $false }
 
     $pnlTitleStack = New-Object System.Windows.Forms.Panel
     $pnlTitleStack.Dock      = [System.Windows.Forms.DockStyle]::Fill
     $pnlTitleStack.BackColor = [System.Drawing.Color]::Transparent
+    $pnlTitleStack.Padding   = New-Object System.Windows.Forms.Padding(4, 0, 0, 0)
 
     $lblTitle = New-Object System.Windows.Forms.Label
     $lblTitle.Text      = '프린터 · 드라이버 마이그레이션 도구'
-    $lblTitle.ForeColor = $script:Theme.AsanGreen
+    $lblTitle.ForeColor = [System.Drawing.Color]::White
     $lblTitle.Font      = $script:FontTitle
     $lblTitle.Dock      = [System.Windows.Forms.DockStyle]::Top
-    $lblTitle.Height    = 23
+    $lblTitle.Height    = 24
     $lblTitle.TextAlign = [System.Drawing.ContentAlignment]::BottomLeft
 
     $lblSubtitle = New-Object System.Windows.Forms.Label
-    $lblSubtitle.Text      = "Windows 10 → 11 프린터 간편 이관 · v$($global:AsanCtx.AppVersion)  (단축키 Alt+1~4, F5)"
-    $lblSubtitle.ForeColor = $script:Theme.InkMuted
+    $lblSubtitle.Text      = "기존 PC와 새 PC 간 프린터·드라이버 간편 이관  v$($global:AsanCtx.AppVersion)"
+    $lblSubtitle.ForeColor = $script:Theme.HeaderSubFg
     $lblSubtitle.Font      = $script:FontSubtitle
     $lblSubtitle.Dock      = [System.Windows.Forms.DockStyle]::Fill
     $lblSubtitle.TextAlign = [System.Drawing.ContentAlignment]::TopLeft
+    $tip.SetToolTip($lblSubtitle, '단축키: 탭 이동 Alt+1~4, 연결 새로고침 F5')
 
     $pnlTitleStack.Controls.Add($lblSubtitle)
     $pnlTitleStack.Controls.Add($lblTitle)
 
     $flpHdrRight1 = New-RightFlowStrip -TopPadding 5 -RightPadding 0
 
-    $btnBugReport = New-StyledButton -Text '오류 신고' -Width 82 -Height 30 -Variant 'SoftOrange' -RegisterBusy
+    $btnBugReport = New-StyledButton -Text '오류 신고' -Width 86 -Height 30 -Variant 'Orange' -RegisterBusy
     $btnBugReport.Font   = $script:FontSmallB
-    $btnBugReport.Margin = New-Object System.Windows.Forms.Padding(6, 0, 0, 0)
+    $btnBugReport.Margin = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
     $btnBugReport.Add_Click({ Show-BugReportDialog })
+    $tip.SetToolTip($btnBugReport, '문제가 생기면 진단 정보와 로그를 담당자에게 전송합니다')
 
-    $btnRefresh = New-StyledButton -Text '새로고침 (F5)' -Width 108 -Height 30 -Variant 'Secondary' -RegisterBusy
-    $btnRefresh.Font   = $script:FontSmallB
+    $btnRefresh = New-StyledButton -Text '새로고침' -Width 86 -Height 30 -Variant 'HeaderUtil' -RegisterBusy
     $btnRefresh.Margin = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
     $btnRefresh.Add_Click({ Invoke-EnvironmentRefreshAsync })
+    $tip.SetToolTip($btnRefresh, '네트워크와 서버 연결 상태를 다시 확인합니다 (단축키 F5)')
 
     $lblNetBadge = New-Object System.Windows.Forms.Label
     $lblNetBadge.Text      = ' ● 연결 확인 중 '
@@ -1231,19 +1254,18 @@ function Initialize-MainGuiShell {
 
     $pnlBrand.Controls.Add($pnlTitleStack)
     $pnlBrand.Controls.Add($flpHdrRight1)
-    $pnlBrand.Controls.Add($pnlBrandDiv)
-    $pnlBrand.Controls.Add($picLogo)
+    $pnlBrand.Controls.Add($picBadge)
 
-    # 3px 서울아산병원 대표 ASAN GREEN 포인트 바
+    # 2px 아산 오렌지 포인트 라인
     $pnlAccentBar = New-Object System.Windows.Forms.Panel
     $pnlAccentBar.Dock      = [System.Windows.Forms.DockStyle]::Top
-    $pnlAccentBar.Height    = 3
-    $pnlAccentBar.BackColor = $script:Theme.AsanGreen
+    $pnlAccentBar.Height    = 2
+    $pnlAccentBar.BackColor = $script:Theme.AsanOrangeLine
 
-    # Row 2 (29px): 연민트 환경 요약 스트립 (PC/IP · OS · 서버경로 / 우측 SID + 복사)
+    # Row 2 (28px): 고시인성 환경 요약 바 (PC/IP · OS · 서버 / 우측 SID + 복사)
     $pnlMetaBar = New-Object System.Windows.Forms.Panel
     $pnlMetaBar.Dock      = [System.Windows.Forms.DockStyle]::Fill
-    $pnlMetaBar.BackColor = $script:Theme.AsanMint
+    $pnlMetaBar.BackColor = $script:Theme.MetaBarBg
     $pnlMetaBar.Padding   = New-Object System.Windows.Forms.Padding(14, 0, 14, 0)
 
     $pnlMetaBottomLine = New-Object System.Windows.Forms.Panel
@@ -1256,34 +1278,34 @@ function Initialize-MainGuiShell {
     $flpHdrMeta.FlowDirection = [System.Windows.Forms.FlowDirection]::LeftToRight
     $flpHdrMeta.WrapContents  = $false
     $flpHdrMeta.BackColor     = [System.Drawing.Color]::Transparent
-    $flpHdrMeta.Padding       = New-Object System.Windows.Forms.Padding(0, 6, 0, 0)
+    $flpHdrMeta.Padding       = New-Object System.Windows.Forms.Padding(0, 5, 0, 0)
 
     $lblPcIp = New-Object System.Windows.Forms.Label
-    $lblPcIp.Text      = "PC: $($env:COMPUTERNAME) (확인 중...)"
-    $lblPcIp.ForeColor = $script:Theme.AsanDeep
+    $lblPcIp.Text      = "$($env:COMPUTERNAME)  확인 중"
+    $lblPcIp.ForeColor = $script:Theme.InkPrimary
     $lblPcIp.Font      = $script:FontSmallB
     $lblPcIp.AutoSize  = $true
-    $lblPcIp.Margin    = New-Object System.Windows.Forms.Padding(0, 0, 14, 0)
+    $lblPcIp.Margin    = New-Object System.Windows.Forms.Padding(0, 0, 16, 0)
 
     $lblOs = New-Object System.Windows.Forms.Label
-    $lblOs.Text      = 'Windows 확인 중...'
+    $lblOs.Text      = 'Windows 확인 중'
     $lblOs.ForeColor = $script:Theme.InkSecondary
-    $lblOs.Font      = $script:FontSmall
+    $lblOs.Font      = $script:FontSmallB
     $lblOs.AutoSize  = $true
-    $lblOs.Margin    = New-Object System.Windows.Forms.Padding(0, 0, 14, 0)
+    $lblOs.Margin    = New-Object System.Windows.Forms.Padding(0, 0, 16, 0)
 
     $lblServerPath = New-Object System.Windows.Forms.Label
-    $lblServerPath.Text      = '백업 서버: 확인 중...'
-    $lblServerPath.ForeColor = $script:Theme.InkMuted
+    $lblServerPath.Text      = '백업 서버 확인 중'
+    $lblServerPath.ForeColor = $script:Theme.InkSecondary
     $lblServerPath.Font      = $script:FontSmall
     $lblServerPath.AutoSize  = $true
     $lblServerPath.Margin    = New-Object System.Windows.Forms.Padding(0)
 
     $flpHdrMeta.Controls.AddRange(@($lblPcIp, $lblOs, $lblServerPath))
 
-    $flpHdrRight2 = New-RightFlowStrip -TopPadding 3 -RightPadding 0
-    $btnCopySid = New-StyledButton -Text 'SID 복사' -Width 66 -Height 22 -Variant 'Secondary'
-    $btnCopySid.Font   = $script:FontSmall
+    $flpHdrRight2 = New-RightFlowStrip -TopPadding 2 -RightPadding 0
+    $btnCopySid = New-StyledButton -Text 'SID 복사' -Width 68 -Height 22 -Variant 'Secondary'
+    $btnCopySid.Font   = $script:FontSmallB
     $btnCopySid.Margin = New-Object System.Windows.Forms.Padding(6, 0, 0, 0)
     $btnCopySid.Add_Click({
         if (-not [string]::IsNullOrWhiteSpace($script:AppState.LocalSid)) {
@@ -1293,10 +1315,11 @@ function Initialize-MainGuiShell {
             } catch {}
         }
     })
+    $tip.SetToolTip($btnCopySid, '공유 프린터 SID 충돌 확인 시 현재 PC의 SID를 복사합니다')
 
     $lblSid = New-Object System.Windows.Forms.Label
-    $lblSid.Text      = 'SID: 조회 중...'
-    $lblSid.ForeColor = $script:Theme.InkMuted
+    $lblSid.Text      = 'SID 조회 중'
+    $lblSid.ForeColor = $script:Theme.InkSecondary
     $lblSid.Font      = $script:FontSmall
     $lblSid.AutoSize  = $true
     $lblSid.Margin    = New-Object System.Windows.Forms.Padding(0, 3, 0, 0)
@@ -1308,7 +1331,7 @@ function Initialize-MainGuiShell {
     $pnlMetaBar.Controls.Add($flpHdrRight2)
     $pnlMetaBar.Controls.Add($pnlMetaBottomLine)
 
-    # Dock 순서: Fill(Row2) -> Top(Accent 3px) -> Top(Brand 최상단)
+    # Dock 순서: Fill(Row2) -> Top(Accent 2px) -> Top(Brand 최상단)
     $pnlHeader.Controls.Add($pnlMetaBar)
     $pnlHeader.Controls.Add($pnlAccentBar)
     $pnlHeader.Controls.Add($pnlBrand)
@@ -1322,7 +1345,7 @@ function Initialize-MainGuiShell {
     $pnlWpp.Visible   = $false
 
     $lblWppTitle = New-Object System.Windows.Forms.Label
-    $lblWppTitle.Text      = '[경고] Windows 보호 인쇄 모드(WPP)가 활성화되어 있습니다!'
+    $lblWppTitle.Text      = 'Windows 보호 인쇄 모드가 켜져 있어 드라이버 복원이 차단됩니다.'
     $lblWppTitle.ForeColor = [System.Drawing.Color]::White
     $lblWppTitle.Font      = $script:FontBold
     $lblWppTitle.Dock      = [System.Windows.Forms.DockStyle]::Fill
@@ -1398,15 +1421,15 @@ function Initialize-MainGuiShell {
 
     $flpFootRight = New-RightFlowStrip -TopPadding 2 -RightPadding 0
 
-    $btnToggleLog = New-StyledButton -Text '작업 로그 보기 ▲' -Width 118 -Height 24 -Variant 'Secondary'
-    $btnToggleLog.Font   = $script:FontSmall
+    $btnToggleLog = New-StyledButton -Text '상세 로그 보기' -Width 108 -Height 24 -Variant 'Secondary'
+    $btnToggleLog.Font   = $script:FontSmallB
     $btnToggleLog.Margin = New-Object System.Windows.Forms.Padding(6, 0, 0, 0)
     $btnToggleLog.Add_Click({
         Set-FooterLogExpanded -Expanded (-not $script:Ui.LogExpanded)
     })
 
-    $btnClearLog = New-StyledButton -Text '로그 지우기' -Width 84 -Height 24 -Variant 'Secondary'
-    $btnClearLog.Font    = $script:FontSmall
+    $btnClearLog = New-StyledButton -Text '로그 지우기' -Width 86 -Height 24 -Variant 'Secondary'
+    $btnClearLog.Font    = $script:FontSmallB
     $btnClearLog.Visible = $false
     $btnClearLog.Add_Click({ $script:Ui.TxtLog.Clear() })
 
@@ -1441,10 +1464,10 @@ function Initialize-MainGuiShell {
 
     $tabMain = New-Object System.Windows.Forms.TabControl
     $tabMain.Dock     = [System.Windows.Forms.DockStyle]::Fill
-    $tabMain.Font     = $script:FontBold
+    $tabMain.Font     = $script:FontTab
     $tabMain.DrawMode = [System.Windows.Forms.TabDrawMode]::OwnerDrawFixed
-    $tabMain.ItemSize = New-Object System.Drawing.Size(0, 30)
-    $tabMain.Padding  = New-Object System.Drawing.Point(16, 5)
+    $tabMain.ItemSize = New-Object System.Drawing.Size(0, 32)
+    $tabMain.Padding  = New-Object System.Drawing.Point(18, 6)
 
     $tabMain.Add_DrawItem({
         param($sender, $e)
@@ -1455,11 +1478,11 @@ function Initialize-MainGuiShell {
 
         $bgCol = $script:Theme.AsanMintSoft
         $fgCol = $script:Theme.InkSecondary
-        $fnt   = $script:FontBase
+        $fnt   = $script:FontTabIdle
         if ($sel) {
             $bgCol = $script:Theme.CardBg
-            $fgCol = $script:Theme.AsanGreen
-            $fnt   = $script:FontBold
+            $fgCol = $script:Theme.AsanDeep
+            $fnt   = $script:FontTab
         }
 
         $brBg = New-Object System.Drawing.SolidBrush($bgCol)
@@ -1468,8 +1491,12 @@ function Initialize-MainGuiShell {
 
         if ($sel) {
             $brBar = New-Object System.Drawing.SolidBrush($script:Theme.AsanGreen)
-            $g.FillRectangle($brBar, $rc.Left, $rc.Top, $rc.Width, 3)
+            $g.FillRectangle($brBar, $rc.Left, $rc.Top, $rc.Width, 4)
             $brBar.Dispose()
+            $penSel = New-Object System.Drawing.Pen($script:Theme.BorderBtn, 1)
+            $g.DrawLine($penSel, $rc.Left, $rc.Top, $rc.Left, ($rc.Bottom - 1))
+            $g.DrawLine($penSel, ($rc.Right - 1), $rc.Top, ($rc.Right - 1), ($rc.Bottom - 1))
+            $penSel.Dispose()
         } else {
             $penDiv = New-Object System.Drawing.Pen($script:Theme.Border, 1)
             $g.DrawRectangle($penDiv, $rc.Left, $rc.Top, ($rc.Width - 1), ($rc.Height - 1))
@@ -1480,10 +1507,10 @@ function Initialize-MainGuiShell {
         [System.Windows.Forms.TextRenderer]::DrawText($g, $tab.Text, $fnt, $rc, $fgCol, $flags)
     })
 
-    $tabBackup  = New-Object System.Windows.Forms.TabPage(' ① 구 PC 백업 (Win 10) ')
-    $tabRestore = New-Object System.Windows.Forms.TabPage(' ② 새 PC 복원 (Win 11) ')
-    $tabVerify  = New-Object System.Windows.Forms.TabPage(' ③ 출력 확인 · 점검 ')
-    $tabServer  = New-Object System.Windows.Forms.TabPage(' ④ 서버 백업 관리 ')
+    $tabBackup  = New-Object System.Windows.Forms.TabPage(' 1. 기존 PC 백업 ')
+    $tabRestore = New-Object System.Windows.Forms.TabPage(' 2. 새 PC 복원 ')
+    $tabVerify  = New-Object System.Windows.Forms.TabPage(' 3. 출력 확인 ')
+    $tabServer  = New-Object System.Windows.Forms.TabPage(' 4. 서버 관리 ')
 
     foreach ($tp in @($tabBackup, $tabRestore, $tabVerify, $tabServer)) {
         $tp.BackColor = $script:Theme.CanvasBg
@@ -1634,9 +1661,10 @@ function Initialize-MainGuiShell {
     $script:Ui.TabRestore      = $tabRestore
     $script:Ui.TabVerify       = $tabVerify
     $script:Ui.TabServer       = $tabServer
-    $script:Ui.PicLogo         = $picLogo
-    $script:Ui.LogoImage       = $logoImg
+    $script:Ui.PicBadge        = $picBadge
+    $script:Ui.BadgeImage      = $badgeImg
     $script:Ui.AppIcon         = $appIcon
+    $script:Ui.ToolTip         = $tip
     $script:Ui.LblTitle        = $lblTitle
     $script:Ui.LblSubtitle     = $lblSubtitle
     $script:Ui.LblOs           = $lblOs
@@ -1658,7 +1686,7 @@ function Initialize-MainGuiShell {
 }
 
 # ============================================================================
-# [탭 1] 백업 (Win 10 / 오프라인 ZIP) UI 및 이벤트 로직
+# [탭 1] 기존 PC 백업 (Windows 10 / 11 공용 · 서버 / 오프라인 ZIP) UI 및 이벤트 로직
 # ============================================================================
 $script:Tab1Ui = @{
     PnlBanner        = $null
@@ -1690,12 +1718,12 @@ function Update-Tab1NetworkState {
             $script:Tab1Ui.PnlBanner.BackColor       = $script:Theme.AsanMint
             $script:Tab1Ui.PnlBannerAccent.BackColor = $script:Theme.AsanGreen
             $script:Tab1Ui.LblBanner.ForeColor       = $script:Theme.AsanDeep
-            $script:Tab1Ui.LblBanner.Text            = '① 아래 프린터 목록 확인 → ② 하단 [서버로 백업 시작] 버튼을 누르세요. (목록이 비어 있으면 [목록 다시 스캔])'
+            $script:Tab1Ui.LblBanner.Text            = '아래 프린터 목록을 확인한 뒤 서버에 백업하기를 눌러 주세요.'
         } else {
             $script:Tab1Ui.PnlBanner.BackColor       = $script:Theme.AsanOrangeTint
             $script:Tab1Ui.PnlBannerAccent.BackColor = $script:Theme.AsanOrange
             $script:Tab1Ui.LblBanner.ForeColor       = $script:Theme.AsanOrangeText
-            $script:Tab1Ui.LblBanner.Text            = '오프라인 PC — 네트워크 연결 후 새로고침(F5)하거나, 하단 [오프라인 ZIP 저장]으로 USB/로컬에 백업하세요.'
+            $script:Tab1Ui.LblBanner.Text            = '사내 서버에 연결되지 않았습니다. ZIP 파일로 저장을 눌러 백업해 주세요.'
         }
     }
 }
@@ -1730,7 +1758,7 @@ function Render-Tab1PrinterGrid {
             }
 
             $defMark = ''
-            if ($p.IsDefault) { $defMark = '★' }
+            if ($p.IsDefault) { $defMark = '기본' }
 
             $portDisplay = [string]$p.PortName
             if ($p.PortKind -eq 'WSD' -and -not [string]::IsNullOrWhiteSpace([string]$p.WsdTargetIp)) {
@@ -1749,6 +1777,11 @@ function Render-Tab1PrinterGrid {
             $row     = $dgv.Rows[$rowIdx]
             $row.Tag = $p
 
+            if ($p.IsDefault) {
+                $row.Cells[0].Style.ForeColor = $script:Theme.AsanGreen
+                $row.Cells[0].Style.Font      = $script:FontBold
+            }
+
             if ($p.StatusCode -eq 'ExcludedVirtual' -or $p.StatusCode -eq 'ExcludedNoDriver') {
                 $row.DefaultCellStyle.BackColor = $script:Theme.DisabledBg
                 $row.DefaultCellStyle.ForeColor = $script:Theme.InkMuted
@@ -1759,7 +1792,7 @@ function Render-Tab1PrinterGrid {
                     $stCell.Style.BackColor = $script:Theme.SpecialTint
                     $stCell.Style.ForeColor = $script:Theme.SpecialPurple
                 } elseif ($p.StatusCode -eq 'WsdConvert') {
-                    $stCell.Style.BackColor = [System.Drawing.Color]::FromArgb(232, 243, 243)
+                    $stCell.Style.BackColor = [System.Drawing.Color]::FromArgb(226, 243, 249)
                     $stCell.Style.ForeColor = $script:Theme.AsanLight
                 } elseif ($p.StatusCode -eq 'AuthOrSidConflict') {
                     $stCell.Style.BackColor = $script:Theme.DangerRedTint
@@ -1769,7 +1802,7 @@ function Render-Tab1PrinterGrid {
                     $stCell.Style.ForeColor = $script:Theme.AsanOrangeText
                 } else {
                     $stCell.Style.BackColor = $script:Theme.AsanMint
-                    $stCell.Style.ForeColor = $script:Theme.AsanGreen
+                    $stCell.Style.ForeColor = $script:Theme.AsanDeep
                 }
             }
         }
@@ -1780,17 +1813,17 @@ function Render-Tab1PrinterGrid {
                 $script:Tab1Ui.PnlBanner.BackColor       = $script:Theme.AsanOrangeTint
                 $script:Tab1Ui.PnlBannerAccent.BackColor = $script:Theme.AsanOrange
                 $script:Tab1Ui.LblBanner.ForeColor       = $script:Theme.AsanOrangeText
-                $script:Tab1Ui.LblBanner.Text            = "[오프라인 스캔 완료] 백업 대상 ${validTotal}대 (특수 ${cntSpecial} · 가상제외 ${cntVirtual}) → 하단 [오프라인 ZIP 저장]을 누르세요."
+                $script:Tab1Ui.LblBanner.Text            = "오프라인 상태에서 백업 대상 ${validTotal}대를 확인했습니다. 아래 ZIP 파일로 저장을 눌러 주세요."
             } elseif ($cntWarn -gt 0) {
                 $script:Tab1Ui.PnlBanner.BackColor       = $script:Theme.AsanOrangeTint
                 $script:Tab1Ui.PnlBannerAccent.BackColor = $script:Theme.AsanOrange
                 $script:Tab1Ui.LblBanner.ForeColor       = $script:Theme.AsanOrangeText
-                $script:Tab1Ui.LblBanner.Text            = "진단 완료: 총 ${validTotal}대 (정상 ${cntHealthy} · WSD전환 ${cntWsd} · 특수 ${cntSpecial} · 주의 ${cntWarn}) — 확인 후 [서버로 백업 시작]을 누르세요."
+                $script:Tab1Ui.LblBanner.Text            = "프린터 ${validTotal}대 중 확인이 필요한 항목이 ${cntWarn}대 있습니다. 상태를 확인한 뒤 백업을 진행해 주세요."
             } else {
                 $script:Tab1Ui.PnlBanner.BackColor       = $script:Theme.AsanMint
                 $script:Tab1Ui.PnlBannerAccent.BackColor = $script:Theme.AsanGreen
                 $script:Tab1Ui.LblBanner.ForeColor       = $script:Theme.AsanDeep
-                $script:Tab1Ui.LblBanner.Text            = "진단 완료: 백업 대상 ${validTotal}대 모두 정상 (일반 ${cntHealthy} · WSD전환 ${cntWsd} · 특수 ${cntSpecial}) → 하단 [서버로 백업 시작] 클릭!"
+                $script:Tab1Ui.LblBanner.Text            = "백업 대상 프린터 ${validTotal}대가 모두 정상입니다. 아래에서 서버에 백업하기를 눌러 주세요."
             }
         }
     }
@@ -1802,7 +1835,7 @@ function Render-Tab1PrinterGrid {
 function Update-Tab1ScannerBar {
     $inv = $script:AppState.ScannerInventory
     if (-not $inv) {
-        $script:Tab1Ui.LblScanSummary.Text    = 'WIA 스캔 드라이버: 스캔 대기 중'
+        $script:Tab1Ui.LblScanSummary.Text    = '스캐너 드라이버 확인 대기 중'
         $script:Tab1Ui.BtnUnclassScan.Visible = $false
         $script:Tab1Ui.LblTwainWarn.Visible   = $false
         return
@@ -1813,17 +1846,17 @@ function Update-Tab1ScannerBar {
     $unclassSel = (@($unclassAll | Where-Object { $_.Selected })).Count
     $twains     = @($inv.TwainFolders | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
 
-    $script:Tab1Ui.LblScanSummary.Text = "WIA 스캔 드라이버: 자동 백업 ${autoCnt}개 | 미분류 선택 ${unclassSel}/$($unclassAll.Count)개"
-
     if ($unclassAll.Count -gt 0) {
-        $script:Tab1Ui.BtnUnclassScan.Text    = "미분류 이미징 장치 선택 ($unclassSel/$($unclassAll.Count))"
+        $script:Tab1Ui.LblScanSummary.Text    = "스캐너 드라이버  자동 백업 ${autoCnt}개 · 추가 선택 가능 $($unclassAll.Count)개"
+        $script:Tab1Ui.BtnUnclassScan.Text    = "미분류 스캐너 선택 ($unclassSel/$($unclassAll.Count))"
         $script:Tab1Ui.BtnUnclassScan.Visible = $true
     } else {
+        $script:Tab1Ui.LblScanSummary.Text    = "스캐너 드라이버  자동 백업 대상 ${autoCnt}개"
         $script:Tab1Ui.BtnUnclassScan.Visible = $false
     }
 
     if ($twains.Count -gt 0) {
-        $script:Tab1Ui.LblTwainWarn.Text    = "▲ TWAIN 감지($($twains -join ', ')) — 복원 후 네트워크 스캔 IP 확인 필요"
+        $script:Tab1Ui.LblTwainWarn.Text    = "TWAIN 스캐너 감지 ($($twains -join ', ')) · 복원 후 스캔 IP를 확인해 주세요"
         $script:Tab1Ui.LblTwainWarn.Visible = $true
     } else {
         $script:Tab1Ui.LblTwainWarn.Visible = $false
@@ -2127,21 +2160,21 @@ function Start-Tab1BackupExecution {
         if ($noteLines.Count -gt 0) { $noteSummary = ($noteLines -join "`r`n") }
 
         if ($res.Mode -eq 'OfflineZip') {
-            $usbLine = 'USB 동시 복사: 없음 (로컬 C:\_AsanPrtOffline에만 저장됨 — SSD 직결 또는 수동 복사)'
+            $usbLine = 'USB 동시 복사: 연결된 USB가 없어 로컬 폴더에만 저장되었습니다.'
             if (-not [string]::IsNullOrWhiteSpace([string]$res.UsbCopyPath)) {
                 $usbLine = "USB 동시 복사: $($res.UsbCopyPath)"
             }
             $msg = @(
-                "오프라인 ZIP 백업이 완료되었습니다.",
+                "오프라인 ZIP 백업을 완료했습니다.",
                 "",
-                "• 로컬 저장 경로: $($res.SavedPath)",
-                "• $usbLine",
-                "• 백업 내역: 프린터 $($res.PrinterCount)대 / WIA 스캐너 $($res.ScannerCount)개",
+                "저장 경로: $($res.SavedPath)",
+                "$usbLine",
+                "백업 내역: 프린터 $($res.PrinterCount)대, 스캐너 드라이버 $($res.ScannerCount)개",
                 "",
-                "[백업 시점 특이사항 (복원 화면에서 자동 재알림)]",
+                "새 PC 복원 시 다시 안내되는 참고 사항",
                 $noteSummary,
                 "",
-                "저장 폴더(C:\_AsanPrtOffline)를 탐색기로 여시겠습니까?"
+                "저장 폴더를 열어 확인하시겠습니까?"
             ) -join "`r`n"
 
             $openAns = Show-AsanMessageBox -Text $msg -Caption '오프라인 ZIP 백업 완료' -Buttons 'YesNo' -Icon 'Information'
@@ -2150,34 +2183,36 @@ function Start-Tab1BackupExecution {
             }
         } else {
             $msg = @(
-                "사내 백업 서버 업로드가 완료되었습니다.",
+                "사내 백업 서버에 저장을 완료했습니다.",
                 "",
-                "• 서버 저장 경로: $($res.SavedPath)",
-                "• 백업 내역: 프린터 $($res.PrinterCount)대 / WIA 스캐너 $($res.ScannerCount)개",
+                "저장 경로: $($res.SavedPath)",
+                "백업 내역: 프린터 $($res.PrinterCount)대, 스캐너 드라이버 $($res.ScannerCount)개",
                 "",
-                "[백업 시점 특이사항 (새 Win 11 복원 시 자동 재알림)]",
+                "새 PC 복원 시 다시 안내되는 참고 사항",
                 $noteSummary
             ) -join "`r`n"
             [void](Show-AsanMessageBox -Text $msg -Caption '서버 백업 완료' -Buttons 'OK' -Icon 'Information')
         }
     }
 
-    $tLabel = '사내 서버 프린터/드라이버 백업'
-    if ($OfflineZipMode) { $tLabel = '오프라인 ZIP 백업 (C:\_AsanPrtOffline)' }
+    $tLabel = '사내 서버 백업'
+    if ($OfflineZipMode) { $tLabel = '오프라인 ZIP 백업' }
     Invoke-AsanAsyncTask -TaskName $tLabel -WorkScript $work -Params $taskParams -OnComplete $done
 }
 
 # ============================================================================
-# [C2 + C4 Fix] 탭 1 컨트롤 배치 초기화 — 서울아산병원 워크플로우 카드 + 실제 컬러 범례
+# [C2 + C4 Fix] 탭 1 컨트롤 배치 초기화 — 고시인성 카드 + 직관적 워크플로우
 # ============================================================================
 function Initialize-Tab1BackupUi {
     $parent = $script:Ui.TabBackup
+    $tip    = $script:Ui.ToolTip
 
-    # [1] 상단 워크플로우 안내 / 진단 상태 배너 (좌측 4px 상태 컬러 바)
+    # [1] 상단 안내 배너 (좌측 4px 상태 컬러 바 + 선명한 테두리)
     $pnlBanner = New-Object System.Windows.Forms.Panel
-    $pnlBanner.Dock      = [System.Windows.Forms.DockStyle]::Top
-    $pnlBanner.Height    = 38
-    $pnlBanner.BackColor = $script:Theme.AsanMint
+    $pnlBanner.Dock        = [System.Windows.Forms.DockStyle]::Top
+    $pnlBanner.Height      = 38
+    $pnlBanner.BackColor   = $script:Theme.AsanMint
+    $pnlBanner.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
 
     $pnlBannerAccent = New-Object System.Windows.Forms.Panel
     $pnlBannerAccent.Dock      = [System.Windows.Forms.DockStyle]::Left
@@ -2185,7 +2220,7 @@ function Initialize-Tab1BackupUi {
     $pnlBannerAccent.BackColor = $script:Theme.AsanGreen
 
     $lblBanner = New-Object System.Windows.Forms.Label
-    $lblBanner.Text      = '① 아래 프린터 목록 확인 → ② 하단 [서버로 백업 시작] 버튼을 누르세요.'
+    $lblBanner.Text      = '아래 프린터 목록을 확인한 뒤 서버에 백업하기를 눌러 주세요.'
     $lblBanner.ForeColor = $script:Theme.AsanDeep
     $lblBanner.Font      = $script:FontBold
     $lblBanner.Dock      = [System.Windows.Forms.DockStyle]::Fill
@@ -2195,7 +2230,7 @@ function Initialize-Tab1BackupUi {
     $pnlBanner.Controls.Add($lblBanner)
     $pnlBanner.Controls.Add($pnlBannerAccent)
 
-    # [2] 툴바 (좌: FlowLayoutPanel 다시 스캔 + 가상 프린터 토글 / 우: 실제 컬러 상태 범례)
+    # [2] 툴바 (좌: 다시 스캔 + 가상 프린터 토글 / 우: 실제 컬러 상태 범례)
     $pnlToolbar = New-Object System.Windows.Forms.Panel
     $pnlToolbar.Dock      = [System.Windows.Forms.DockStyle]::Top
     $pnlToolbar.Height    = 40
@@ -2208,25 +2243,27 @@ function Initialize-Tab1BackupUi {
     $flpToolLeft.BackColor     = [System.Drawing.Color]::Transparent
     $flpToolLeft.Padding       = New-Object System.Windows.Forms.Padding(0, 6, 0, 0)
 
-    $btnScan = New-StyledButton -Text '목록 다시 스캔' -Width 126 -Height 28 -Variant 'Secondary' -RegisterBusy
+    $btnScan = New-StyledButton -Text '다시 스캔' -Width 100 -Height 28 -Variant 'Secondary' -RegisterBusy
     $btnScan.Margin = New-Object System.Windows.Forms.Padding(0, 0, 12, 0)
     $btnScan.Add_Click({ Invoke-Tab1ScanAsync })
 
     $chkVirt = New-Object System.Windows.Forms.CheckBox
-    $chkVirt.Text      = '제외된 가상 프린터 함께 보기 (PDF/OneNote/Fax 등)'
+    $chkVirt.Text      = '가상 프린터도 함께 보기'
     $chkVirt.AutoSize  = $true
-    $chkVirt.ForeColor = $script:Theme.InkSecondary
+    $chkVirt.Font      = $script:FontBase
+    $chkVirt.ForeColor = $script:Theme.InkPrimary
     $chkVirt.Margin    = New-Object System.Windows.Forms.Padding(0, 5, 0, 0)
     $chkVirt.Add_CheckedChanged({ Render-Tab1PrinterGrid })
+    if ($tip) { $tip.SetToolTip($chkVirt, 'PDF, OneNote, Fax 등 기본 가상 프린터를 목록에 함께 표시합니다') }
     $flpToolLeft.Controls.AddRange(@($btnScan, $chkVirt))
 
     $flpToolRight = New-RightFlowStrip -TopPadding 11 -RightPadding 2
-    # RightToLeft이므로 역순 추가 -> 화면 좌->우: 정상 · WSD전환 · 특수 · 주의 · 인증/SID
-    Add-ColorLegendChip -TargetFlow $flpToolRight -LabelText '인증/SID' -DotColor $script:Theme.DangerRed
-    Add-ColorLegendChip -TargetFlow $flpToolRight -LabelText '주의'     -DotColor $script:Theme.AsanOrange
-    Add-ColorLegendChip -TargetFlow $flpToolRight -LabelText '특수'     -DotColor $script:Theme.SpecialPurple
-    Add-ColorLegendChip -TargetFlow $flpToolRight -LabelText 'WSD전환'  -DotColor $script:Theme.AsanLight
-    Add-ColorLegendChip -TargetFlow $flpToolRight -LabelText '정상'     -DotColor $script:Theme.AsanGreen
+    # RightToLeft이므로 역순 추가 -> 화면 좌->우: 정상 · WSD 전환 · 특수 장비 · 확인 필요 · 인증 오류
+    Add-ColorLegendChip -TargetFlow $flpToolRight -LabelText '인증 오류' -DotColor $script:Theme.DangerRed
+    Add-ColorLegendChip -TargetFlow $flpToolRight -LabelText '확인 필요' -DotColor $script:Theme.AsanOrange
+    Add-ColorLegendChip -TargetFlow $flpToolRight -LabelText '특수 장비' -DotColor $script:Theme.SpecialPurple
+    Add-ColorLegendChip -TargetFlow $flpToolRight -LabelText 'WSD 전환'  -DotColor $script:Theme.AsanLight
+    Add-ColorLegendChip -TargetFlow $flpToolRight -LabelText '정상'      -DotColor $script:Theme.AsanGreen
 
     $pnlToolbar.Controls.Add($flpToolLeft)
     $pnlToolbar.Controls.Add($flpToolRight)
@@ -2236,13 +2273,13 @@ function Initialize-Tab1BackupUi {
     $dgv.Dock = [System.Windows.Forms.DockStyle]::Fill
 
     foreach ($colDef in @(
-        @{ Name = 'Default';  Header = '기본';           Width = 48;  Fill = $false },
-        @{ Name = 'Status';   Header = '진단 상태';       Width = 112; Fill = $false },
-        @{ Name = 'Category'; Header = '구분';           Width = 104; Fill = $false },
-        @{ Name = 'Printer';  Header = '프린터 이름';     Width = 185; Fill = $false },
-        @{ Name = 'Port';     Header = '포트 / 전환 IP';  Width = 160; Fill = $false },
-        @{ Name = 'Driver';   Header = '설치된 드라이버'; Width = 190; Fill = $false },
-        @{ Name = 'Reason';   Header = '진단 상세 사유';  Width = 180; Fill = $true }
+        @{ Name = 'Default';  Header = '기본';         Width = 50;  Fill = $false },
+        @{ Name = 'Status';   Header = '상태';         Width = 108; Fill = $false },
+        @{ Name = 'Category'; Header = '구분';         Width = 112; Fill = $false },
+        @{ Name = 'Printer';  Header = '프린터 이름';   Width = 185; Fill = $false },
+        @{ Name = 'Port';     Header = '포트 / 전환 IP'; Width = 160; Fill = $false },
+        @{ Name = 'Driver';   Header = '드라이버';     Width = 190; Fill = $false },
+        @{ Name = 'Reason';   Header = '상세 내용';    Width = 180; Fill = $true }
     )) {
         $c = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
         $c.Name       = $colDef.Name
@@ -2255,7 +2292,7 @@ function Initialize-Tab1BackupUi {
         [void]$dgv.Columns.Add($c)
     }
 
-    # [4] 하단 스캐너 3분류 요약 카드 스트립 (FlowLayoutPanel로 DPI 배율 겹침 차단)
+    # [4] 하단 스캐너 요약 카드 스트립 (FlowLayoutPanel로 DPI 배율 겹침 차단)
     $pnlScannerWrap = New-Object System.Windows.Forms.Panel
     $pnlScannerWrap.Dock      = [System.Windows.Forms.DockStyle]::Bottom
     $pnlScannerWrap.Height    = 44
@@ -2271,13 +2308,13 @@ function Initialize-Tab1BackupUi {
     $pnlScanner.Padding       = New-Object System.Windows.Forms.Padding(10, 5, 10, 4)
 
     $lblScanSum = New-Object System.Windows.Forms.Label
-    $lblScanSum.Text      = 'WIA 스캔 드라이버: 스캔 대기 중'
+    $lblScanSum.Text      = '스캐너 드라이버 확인 대기 중'
     $lblScanSum.AutoSize  = $true
     $lblScanSum.Font      = $script:FontBold
     $lblScanSum.ForeColor = $script:Theme.InkPrimary
     $lblScanSum.Margin    = New-Object System.Windows.Forms.Padding(0, 5, 14, 0)
 
-    $btnUnclass = New-StyledButton -Text '미분류 이미징 장치 선택 (0/0)' -Width 204 -Height 26 -Variant 'SoftOrange' -RegisterBusy
+    $btnUnclass = New-StyledButton -Text '미분류 스캐너 선택 (0/0)' -Width 188 -Height 26 -Variant 'SoftOrange' -RegisterBusy
     $btnUnclass.Font    = $script:FontSmallB
     $btnUnclass.Margin  = New-Object System.Windows.Forms.Padding(0, 0, 14, 0)
     $btnUnclass.Visible = $false
@@ -2307,25 +2344,25 @@ function Initialize-Tab1BackupUi {
     $flpActLeft.BackColor     = [System.Drawing.Color]::Transparent
     $flpActLeft.Padding       = New-Object System.Windows.Forms.Padding(0, 10, 0, 0)
 
-    $btnServer = New-StyledButton -Text '서버로 백업 시작' -Width 188 -Height 36 -Variant 'Primary' -RegisterBusy
+    $btnServer = New-StyledButton -Text '서버에 백업하기' -Width 168 -Height 36 -Variant 'Primary' -RegisterBusy
     $btnServer.Margin = New-Object System.Windows.Forms.Padding(0, 0, 10, 0)
     $btnServer.Add_Click({ Start-Tab1BackupExecution })
 
-    $btnOffline = New-StyledButton -Text '오프라인 ZIP 저장' -Width 164 -Height 36 -Variant 'SoftTeal' -RegisterBusy
+    $btnOffline = New-StyledButton -Text 'ZIP 파일로 저장' -Width 150 -Height 36 -Variant 'SoftTeal' -RegisterBusy
     $btnOffline.Margin = New-Object System.Windows.Forms.Padding(0, 0, 12, 0)
     $btnOffline.Add_Click({ Start-Tab1BackupExecution -OfflineZipMode })
 
     $lblOffHint = New-Object System.Windows.Forms.Label
-    $lblOffHint.Text      = '※ 오프라인 저장 위치: C:\_AsanPrtOffline (+ 쓰기 가능 USB 동시 복사)'
+    $lblOffHint.Text      = 'ZIP 파일은 C:\_AsanPrtOffline과 연결된 USB에 함께 저장됩니다.'
     $lblOffHint.Font      = $script:FontSmall
-    $lblOffHint.ForeColor = $script:Theme.InkMuted
+    $lblOffHint.ForeColor = $script:Theme.InkSecondary
     $lblOffHint.AutoSize  = $true
     $lblOffHint.Margin    = New-Object System.Windows.Forms.Padding(0, 10, 0, 0)
 
     $flpActLeft.Controls.AddRange(@($btnServer, $btnOffline, $lblOffHint))
 
     $flpActRight = New-RightFlowStrip -TopPadding 10 -RightPadding 0
-    $btnOpenOff = New-StyledButton -Text '오프라인 폴더 열기' -Width 146 -Height 36 -Variant 'Secondary'
+    $btnOpenOff = New-StyledButton -Text '저장 폴더 열기' -Width 126 -Height 36 -Variant 'Secondary'
     $btnOpenOff.Add_Click({
         $dir = $global:AsanCtx.OfflineLocalRoot
         try {
@@ -2335,6 +2372,7 @@ function Initialize-Tab1BackupUi {
             [void](Show-AsanMessageBox -Text "오프라인 백업 폴더를 열 수 없습니다:`r`n$($_.Exception.Message)" -Caption '폴더 열기 오류' -Buttons 'OK' -Icon 'Warning')
         }
     })
+    if ($tip) { $tip.SetToolTip($btnOpenOff, '로컬 ZIP 저장 폴더(C:\_AsanPrtOffline)를 엽니다') }
     $flpActRight.Controls.Add($btnOpenOff)
 
     $pnlAction.Controls.Add($flpActLeft)

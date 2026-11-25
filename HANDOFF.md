@@ -1,7 +1,7 @@
 # 작업 인수인계서 (HANDOFF) — 집 ↔ 직장 PC 양방향 공용
 
-> **최종 갱신:** 2026-11-25 22:03 (집 PC — `AGENTS.md` 3-5 갱신 · 재귀 코드 리뷰 Round 4 17건 패치 · 서울아산병원 CI 기반 UI/UX 전면 리뉴얼 · 3단계 검증 및 5화면 시각 감사 ALL PASS)  
-> **현재 개발 버전:** `v1.0.0-beta.3` (안 A 비밀 분리 + P0 전면 안정화 + ZT411 골든 이미지 로컬 정책 + 재귀 리뷰 Round 1~4 + 코어 5모듈 소분리 + 서울아산병원 CI UI/UX 리뉴얼 완료)  
+> **최종 갱신:** 2026-11-26 03:41 (집 PC — 저작권 로고 제거 · 고시인성 UI/UX 개편 · 구 PC Win 10/11 공용 대응 · 상용 UX 라이팅 전면 정비 · 3단계 검증 및 5화면 시각 감사 PASS)  
+> **현재 개발 버전:** `v1.0.0-beta.3` (안 A 비밀 분리 + P0 전면 안정화 + ZT411 골든 이미지 로컬 정책 + 재귀 리뷰 Round 1~4 + 코어 5모듈 소분리 + 고시인성 UI/UX·Win 10/11 구 PC 공용 대응 완료)  
 > **GitHub 비공개 저장소:** https://github.com/nikin78/asan-printer-manager  
 > **자동 규칙 파일:** `AGENTS.md` *(Antigravity IDE가 저장소 루트 오픈 시 자동 로드)*  
 > **로컬 빌드 산출물:** `dist/Asan_Printer_Manager.bat` *(`.gitignore` 처리 — 각 PC에서 `secrets.local.json`으로 로컬 빌드 후 사내 경로/USB 배포)*
@@ -19,7 +19,7 @@
 | **재귀 코드 리뷰 Round 1~3 완료** | • **Round 1:** 부트스트랩 `"%%SELF%%"`·이중 삭제 방지, 코어 활성 NIC DNS·원자적 백업·USB 자식→부모 재인식·`Set-Printer` try/catch, GUI `Show-AsanMessageBox`·레이아웃 압축·탭 4 비동기 미리보기 전환<br>• **Round 2 (`#2~#11`):** 중복 가드 제거, 원자적 백업 `_OLD_` 데이터 유실 방어, WSD 전역 3단계 및 `UMB\UMB` 누락 수정, `Provider=%Token%` 간접 참조 해석, Case A 공유 연결 가드, `PollTimer` 영구 잠금 해제·`FormClosing` 재진입 차단, 탭 2 `BtnSpecInstall`/`BtnSpecProps` `-RegisterBusy`, 탭 4 미리보기 `Ok` 캐싱·예외 복구·`RetiredPreviews` Dispose·150ms 디바운스·이탈/종료 선중단, `verify_static` AST `MessageBox`·`$previewScript` 검사 강화<br>• **Round 3 (`[FIX-NOW]` 0건 확인):** ZT411 선설치/USB 폴백 시 백업 우선순위 역전 및 안내 누락 경로 봉쇄, `Find-LocalSpecialInstaller` 재귀 `ZD410|ZD411` 완전 차단 + `zd8` 우선, `smoke_test_local` 플레이스홀더 모드 마스킹 검증 보강 | **완료 (`[FIX-NOW]` 0건)** |
 | **코어 모듈 5분할 (`01a`~`01e`) + 문서 동기화** | 약 4,900줄의 `src/01_core.ps1`을 `01a_ctx_win32.ps1` / `01b_net_diag.ps1` / `01c_driver_inf.ps1` / `01d_backup_restore.ps1` / `01e_special_report_snapshot.ps1`로 **비공백 코드 0줄 차이 무손실 분할**(단일 `.bat` 배포 유지), `AGENTS.md`(2·3-5·4절)·`build_single_bat`·`verify_static`·`README.md`·`E2E_TEST_CHECKLIST_v16.md` 동기화 | **완료 (무손실 검증 PASS)** |
 | **재귀 코드 리뷰 Round 4 (17건 패치 + 검증 사각지대 해소)** | • **P0 현장 치명 결함 수정:** WOW64 32비트 진입 시 UAC 승격 100% 실패(`Sysnative\cmd.exe`→`System32\cmd.exe`), 신규 TCP/IP 포트 생성 `HRESULT 0x80070057`(`Add-PrinterPort -SNMP 0` 제거), `신도리코`→`RICOH` 오탐 및 Zebra `203dpi`/`52병동` 교차 매칭 차단, `DriverStore` 중복 INF `break` 누락·`_x86_`/`_arm64_` 제외<br>• **보안·안정성 보강:** `%TEMP%\AsanPrinterMgr_*.ps1` 로드 직후 즉시 삭제, `EnumPrintSharesEx` `try/finally` 버퍼 해제, `Get-SmbMapping` 드라이브 매핑 정리, 백업 서버 `WriteDomainCredential` 이중 가드, `Test-UncSharePrinterAlive` 오류 코드 구분·재시도, WSD 1단계 완료 시 조기 종료, `PrintBrm -b` 0바이트 검증·`_OLD_` 원자 롤백·GUID 임시폴더 격리, 스풀러 중지 실패/USB 바코드 양방향 보호/`.reg` 실패 전파, `Get-BackupEffectiveWriteTime` fail-closed, `Protect-ReportSensitiveText` JSON 이스케이프 마스킹<br>• **검증 사각지대 해소:** `build_single_bat` `-AllowPlaceholderBuild` 버그·`CHANGE_ME_` 차단, `verify_static` 부트스트랩 추출 원라이너 실실행·`CoreToGui=0`·`ScriptVarsInWork=0` 검사 추가, `smoke_test_local` Round 4 회귀 단위테스트 + `960×640` WPP 동시 노출 감사 추가 | **완료 (ALL PASS)** |
-| **서울아산병원 공식 CI 기반 UI/UX 전면 리뉴얼** | • 공식 서울아산병원 CI 팔레트(아산 그린 `#006769`/`#004F51`, 아산 오렌지 `#EC7A08`, 민트 틴트 `#EAF3F2`, 캔버스 `#F3F6F5`) + 140×38 공식 원내 로고 PNG 내장 + GDI+ 커스텀 아산 그린 프린터 앱 아이콘 적용<br>• 2단 화이트 헤더·3px 브랜드 바·컴팩트 메타 바(PC/OS/서버/SID)·`OwnerDrawFixed` 4단계 번호 탭(`①~④`)·4계층 버튼 위계 및 `EnabledChanged` 비활성 음영 자동 전환<br>• 탭 2 `1단계→2단계→3단계` 작업 흐름 카드화, 탭 1 실색상 범례 칩, 100% `FlowLayoutPanel` 툴바, 하단 작업 로그 기본 접힘(`작업 로그 보기 ▲`), `960×640` + WPP 배너 동시 노출 적응형 레이아웃 검증 및 5화면 실제 렌더링 시각 감사 완료 | **완료 (시각·자동 PASS)** |
+| **고시인성 아산 그린·오렌지 UI/UX · 상용 UX 라이팅 · 구 PC Win 10/11 공용 지원** | • **저작권 로고 제외:** 병원 공식 로고 PNG를 완전 제거하고 자체 GDI+ 벡터 프린터 심볼 배지·앱 아이콘만 사용<br>• **가시성 전면 강화:** 딥 아산 그린(`#005658`) 헤더 + 2px 아산 오렌지 라인 + 딥 틸(`#0B4F51`) 흰 글씨 표 헤더 + 선명한 테두리 버튼 + 5색 상태 구분(`정상` 그린 / `WSD 전환` 스카이시안 / `특수 장비` 퍼플 / `확인 필요` 오렌지 / `인증 오류` 레드) + `1단계`/`2단계` 배지 + 툴팁(`ToolTip`)<br>• **구 PC Win 10/11 공용 로직:** 백업 JSON/리포트에 `SourceOsName`/`SourceOsBuild`/`SourceIsWin11` 저장 및 탭 2 표시, 기동 시 서버 자동 매칭 백업 유무로 백업/복원 탭 지능 선택 + 탭 1 최초 진입 지연 자동 스캔 추가, `(Win 10)`/`(Win 11)` 고정 표기 제거<br>• **상용 UX 라이팅 정비:** `※`/`★`/`▶`/`[...]`/괄호 단문 표기 제거 및 직관적 동사형 버튼·친절한 안내 문구(`~해 주세요`) 적용 | **완료 (시각·자동 PASS)** |
 | **자동 검증 스위트 고도화** | `verify_static.ps1` **6/6 PASS** (9모듈·Core=73/GUI=60, 부트스트랩 추출 실실행·`CoreToGui=0`·`ScriptVarsInWork=0`·AST `MessageBox`·`$previewScript`·`src/` 미등록 파일·`src/`↔`dist/` SHA-256 동기화), `smoke_test_local.ps1` **3/3 PASS** (Round 4 회귀 단위테스트 + `1040×720`/`960×640`+WPP 레이아웃 오류 0건 · `exit 99`) | **완료 (ALL PASS)** |
 
 ---
@@ -70,6 +70,14 @@ git pull --ff-only
 
 ## 5. 세션별 작업 로그 (최신순)
 
+* **2026-11-26 03:41 (집 PC / 저작권 로고 제거 · 고시인성 UI/UX 개편 · 구 PC Win 10/11 공용 로직 · 상용 UX 라이팅 정비):**
+  * **완료 작업:**
+    1. **저작권 로고 완전 제거:** `02_gui_shell_tab1.ps1`에서 병원 공식 로고 PNG(`AsanLogoB64`) 제거 → 순수 GDI+로 직접 그리는 자체 프린터 심볼 배지(`New-AsanPrinterBadgeImage`)·앱 아이콘으로 대체(산출물 약 4.4KB 경량화).
+    2. **고시인성 UI/UX 개편:** 딥 아산 그린(`#005658`) 헤더 + 2px 아산 오렌지 포인트 바 + 고대비 환경 요약 바 + 딥 틸(`#0B4F51`) 흰 글씨 표 헤더 + 선명한 테두리 보조 버튼 + 5색 상태 구분(`정상` `#006769`, `WSD 전환` `#0280A8`, `특수 장비` `#6224C6`, `확인 필요` `#E07008`, `인증 오류` `#C0392B`) + 탭 2 `1단계`/`2단계` 컬러 배지 + 툴팁(`ToolTip`) 적용.
+    3. **구 PC Win 10/11 공용 코드·문구 정비:** `01d_backup_restore.ps1` 백업 JSON/리포트에 `SourceOsName`/`SourceOsBuild`/`SourceIsWin11` 저장 + 탭 2 원본 요약 표시, `04_gui_tab3_tab4_main.ps1` 기동 시 `IsWin11`만으로 복원 탭 강제 이동하던 로직을 **서버 자동 매칭 백업 존재 시에만 복원 탭 자동 진입, 미존재 시 백업 탭 자동 진단**으로 개선 + 탭 1 최초 진입 지연 자동 스캔 추가, 전 화면 `(Win 10)`/`(Win 11)` 고정 문구 및 `Win 10 구형` 단정 문구 정비(`SEWOO_TE201` 격리/잠금 안전 규칙은 유지).
+    4. **상용 UX 라이팅 정비:** Microsoft Windows·한국어 상용 UX 라이팅 기준에 따라 `※`/`★`/`▶`/`[...]`/괄호 단문 표기를 전수 제거하고 간결한 동사형 버튼·`~해 주세요` 안내 문구로 개편.
+  * **검증 결과:** `build_single_bat` · `verify_static` **6/6 PASS** (`Core=73/GUI=61`, `UndefinedCalls=0`, `GuiInWork=0`, `ScriptVarsInWork=0`, `CoreToGui=0`, `SrcEncIssues=0`), `smoke_test_local` **3/3 PASS** (`InitTab=0 (IsWin11=True)`, `SewooLocked=True`, `RuntimeErrors=0`, `LayoutIssues(1040×720 & 960×640)=0`, `exit 99`), 실제 렌더링 5화면(`Tab1`~`Tab4` 1040×720 + `Tab2` 960×640) 시각 감사 완료.
+  * **다음 재개 지점:** 직장 PC에서 `git pull --ff-only` → `secrets.local.json` 1회 생성 후 `dist\Asan_Printer_Manager.bat` 로컬 빌드 → 병원 현장 E2E 통합 테스트(`docs/E2E_TEST_CHECKLIST_v16.md` `TC-01`~`TC-22`) 수행 후 **`v1.0.0`** 정식 승격.
 * **2026-11-25 22:03 (집 PC / `AGENTS.md` 3-5 갱신 · 재귀 코드 리뷰 Round 4 17건 패치 · 서울아산병원 CI UI/UX 전면 리뉴얼):**
   * **완료 작업:**
     1. 사용자 승인에 따라 `AGENTS.md` 3절 규칙 5의 코어 파일 경로를 `src/01a_ctx_win32.ps1`~`01e_special_report_snapshot.ps1`(`01e` 스냅샷 기준)로 최신화.
