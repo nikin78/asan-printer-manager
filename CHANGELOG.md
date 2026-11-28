@@ -8,6 +8,28 @@
 
 ---
 
+## [v1.0.0-beta.5] - 2026-11-28
+
+### 기종·OS 전수 호환성 보강 및 기능 버그 수정 (Fixed — 망분리 9,803대 전 기종·Win 10 초기 빌드~Win 11 24H2·골든 이미지 손상 완벽 대응)
+* **구형 Windows 10 초기 빌드(`1507` Build 10240 / `1511` Build 10586) 및 손상된 `pnputil` 완벽 호환:**
+  * 2015~2016년 도입 노후 PC(`HP ProDesk 600 G1/G2` 등)의 Windows PowerShell `5.0` 환경에서 기동이 차단되지 않도록 `#Requires -Version 5.0`으로 호환 범위를 확대했습니다.
+  * `pnputil /enum-drivers`·`/export-driver` 미지원 구형 빌드 및 PnP DB 손상 환경을 위해 레거시 `pnputil -e`·`-i -a` 폴백과 `%SystemRoot%\INF\oem*.inf` 헤더 직접 파싱, 스풀러 `InfPath` 기반 `DriverStore\FileRepository` 패키지 직접 복사 폴백(`Export-DriverPackageFallback`)을 구현했습니다.
+* **스풀러 큐 생성·변경 거짓 성공(`rundll32 PrintUIEntry ExitCode=0`) 원천 차단 + 네이티브 `winspool.drv` 쓰기 API 도입:**
+  * `AsanWin32.NativeApi`에 `AddLocalPrinterNative`(`AddPrinterW`), `DeleteLocalPrinterNative`(`OpenPrinterW`/`DeletePrinter`), `AddPrinterConnectionNative`(`AddPrinterConnectionW`), `DeletePrinterConnectionNative`, `SetDefaultPrinterNative`(`SetDefaultPrinterW`)를 추가하고, 프린터 추가·공유 연결·속성/이름 변경 후 반드시 `Get-LocalPrintersSafe`로 실제 스풀러 등록을 재검증하도록 보강했습니다(`PrintUIEntry /if` 호출 시 실제 드라이버 `/f <InfPath>` 전달 포함).
+* **Windows 11(`22H2`~`24H2`) 공유 프린터 차단 자동 우회 및 SMB 진단 강화:**
+  * Windows 11에서 구형 PC 공유 프린터 연결 시 흔히 발생하는 RPC/Point-and-Print 오류(`0x0000011b` / `0x00000709` / `0x00000bcb`)를 막기 위해 `RpcUseNamedPipeProtocol=1` 호환 정책을 자동 적용하고, 원격 드라이버 다운로드 실패 시 **로컬 포트(`\\IP\공유명`) + 로컬 x64 드라이버 방식으로 자동 우회 복원**하도록 개선했습니다.
+  * Windows 11 `24H2` 게스트 공유 차단(`Win32=1272`) 및 구형 SMB1 호스트(`Win32=384`) 오류 코드의 한국어 안내를 추가했습니다.
+* **망분리 가상 네트워크 어댑터 오인식 차단 · 골든 이미지 서비스 자가 복구 · PCIe LPT/USB 보강:**
+  * 사내망 미연결 상태에서 망분리 VM/가상 스위치(`vEthernet`, `VMnet`, `VirtualBox`, `Mirage`, `Goodus` 등 게이트웨이·사내 DNS 없는 가상 어댑터)의 내부 IP가 사내 IP로 오인되지 않도록 필터링했습니다.
+  * 골든 이미지 복제 중 `Spooler` 서비스가 `Disabled`로 잠겼거나 인쇄 작업 교착으로 멈춘 경우 자동으로 시작 유형 복구 및 교착 프로세스 정리 후 재기동합니다.
+  * 신형 교체 PC(`Dell Pro Tower` / `HP Elite Tower G9`)의 PCIe 패럴렐 카드에서 장치명에 `(LPT1)`이 표기되지 않아도 커널 `DEVICEMAP\PARALLEL PORTS`를 상시 병행 조회해 정확히 감지하며, WMI 손상 시에도 `pnputil /enum-devices`로 USB 바코드 재인식이 작동하도록 보강했습니다.
+
+### 현장 UX 개선 (Changed)
+* **새 PC에서 빈 백업(`0대`) 오조작 덮어쓰기 방지:** 백업할 프린터가 `0대`인 깨끗한 새 PC에서 실행했을 때 `"0대가 모두 정상"` 대신 `'2. 새 PC 복원' 탭 이용` 안내 배너를 띄우고, 실수로 백업을 눌렀을 때 확인 창을 띄워 기존 백업 덮어쓰기 사고를 예방합니다.
+* **탭 2 백업 검색 바로가기 & 기종별 도우미 정돈 & 원클릭 탭 전환:** `1단계` 드롭다운 펼침 폭(`500px`)을 넓히고 바로 옆에 **`서버 검색`** 바로가기 버튼을 추가했으며, `SIP-30M 설정 마무리` 버튼은 진료카드 장비 선택 시에만 노출해 도우미 영역을 깔끔하게 정돈했습니다. 복원이 이상 없이 완료되면 엔터 한 번으로 **`3. 출력 확인` 탭으로 바로 이동**할 수 있습니다.
+
+---
+
 ## [v1.0.0-beta.4] - 2026-11-28
 
 ### 버그 수정 · 현장 호환성 대폭 강화 (Fixed — 병원 PC 클래스 오류 및 서버 접속 실패 근본 해결)

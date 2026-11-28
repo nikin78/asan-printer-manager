@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+﻿#Requires -Version 5.0
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 try { [Console]::InputEncoding  = [System.Text.Encoding]::UTF8 } catch {}
 $ErrorActionPreference = 'Stop'
@@ -34,7 +34,7 @@ $prtClass    = '{4d36e979-e325-11ce-bfc1-08002be2092f}'
 $pqClass     = '{1ed2bbf9-11f0-4084-b21f-ad83a8e6dcdc}'
 
 $global:AsanCtx = [hashtable]::Synchronized(@{
-    AppVersion                 = '1.0.0-beta.4'
+    AppVersion                 = '1.0.0-beta.5'
     OriginalScriptPath         = $resolvedOrigPath
     ServerIP                   = $serverIpVal
     InternalDnsIP              = '10.71.1.5'
@@ -189,6 +189,14 @@ namespace AsanWin32
         public bool WorkOffline;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct PRINTER_DEFAULTS
+    {
+        public string pDatatype;
+        public IntPtr pDevMode;
+        public uint DesiredAccess;
+    }
+
     public static class NativeApi
     {
         [DllImport("kernel32.dll")]
@@ -251,6 +259,38 @@ namespace AsanWin32
         private static extern bool GetDefaultPrinter(
             StringBuilder pszBuffer,
             ref int pcchBuffer);
+
+        [DllImport("winspool.drv", EntryPoint = "SetDefaultPrinterW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool SetDefaultPrinter(
+            string pszPrinter);
+
+        [DllImport("winspool.drv", EntryPoint = "OpenPrinterW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool OpenPrinter(
+            string pPrinterName,
+            out IntPtr phPrinter,
+            ref PRINTER_DEFAULTS pDefault);
+
+        [DllImport("winspool.drv", EntryPoint = "ClosePrinter", SetLastError = true)]
+        private static extern bool ClosePrinter(
+            IntPtr hPrinter);
+
+        [DllImport("winspool.drv", EntryPoint = "DeletePrinter", SetLastError = true)]
+        private static extern bool DeletePrinter(
+            IntPtr hPrinter);
+
+        [DllImport("winspool.drv", EntryPoint = "AddPrinterW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr AddPrinter(
+            string pName,
+            uint Level,
+            ref PRINTER_INFO_2 pPrinter);
+
+        [DllImport("winspool.drv", EntryPoint = "AddPrinterConnectionW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool AddPrinterConnection(
+            string pName);
+
+        [DllImport("winspool.drv", EntryPoint = "DeletePrinterConnectionW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool DeletePrinterConnection(
+            string pName);
 
         [DllImport("advapi32.dll", EntryPoint = "CredReadW", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern bool CredRead(
@@ -521,6 +561,85 @@ namespace AsanWin32
                 Marshal.FreeHGlobal(buffer);
             }
             return list.ToArray();
+        }
+
+        public static bool SetDefaultPrinterNative(string printerName)
+        {
+            if (string.IsNullOrEmpty(printerName)) return false;
+            try
+            {
+                return SetDefaultPrinter(printerName);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static int AddLocalPrinterNative(string printerName, string driverName, string portName)
+        {
+            if (string.IsNullOrEmpty(printerName) || string.IsNullOrEmpty(driverName) || string.IsNullOrEmpty(portName))
+            {
+                return 87;
+            }
+            PRINTER_INFO_2 p2 = new PRINTER_INFO_2();
+            p2.pPrinterName = printerName;
+            p2.pPortName = portName;
+            p2.pDriverName = driverName;
+            p2.pPrintProcessor = "winprint";
+            p2.pDatatype = "RAW";
+            p2.Attributes = 0x00000040; // PRINTER_ATTRIBUTE_LOCAL
+            IntPtr hPrt = AddPrinter(null, 2, ref p2);
+            if (hPrt != IntPtr.Zero)
+            {
+                ClosePrinter(hPrt);
+                return 0;
+            }
+            int err = Marshal.GetLastWin32Error();
+            return err == 0 ? 1 : err;
+        }
+
+        public static bool DeleteLocalPrinterNative(string printerName)
+        {
+            if (string.IsNullOrEmpty(printerName)) return false;
+            IntPtr hPrt = IntPtr.Zero;
+            PRINTER_DEFAULTS pd = new PRINTER_DEFAULTS();
+            pd.pDatatype = null;
+            pd.pDevMode = IntPtr.Zero;
+            pd.DesiredAccess = 0x00000004; // PRINTER_ACCESS_ADMINISTER
+            if (!OpenPrinter(printerName, out hPrt, ref pd) || hPrt == IntPtr.Zero)
+            {
+                return false;
+            }
+            try
+            {
+                return DeletePrinter(hPrt);
+            }
+            finally
+            {
+                ClosePrinter(hPrt);
+            }
+        }
+
+        public static int AddPrinterConnectionNative(string uncName)
+        {
+            if (string.IsNullOrEmpty(uncName)) return 87;
+            if (AddPrinterConnection(uncName)) return 0;
+            int err = Marshal.GetLastWin32Error();
+            return err == 0 ? 1 : err;
+        }
+
+        public static bool DeletePrinterConnectionNative(string uncName)
+        {
+            if (string.IsNullOrEmpty(uncName)) return false;
+            try
+            {
+                return DeletePrinterConnection(uncName);
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

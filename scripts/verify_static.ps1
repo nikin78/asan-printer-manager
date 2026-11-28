@@ -270,7 +270,7 @@ try {
     if ($ast.ScriptRequirements -and $ast.ScriptRequirements.RequiredPSVersion) {
         $reqVer = $ast.ScriptRequirements.RequiredPSVersion.ToString()
     }
-    $c3Pass = ($errCnt -eq 0 -and $reqVer -eq '5.1')
+    $c3Pass = ($errCnt -eq 0 -and ($reqVer -in @('5.0', '5.1')))
     $c3Detail = "ParseErrors=$errCnt, Tokens=$($astTokens.Count), #Requires=$reqVer"
     if ($errCnt -gt 0) {
         $errLines = @($astErrors | Select-Object -First 10 | ForEach-Object { "Line $($_.Extent.StartLineNumber): $($_.Message)" })
@@ -437,7 +437,7 @@ try {
 Add-Type -TypeDefinition `$code -ErrorAction Stop
 `$t = 'AsanWin32.NativeApi' -as [type]
 if (-not `$t) { throw 'AsanWin32.NativeApi type not loaded' }
-`$expected = @('HideConsoleWindow','HasStoredCredential','WriteDomainCredential','DeleteDomainCredential','ConnectShare','DisconnectShare','EnumPrintSharesEx','EnumDiskSharesEx','GetLocalMachineSid','EnumInstalledPrinters','WNetAddConnection2W','WNetCancelConnection2W','GetConsoleWindow','ShowWindow')
+`$expected = @('HideConsoleWindow','HasStoredCredential','WriteDomainCredential','DeleteDomainCredential','ConnectShare','DisconnectShare','EnumPrintSharesEx','EnumDiskSharesEx','GetLocalMachineSid','EnumInstalledPrinters','SetDefaultPrinterNative','AddLocalPrinterNative','DeleteLocalPrinterNative','AddPrinterConnectionNative','DeletePrinterConnectionNative','WNetAddConnection2W','WNetCancelConnection2W','GetConsoleWindow','ShowWindow')
 `$methods = @(`$t.GetMethods([Reflection.BindingFlags]'Public,Static') | ForEach-Object { `$_.Name })
 `$missing = @(`$expected | Where-Object { `$methods -notcontains `$_ })
 if (`$missing.Count -gt 0) { throw ('Missing methods: ' + (`$missing -join ', ')) }

@@ -439,11 +439,12 @@ function Read-BackupSourceMetadata {
         $jFile  = Join-Path $SourcePath 'PrinterBackup.json'
         $hasBrm = Test-Path -LiteralPath (Join-Path $SourcePath 'PrinterBackup.printerExport')
         if (Test-Path -LiteralPath $jFile) {
-            $jsonText = Get-Content -LiteralPath $jFile -Raw -Encoding UTF8
+            $jsonText = [IO.File]::ReadAllText($jFile, [Text.Encoding]::UTF8)
         }
     }
 
     if ([string]::IsNullOrWhiteSpace($jsonText)) { return $null }
+    if ($jsonText.Length -gt 0 -and $jsonText[0] -eq [char]0xFEFF) { $jsonText = $jsonText.Substring(1) }
     $data = $jsonText | ConvertFrom-Json
     return [pscustomobject]@{
         SourcePath = $SourcePath
@@ -640,12 +641,15 @@ function Set-DefaultPrinterSafe {
         Set-ItemProperty -LiteralPath 'HKCU:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows' -Name 'LegacyDefaultPrinterMode' -Value 1 -Type DWord -ErrorAction SilentlyContinue
     } catch {}
     try {
+        if ([AsanWin32.NativeApi]::SetDefaultPrinterNative($PrinterName)) { return $true }
+    } catch {}
+    try {
         (New-Object -ComObject WScript.Network).SetDefaultPrinter($PrinterName)
         return $true
     } catch {
         try {
-            $rDef = Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/y', '/q', '/n', $PrinterName)
-            if ($rDef.ExitCode -eq 0) { return $true }
+            [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/y', '/q', '/n', $PrinterName))
+            if ([AsanWin32.NativeApi]::GetDefaultPrinterNameNative() -ieq $PrinterName) { return $true }
         } catch {}
         try {
             $wmi = @(Get-CimInstance Win32_Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $PrinterName }) | Select-Object -First 1
@@ -673,9 +677,13 @@ function Remove-PrinterObjectSafe {
     }
     if (-not [string]::IsNullOrWhiteSpace($nm)) {
         if ($nm.StartsWith('\\')) {
-            [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/dn', '/q', '/n', $nm))
+            if (-not [AsanWin32.NativeApi]::DeletePrinterConnectionNative($nm)) {
+                [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/dn', '/q', '/n', $nm))
+            }
         } else {
-            [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/dl', '/q', '/n', $nm))
+            if (-not [AsanWin32.NativeApi]::DeleteLocalPrinterNative($nm)) {
+                [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/dl', '/q', '/n', $nm))
+            }
         }
     }
 }
@@ -703,13 +711,107 @@ function Set-PrinterPropsSafe {
     }
     if ([string]::IsNullOrWhiteSpace($nm)) { throw '프린터 이름이 비어 있어 속성을 변경할 수 없습니다.' }
     if (-not [string]::IsNullOrWhiteSpace($DriverName)) {
-        $r1 = Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Xs', '/n', $nm, 'DriverName', $DriverName)
-        if ($r1.ExitCode -ne 0) { throw "드라이버 변경 실패 (PrintUI ExitCode=$($r1.ExitCode))" }
+        [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Xs', '/n', $nm, 'DriverName', $DriverName))
+        $chkD = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $nm }) | Select-Object -First 1
+        if (-not $chkD -or ([string]$chkD.DriverName -ine $DriverName)) {
+            throw "드라이버 변경이 스풀러에 반영되지 않았습니다 ($DriverName)"
+        }
     }
     if (-not [string]::IsNullOrWhiteSpace($PortName)) {
-        $r2 = Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Xs', '/n', $nm, 'PortName', $PortName)
-        if ($r2.ExitCode -ne 0) { throw "포트 변경 실패 (PrintUI ExitCode=$($r2.ExitCode))" }
+        [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Xs', '/n', $nm, 'PortName', $PortName))
+        $chkP = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $nm }) | Select-Object -First 1
+        if (-not $chkP -or (([string]$chkP.PortName -split ',' | ForEach-Object { $_.Trim() }) -notcontains $PortName)) {
+            throw "포트 변경이 스풀러에 반영되지 않았습니다 ($PortName)"
+        }
     }
+}
+
+function Enable-Win11SharedPrinterRpcCompat {
+    try {
+        $osInfo = Get-OsVersionInfoSafe
+        if ($osInfo -and $osInfo.IsWin11) {
+            $rpcPolKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\RPC'
+            if (-not (Test-Path -LiteralPath $rpcPolKey)) {
+                New-Item -Path $rpcPolKey -Force -ErrorAction SilentlyContinue | Out-Null
+            }
+            $curVal = (Get-ItemProperty -LiteralPath $rpcPolKey -Name 'RpcUseNamedPipeProtocol' -ErrorAction SilentlyContinue).RpcUseNamedPipeProtocol
+            if ($null -eq $curVal -or [int]$curVal -ne 1) {
+                Set-ItemProperty -LiteralPath $rpcPolKey -Name 'RpcUseNamedPipeProtocol' -Value 1 -Type DWord -ErrorAction SilentlyContinue
+            }
+        }
+    } catch {}
+}
+
+function Add-LocalPrinterQueueSafe {
+    param(
+        [string]$PrinterName,
+        [string]$DriverName,
+        [string]$PortName
+    )
+    $lastErr = ''
+    try {
+        Add-Printer -Name $PrinterName -DriverName $DriverName -PortName $PortName -ErrorAction Stop
+    } catch {
+        $lastErr = $_.Exception.Message
+    }
+
+    $exists = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $PrinterName }) | Select-Object -First 1
+    if ($exists) { return }
+
+    # 2순위: Win32 winspool.drv AddPrinterW 직접 등록 (WMI 손상 및 ntprint.inf 의존성 완전 배제)
+    $nativeRc = [AsanWin32.NativeApi]::AddLocalPrinterNative($PrinterName, $DriverName, $PortName)
+    if ($nativeRc -eq 0 -or $nativeRc -eq 1802) {
+        $exists = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $PrinterName }) | Select-Object -First 1
+        if ($exists) { return }
+    } elseif ([string]::IsNullOrWhiteSpace($lastErr)) {
+        $lastErr = "Win32 AddPrinter 오류 코드=$nativeRc"
+    }
+
+    # 3순위: 설치된 드라이버의 실제 InfPath를 조회해 PrintUIEntry /if /f 로 등록 후 스풀러 실재 검증
+    $drvObj = @(Get-PrinterDriverSafe | Where-Object { $_.Name -ieq $DriverName -and -not [string]::IsNullOrWhiteSpace([string]$_.InfPath) }) | Select-Object -First 1
+    $ifArgs = [System.Collections.Generic.List[string]]::new()
+    foreach ($a in @('printui.dll,PrintUIEntry', '/if', '/q', '/b', $PrinterName)) { $ifArgs.Add($a) }
+    if ($drvObj -and (Test-Path -LiteralPath ([string]$drvObj.InfPath))) {
+        $ifArgs.Add('/f')
+        $ifArgs.Add([string]$drvObj.InfPath)
+    }
+    foreach ($a2 in @('/r', $PortName, '/m', $DriverName)) { $ifArgs.Add($a2) }
+    [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments $ifArgs.ToArray())
+
+    $exists = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $PrinterName }) | Select-Object -First 1
+    if ($exists) { return }
+
+    throw "스풀러 프린터 큐 생성 확인 실패 ($lastErr / Native=$nativeRc)"
+}
+
+function Add-SharedPrinterConnectionSafe {
+    param([string]$ConnectionName)
+    Enable-Win11SharedPrinterRpcCompat
+    $lastErr = ''
+    try {
+        Add-Printer -ConnectionName $ConnectionName -ErrorAction Stop
+    } catch {
+        $lastErr = $_.Exception.Message
+    }
+
+    $chkShare = [IO.Path]::GetFileName($ConnectionName)
+    $exists = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $ConnectionName -or ($_.Network -and $_.ShareName -ieq $chkShare) }) | Select-Object -First 1
+    if ($exists) { return }
+
+    $nativeRc = [AsanWin32.NativeApi]::AddPrinterConnectionNative($ConnectionName)
+    if ($nativeRc -eq 0) {
+        $exists = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $ConnectionName -or ($_.Network -and $_.ShareName -ieq $chkShare) }) | Select-Object -First 1
+        if ($exists) { return }
+    } elseif ([string]::IsNullOrWhiteSpace($lastErr)) {
+        $lastErr = "Win32 AddPrinterConnection 오류 코드=$nativeRc"
+    }
+
+    [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/in', '/q', '/n', $ConnectionName))
+    Start-Sleep -Milliseconds 400
+    $exists = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $ConnectionName -or ($_.Network -and $_.ShareName -ieq $chkShare) }) | Select-Object -First 1
+    if ($exists) { return }
+
+    throw "공유 프린터 스풀러 등록 미확인 ($lastErr / Native=$nativeRc)"
 }
 
 function Ensure-RestoredPortSafe {
@@ -1053,7 +1155,9 @@ function Invoke-PrinterRestoreEngine {
 
         $backupData = $null
         if (Test-Path -LiteralPath $jsonFile) {
-            $backupData = Get-Content -LiteralPath $jsonFile -Raw -Encoding UTF8 | ConvertFrom-Json
+            $rawJson = [IO.File]::ReadAllText($jsonFile, [Text.Encoding]::UTF8)
+            if ($rawJson.Length -gt 0 -and $rawJson[0] -eq [char]0xFEFF) { $rawJson = $rawJson.Substring(1) }
+            $backupData = $rawJson | ConvertFrom-Json
         }
         $selectedNames = @($SelectedRows | Where-Object { $_.Selected } | ForEach-Object { [string]$_.PrinterName })
 
@@ -1225,8 +1329,8 @@ function Invoke-PrinterRestoreEngine {
                     if ($idxEntry.Vendors -contains $uv) { $matchUsbVendor = $true; break }
                 }
                 if ($matchUsbVendor) {
-                    $rcUsbAdd = (Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/add-driver', $idxEntry.Path, '/install')).ExitCode
-                    if (($idxEntry.Vendors -contains 'ZEBRA') -and ($rcUsbAdd -eq 0 -or $rcUsbAdd -eq 259 -or $rcUsbAdd -eq 3010)) {
+                    $usbInfOk = Install-DriverInfSafe -InfPath $idxEntry.Path
+                    if (($idxEntry.Vendors -contains 'ZEBRA') -and $usbInfOk) {
                         $registeredZebraBackup = $true
                     }
                 }
@@ -1238,8 +1342,7 @@ function Invoke-PrinterRestoreEngine {
             if ($hasSelectedZt411Usb -and (-not $registeredZebraBackup) -and (-not $brmAddedZtDrv)) {
                 $ztLocalFallback = Find-LocalSpecialInstaller -SpecialType 'ZEBRA_ZT411' -SkipRemoteProbe
                 if ($ztLocalFallback -and $ztLocalFallback.InfPath -and (Test-Path -LiteralPath $ztLocalFallback.InfPath)) {
-                    $rcZtLoc = (Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/add-driver', $ztLocalFallback.InfPath, '/install')).ExitCode
-                    if ($rcZtLoc -eq 0 -or $rcZtLoc -eq 259 -or $rcZtLoc -eq 3010) {
+                    if (Install-DriverInfSafe -InfPath $ztLocalFallback.InfPath) {
                         $usedZtLocalUsbFallback = $true
                     }
                 }
@@ -1394,15 +1497,35 @@ function Invoke-PrinterRestoreEngine {
                     }
                 }
                 try {
-                    try {
-                        Add-Printer -ConnectionName $conn -ErrorAction Stop
-                    } catch {
-                        $inConn = Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/in', '/q', '/n', $conn)
-                        if ($inConn.ExitCode -ne 0) { throw $_.Exception }
-                    }
+                    Add-SharedPrinterConnectionSafe -ConnectionName $conn
                     $restoreLog.Add([pscustomobject]@{ Level = 'Success'; Target = $pName; Message = "공유 프린터 연결 완료 ($conn)" })
                 } catch {
-                    $failures.Add([pscustomobject]@{ PrinterName = $pName; PortName = $conn; DriverName = $row.DriverName; Reason = "공유 연결 실패: $($_.Exception.Message)"; HostName = $connHost })
+                    $pnpConnErr = $_.Exception.Message
+                    # Windows 11 Point-and-Print 차단(0x0000011b / 0x00000bcb / 0x00000709) 시 로컬 포트(\\IP\공유명) + x64 드라이버 자동 우회 복원
+                    $fallbackDone = $false
+                    if (-not [string]::IsNullOrWhiteSpace([string]$row.DriverName)) {
+                        $drvFb = Resolve-BestDriverForPrinter -PrinterName ([IO.Path]::GetFileName($conn)) -WantedDriverName ([string]$row.DriverName) -DriverIndexCache $driverIndexCache -ExcludeFromPcl6:$spec.ExcludeFromPcl6 -PreExistingDrivers $preExistingDrivers
+                        if ($drvFb.Success) {
+                            $uncPortRes = Ensure-RestoredPortSafe -PortObj $null -FallbackName $conn -OverrideKind 'LOCAL_UNC'
+                            if ($uncPortRes.Success) {
+                                $localQueueName = $pName
+                                if ($localQueueName.StartsWith('\\')) {
+                                    $baseShareName = [IO.Path]::GetFileName($conn)
+                                    $dupCheck = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $baseShareName }) | Select-Object -First 1
+                                    if ($dupCheck) { $localQueueName = "$baseShareName ($connHost)" }
+                                    else { $localQueueName = $baseShareName }
+                                }
+                                try {
+                                    Add-LocalPrinterQueueSafe -PrinterName $localQueueName -DriverName $drvFb.DriverName -PortName $uncPortRes.PortName
+                                    $restoreLog.Add([pscustomobject]@{ Level = 'Success'; Target = $localQueueName; Message = "공유 Point-and-Print 차단 우회 성공 — 로컬 포트($conn) 및 드라이버($($drvFb.DriverName))로 자동 복원 완료" })
+                                    $fallbackDone = $true
+                                } catch {}
+                            }
+                        }
+                    }
+                    if (-not $fallbackDone) {
+                        $failures.Add([pscustomobject]@{ PrinterName = $pName; PortName = $conn; DriverName = $row.DriverName; Reason = "공유 연결 실패: $pnpConnErr"; HostName = $connHost })
+                    }
                 }
                 continue
             }
@@ -1464,12 +1587,7 @@ function Invoke-PrinterRestoreEngine {
             }
 
             try {
-                try {
-                    Add-Printer -Name $pName -DriverName $drvRes.DriverName -PortName $pRes.PortName -ErrorAction Stop
-                } catch {
-                    $ifAdd = Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/if', '/q', '/b', $pName, '/r', $pRes.PortName, '/m', $drvRes.DriverName)
-                    if ($ifAdd.ExitCode -ne 0) { throw $_.Exception }
-                }
+                Add-LocalPrinterQueueSafe -PrinterName $pName -DriverName $drvRes.DriverName -PortName $pRes.PortName
                 $appliedDatC = $false
                 $appliedRegC = $false
                 if ($spec.IsSpecial) {
@@ -1538,8 +1656,7 @@ function Invoke-PrinterRestoreEngine {
         $restoredScanCnt = 0
         if (-not $SkipPrintBrm -and (Test-Path -LiteralPath $expScanDir)) {
             foreach ($sInf in @(Get-ChildItem -LiteralPath $expScanDir -Filter '*.inf' -File -Recurse -ErrorAction SilentlyContinue)) {
-                $rcS = (Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/add-driver', $sInf.FullName, '/install')).ExitCode
-                if ($rcS -eq 0 -or $rcS -eq 259 -or $rcS -eq 3010) { $restoredScanCnt++ }
+                if (Install-DriverInfSafe -InfPath $sInf.FullName) { $restoredScanCnt++ }
             }
             if ($restoredScanCnt -gt 0) {
                 $restoreLog.Add([pscustomobject]@{ Level = 'Success'; Target = 'WIA 스캐너'; Message = "백업된 제조사 공식 스캐너 드라이버 ${restoredScanCnt}개 설치 완료" })

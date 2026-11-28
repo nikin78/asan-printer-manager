@@ -7,6 +7,7 @@ $script:Tab2Ui = @{
     CmbServerBackups   = $null
     ComboBackupEntries = @()
     BtnLoadServer      = $null
+    BtnSearchServer    = $null
     BtnOpenZip         = $null
     BtnRunDeferred     = $null
     LblSourceInfo      = $null
@@ -403,6 +404,7 @@ function Update-Tab2SpecialSelection {
         $script:Tab2Ui.BtnSpecInstall.Enabled = $false
         $script:Tab2Ui.BtnSpecFolder.Enabled  = $false
         $script:Tab2Ui.BtnSpecProps.Enabled   = $false
+        if ($script:Tab2Ui.BtnSpecStep2) { $script:Tab2Ui.BtnSpecStep2.Visible = $false }
         Sync-AllUiButtonStates
         return
     }
@@ -430,6 +432,9 @@ function Update-Tab2SpecialSelection {
     $script:Tab2Ui.BtnSpecInstall.Enabled = $hasExe
     $script:Tab2Ui.BtnSpecFolder.Enabled  = $hasFolder
     $script:Tab2Ui.BtnSpecProps.Enabled   = $true
+    if ($script:Tab2Ui.BtnSpecStep2) {
+        $script:Tab2Ui.BtnSpecStep2.Visible = ([bool]$info.HasStep2)
+    }
 
     if ($selRow.SpecialType -eq 'SEWOO_TE201') {
         $script:Tab2Ui.BtnSpecInstall.Text = '세우 전용 설치'
@@ -799,9 +804,10 @@ function Start-Tab2RestoreExecution {
             $sumLines.Add("공유 PC 인증 또는 SID 충돌 감지")
             $sumLines.Add("아래 공유 인증 탭에서 암호를 다시 입력하거나 스풀러 초기화 후 '실패 항목 다시 시도'를 눌러 주세요.")
         }
-        if ($failCnt -eq 0 -and $manualSpecs.Count -eq 0 -and $ztPrefsList.Count -eq 0) {
+        $canJumpTab3 = ($failCnt -eq 0 -and $manualSpecs.Count -eq 0 -and $ztPrefsList.Count -eq 0 -and $samList.Count -eq 0 -and (-not $data.NeedsUsbReplug))
+        if ($canJumpTab3) {
             $sumLines.Add("")
-            $sumLines.Add("이제 '3. 출력 확인' 탭으로 이동해 테스트 인쇄를 진행해 주세요.")
+            $sumLines.Add("지금 바로 '3. 출력 확인' 탭으로 이동해 테스트 인쇄를 진행할까요?")
         }
 
         if ($failCnt -gt 0) {
@@ -818,6 +824,11 @@ function Start-Tab2RestoreExecution {
                 $firstFailPrt = [string](@($data.Failures)[0].PrinterName)
                 $failSummary  = (@($data.Failures | ForEach-Object { "$($_.PrinterName) ($($_.PortName)): $($_.Reason)" }) -join "`r`n")
                 Show-BugReportDialog -DefaultCategory '복원/드라이버 오류' -DefaultPrinter $firstFailPrt -ErrorSummary $failSummary
+            }
+        } elseif ($canJumpTab3) {
+            $goVerify = Show-AsanMessageBox -Text ($sumLines -join "`r`n") -Caption '복원 완료' -Buttons 'YesNo' -Icon 'Information'
+            if ($goVerify -eq [System.Windows.Forms.DialogResult]::Yes -and $script:Ui.TabMain) {
+                $script:Ui.TabMain.SelectedIndex = 2
             }
         } else {
             $icon = [System.Windows.Forms.MessageBoxIcon]::Information
@@ -1102,7 +1113,8 @@ function Initialize-Tab2RestoreUi {
 
     $cmbBackups = New-Object System.Windows.Forms.ComboBox
     $cmbBackups.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $cmbBackups.Size          = New-Object System.Drawing.Size(290, 24)
+    $cmbBackups.Size          = New-Object System.Drawing.Size(320, 24)
+    $cmbBackups.DropDownWidth = 500
     $cmbBackups.Font          = $script:FontBase
     $cmbBackups.Margin        = New-Object System.Windows.Forms.Padding(0, 2, 6, 0)
     $cmbBackups.Add_SelectionChangeCommitted({
@@ -1117,7 +1129,7 @@ function Initialize-Tab2RestoreUi {
     })
     $script:Ui.BusyControls.Add($cmbBackups)
 
-    $btnLoadSrv = New-StyledButton -Text '불러오기' -Width 84 -Height 26 -Variant 'SoftTeal' -RegisterBusy
+    $btnLoadSrv = New-StyledButton -Text '불러오기' -Width 82 -Height 26 -Variant 'SoftTeal' -RegisterBusy
     $btnLoadSrv.Margin = New-Object System.Windows.Forms.Padding(0, 1, 6, 0)
     $btnLoadSrv.Add_Click({
         $idx = $script:Tab2Ui.CmbServerBackups.SelectedIndex
@@ -1126,7 +1138,22 @@ function Initialize-Tab2RestoreUi {
         }
     })
 
-    $btnOpenZip = New-StyledButton -Text 'ZIP 파일 열기' -Width 116 -Height 26 -Variant 'Secondary' -RegisterBusy
+    $btnSearchSrv = New-StyledButton -Text '서버 검색' -Width 82 -Height 26 -Variant 'Secondary' -RegisterBusy
+    $btnSearchSrv.Font   = $script:FontSmallB
+    $btnSearchSrv.Margin = New-Object System.Windows.Forms.Padding(0, 1, 6, 0)
+    $btnSearchSrv.Add_Click({
+        if ($script:Ui.TabMain) {
+            $script:Ui.TabMain.SelectedIndex = 3
+            if ($script:Tab4Ui -and $script:Tab4Ui.TxtSearch -and (-not $script:Tab4Ui.TxtSearch.IsDisposed)) {
+                $script:Tab4Ui.TxtSearch.Focus()
+            }
+        }
+    })
+    if ($script:Ui.ToolTip) {
+        $script:Ui.ToolTip.SetToolTip($btnSearchSrv, '서버 백업이 많을 때 컴퓨터 이름이나 IP로 빠르게 검색해 불러옵니다')
+    }
+
+    $btnOpenZip = New-StyledButton -Text 'ZIP 파일 열기' -Width 112 -Height 26 -Variant 'Secondary' -RegisterBusy
     $btnOpenZip.Font   = $script:FontSmallB
     $btnOpenZip.Margin = New-Object System.Windows.Forms.Padding(0, 1, 6, 0)
     $btnOpenZip.Add_Click({
@@ -1142,7 +1169,7 @@ function Initialize-Tab2RestoreUi {
         $ofd.Dispose()
     })
 
-    $btnDeferred = New-StyledButton -Text '연결 다시 확인' -Width 114 -Height 26 -Variant 'Secondary' -RegisterBusy
+    $btnDeferred = New-StyledButton -Text '연결 다시 확인' -Width 110 -Height 26 -Variant 'Secondary' -RegisterBusy
     $btnDeferred.Font    = $script:FontSmallB
     $btnDeferred.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 0, 0)
     $btnDeferred.Enabled = $false
@@ -1152,7 +1179,7 @@ function Initialize-Tab2RestoreUi {
         }
     })
 
-    $flpSrcRow.Controls.AddRange(@($lblSrc, $cmbBackups, $btnLoadSrv, $btnOpenZip, $btnDeferred))
+    $flpSrcRow.Controls.AddRange(@($lblSrc, $cmbBackups, $btnLoadSrv, $btnSearchSrv, $btnOpenZip, $btnDeferred))
 
     $lblSourceInfo = New-Object System.Windows.Forms.Label
     $lblSourceInfo.Text      = '서버 백업을 선택하거나 ZIP 파일 열기로 복원 대상을 불러와 주세요.'
@@ -1401,7 +1428,8 @@ function Initialize-Tab2RestoreUi {
 
     $cmbSpec = New-Object System.Windows.Forms.ComboBox
     $cmbSpec.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $cmbSpec.Size          = New-Object System.Drawing.Size(166, 24)
+    $cmbSpec.Size          = New-Object System.Drawing.Size(216, 24)
+    $cmbSpec.DropDownWidth = 380
     $cmbSpec.Margin        = New-Object System.Windows.Forms.Padding(0, 2, 6, 2)
     $cmbSpec.Add_SelectedIndexChanged({ Update-Tab2SpecialSelection })
 
@@ -1425,6 +1453,7 @@ function Initialize-Tab2RestoreUi {
     $btnSpecStep2.Font    = $script:FontSmallB
     $btnSpecStep2.Margin  = New-Object System.Windows.Forms.Padding(0, 1, 6, 2)
     $btnSpecStep2.Enabled = $false
+    $btnSpecStep2.Visible = $false
     $btnSpecStep2.Add_Click({ Invoke-Tab2Sip30mStep2Async })
 
     $btnUsbReenum = New-StyledButton -Text 'USB 다시 인식' -Width 104 -Height 26 -Variant 'SoftOrange' -RegisterBusy
@@ -1523,6 +1552,7 @@ function Initialize-Tab2RestoreUi {
 
     $script:Tab2Ui.CmbServerBackups = $cmbBackups
     $script:Tab2Ui.BtnLoadServer    = $btnLoadSrv
+    $script:Tab2Ui.BtnSearchServer  = $btnSearchSrv
     $script:Tab2Ui.BtnOpenZip       = $btnOpenZip
     $script:Tab2Ui.BtnRunDeferred   = $btnDeferred
     $script:Tab2Ui.LblSourceInfo    = $lblSourceInfo

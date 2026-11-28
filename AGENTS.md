@@ -19,7 +19,7 @@
 
 * **최종 배포물:** `dist/Asan_Printer_Manager.bat` (단일 실행 파일, 외부 의존성 0개 — Python 등 미사용, `.gitignore` 처리 + **GitHub Releases에 즉시 실행 가능한 완성본 `.bat` 배포**)
 * **기본 공용 계정 내장:** 현장 작업 편의성을 위해 병원 내 공용 계정(`admin` + 공용 암호 3종)은 `src/01a_ctx_win32.ps1`에 기본 내장되어 별도 설정 파일 없이 단일 `.bat`만으로 즉시 작동합니다. *(서버 암호 변경 시에는 상단 `서버 로그인` UI 또는 선택적 `secrets.local.json`으로 대응합니다.)*
-* **버전 기준:** `VERSION` 파일 (현재 SemVer `1.0.0-beta.4`, `src/01a_ctx_win32.ps1`의 `$global:AsanCtx.AppVersion`과 항상 동기화)
+* **버전 기준:** `VERSION` 파일 (현재 SemVer `1.0.0-beta.5`, `src/01a_ctx_win32.ps1`의 `$global:AsanCtx.AppVersion`과 항상 동기화)
 * **소스 모듈 (`src/` — 9개 모듈):**
   * `00_bootstrap.bat` — Zero-USB-Write `%TEMP%` 스테이징, WOW64 `Sysnative`, URL-Safe Base64 UAC, `-STA`, `RC == 99` 가드 (`UTF-8 No BOM` + `CRLF`)
   * `01a_ctx_win32.ps1` — `$global:AsanCtx` 전역 컨텍스트, C# 5.0 `AsanWin32.NativeApi`, `Hide-ConsoleWindowSafe` (`UTF-8 With BOM` + `CRLF`)

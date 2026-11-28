@@ -332,7 +332,11 @@ function Complete-Sip30mPostInstall {
     }
 
     $curName = [string]$sipPrt.Name
-    Set-PrinterPropsSafe -PrinterObj $sipPrt -PrinterName $curName -PortName $pRes.PortName
+    try {
+        Set-PrinterPropsSafe -PrinterObj $sipPrt -PrinterName $curName -PortName $pRes.PortName
+    } catch {
+        return [pscustomobject]@{ Success = $false; Message = "SIP-30M 포트 변경 실패 ($($pRes.PortName)): $($_.Exception.Message)" }
+    }
 
     if ($curName -ne $DesiredPrinterName) {
         $dup = @(Get-PrinterSafe | Where-Object { $_.Name -eq $DesiredPrinterName }) | Select-Object -First 1
@@ -349,8 +353,9 @@ function Complete-Sip30mPostInstall {
                 } catch {}
             }
             if (-not $renamedOk) {
-                $rnRes = Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Xs', '/n', $curName, 'PrinterName', $DesiredPrinterName)
-                if ($rnRes.ExitCode -eq 0) { $renamedOk = $true }
+                [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Xs', '/n', $curName, 'PrinterName', $DesiredPrinterName))
+                $chkRen = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $DesiredPrinterName }) | Select-Object -First 1
+                if ($chkRen) { $renamedOk = $true }
             }
             if ($renamedOk) { $curName = $DesiredPrinterName }
         }

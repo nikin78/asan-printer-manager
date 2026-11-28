@@ -370,6 +370,14 @@ function Stop-SpoolerSafe {
         if ($svc -and $svc.Status -eq 'Stopped') { return $true }
         Start-Sleep -Milliseconds 300
     }
+    # 인쇄 작업 교착(spoolsv.exe 응답 없음) 시 프로세스 강제 정리 후 정지 재확인
+    try { Stop-Process -Name 'spoolsv' -Force -ErrorAction SilentlyContinue } catch {}
+    $killDeadline = (Get-Date).AddSeconds(3)
+    while ((Get-Date) -lt $killDeadline) {
+        $svc = Get-Service -Name Spooler -ErrorAction SilentlyContinue
+        if ($svc -and $svc.Status -eq 'Stopped') { return $true }
+        Start-Sleep -Milliseconds 250
+    }
     return $false
 }
 
@@ -378,7 +386,21 @@ function Ensure-SpoolerRunning {
     $svc = Get-Service -Name Spooler -ErrorAction SilentlyContinue
     if (-not $svc) { return }
     if ($svc.Status -ne 'Running') {
+        try {
+            if ($svc.StartType -eq 'Disabled') {
+                Set-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\Spooler' -Name 'Start' -Value 2 -Type DWord -ErrorAction SilentlyContinue
+                Set-Service -Name Spooler -StartupType Automatic -ErrorAction SilentlyContinue
+            }
+        } catch {}
         try { Start-Service -Name Spooler -ErrorAction SilentlyContinue } catch {}
+        $svcAfter = Get-Service -Name Spooler -ErrorAction SilentlyContinue
+        if ($svcAfter -and $svcAfter.Status -ne 'Running' -and $svcAfter.Status -ne 'StartPending') {
+            try {
+                Set-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\Spooler' -Name 'Start' -Value 2 -Type DWord -ErrorAction SilentlyContinue
+                Set-Service -Name Spooler -StartupType Automatic -ErrorAction SilentlyContinue
+                Start-Service -Name Spooler -ErrorAction SilentlyContinue
+            } catch {}
+        }
         $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
         while ((Get-Date) -lt $deadline) {
             $svc = Get-Service -Name Spooler -ErrorAction SilentlyContinue
@@ -795,6 +817,7 @@ function Get-ActiveNetworkInfo {
     $dnsListOut  = @()
 
     $excludeNameRegex = '(?i)^(Loopback|Teredo|isatap)|Bluetooth|TAP-Windows|Npcap Loopback'
+    $virtualOnlyRegex = '(?i)(vEthernet|Hyper-V|VMware|VMnet|VirtualBox|WSL|Docker|ZeroTier|Tailscale|WireGuard|Mirage|Goodus|Pseudo)'
     $candidates       = [System.Collections.Generic.List[object]]::new()
 
     # 1순위: WMI/CIM(Get-NetAdapter/Get-NetIPConfiguration) 완전 배제 -> 순수 .NET NetworkInterface 직접 조회 (클래스 오류 0%)
@@ -813,18 +836,6 @@ function Get-ActiveNetworkInfo {
             try { $ipProps = $nic.GetIPProperties() } catch { continue }
             if (-not $ipProps) { continue }
 
-            $usableIp = $null
-            foreach ($ua in @($ipProps.UnicastAddresses)) {
-                if (-not $ua -or -not $ua.Address) { continue }
-                if ($ua.Address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) { continue }
-                $candStr = $ua.Address.IPAddressToString
-                if (Test-IsUsableIPv4 -IpText $candStr) {
-                    $usableIp = $candStr
-                    break
-                }
-            }
-            if (-not $usableIp) { continue }
-
             $gwIp  = $null
             $hasGw = $false
             foreach ($ga in @($ipProps.GatewayAddresses)) {
@@ -835,6 +846,25 @@ function Get-ActiveNetworkInfo {
                         $hasGw = $true
                         break
                     }
+                }
+            }
+
+            $usableIps = [System.Collections.Generic.List[string]]::new()
+            foreach ($ua in @($ipProps.UnicastAddresses)) {
+                if (-not $ua -or -not $ua.Address) { continue }
+                if ($ua.Address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) { continue }
+                $candStr = $ua.Address.IPAddressToString
+                if (Test-IsUsableIPv4 -IpText $candStr) {
+                    $usableIps.Add($candStr)
+                }
+            }
+            if ($usableIps.Count -eq 0) { continue }
+
+            $usableIp = $usableIps[0]
+            if ($hasGw -and $usableIps.Count -gt 1 -and $gwIp -match '^(\d+\.\d+\.)') {
+                $gwPfx = $matches[1]
+                foreach ($uCand in $usableIps) {
+                    if ($uCand.StartsWith($gwPfx)) { $usableIp = $uCand; break }
                 }
             }
 
@@ -851,15 +881,19 @@ function Get-ActiveNetworkInfo {
                 if ($v4p) { $ifIdx = [int]$v4p.Index }
             } catch {}
 
+            $isVirtualSwitch = ($nName -match $virtualOnlyRegex -or $nDesc -match $virtualOnlyRegex)
             $isPhys = ($nic.NetworkInterfaceType -in @(
                 [System.Net.NetworkInformation.NetworkInterfaceType]::Ethernet,
                 [System.Net.NetworkInformation.NetworkInterfaceType]::Wireless80211,
                 [System.Net.NetworkInformation.NetworkInterfaceType]::GigabitEthernet,
                 [System.Net.NetworkInformation.NetworkInterfaceType]::FastEthernetT,
                 [System.Net.NetworkInformation.NetworkInterfaceType]::FastEthernetFx
-            )) -and ($nDesc -notmatch '(?i)Virtual|Hyper-V|VMware|VirtualBox|VPN|Miniport')
+            )) -and (-not $isVirtualSwitch) -and ($nDesc -notmatch '(?i)Virtual|VPN|Miniport')
 
             $hasAsanDns = ($nicDns -contains $global:AsanCtx.InternalDnsIP)
+            # 망분리 VM/Host-Only 가상 스위치(게이트웨이·사내 DNS 모두 없음)가 오프라인 시 가짜 사내 IP로 오인되는 현상 차단
+            if ((-not $isPhys) -and (-not $hasGw) -and (-not $hasAsanDns)) { continue }
+
             $tier = 5
             if ($hasAsanDns -and $hasGw) { $tier = 1 }
             elseif ($isPhys -and $hasGw) { $tier = 2 }
@@ -1180,6 +1214,10 @@ function Connect-AsanBackupServerWithCred {
         $errMsg = "백업 서버($srvIp) 연결에 실패했습니다 (Win32 오류 코드: $lastRc)."
         if ($lastRc -in @(5, 86, 1326, 1331, 1909)) {
             $errMsg = "아이디 또는 암호가 일치하지 않습니다 (오류 코드 $lastRc). 계정 정보를 다시 확인해 주세요."
+        } elseif ($lastRc -eq 1272) {
+            $errMsg = 'Windows 11 24H2 보안 정책이 게스트 공유 연결을 차단했습니다 (오류 코드 1272). 서버 계정과 암호를 다시 확인해 주세요.'
+        } elseif ($lastRc -eq 384) {
+            $errMsg = '대상 서버가 구형 SMB1 프로토콜만 요구하여 연결이 차단되었습니다 (오류 코드 384).'
         } elseif ($lastRc -eq 1219) {
             $errMsg = '윈도우 탐색기 등에 다른 계정으로 서버가 이미 연결되어 있습니다. 열린 서버 폴더 창을 닫고 다시 시도해 주세요.'
         } elseif ($lastRc -eq 67 -or $lastRc -eq 53) {
@@ -1436,35 +1474,33 @@ function Get-DeviceManagerLptPorts {
         }
     } catch {}
 
-    # WMI 클래스 손상 시 커널 DEVICEMAP 레지스트리에서 활성 LPT 포트 직접 확인
-    if ($lpts.Count -eq 0) {
-        try {
-            $parMapKey = 'HKLM:\HARDWARE\DEVICEMAP\PARALLEL PORTS'
-            if (Test-Path -LiteralPath $parMapKey) {
-                $pmProps = Get-ItemProperty -LiteralPath $parMapKey -ErrorAction SilentlyContinue
-                if ($pmProps) {
-                    foreach ($pr in $pmProps.PSObject.Properties) {
-                        if ($pr.Name -match '^PS(Path|ParentPath|ChildName|Drive|Provider)$') { continue }
-                        $val = [string]$pr.Value
-                        $m = [regex]::Match($val, '(LPT\d+)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-                        if ($m.Success) {
-                            $pTag = $m.Groups[1].Value.ToUpperInvariant()
-                            if (-not $seen.ContainsKey($pTag)) {
-                                $seen[$pTag] = $true
-                                $lpts.Add([pscustomobject]@{
-                                    PortName  = $pTag
-                                    Name      = "프린터 포트 ($pTag)"
-                                    Status    = 'OK'
-                                    ErrorCode = 0
-                                    IsHealthy = $true
-                                })
-                            }
+    # 커널 DEVICEMAP 레지스트리를 항상 병행 조회 (WMI 손상 및 PCIe LPT 카드 이름에 '(LPT1)' 미표기 환경 완벽 보완)
+    try {
+        $parMapKey = 'HKLM:\HARDWARE\DEVICEMAP\PARALLEL PORTS'
+        if (Test-Path -LiteralPath $parMapKey) {
+            $pmProps = Get-ItemProperty -LiteralPath $parMapKey -ErrorAction SilentlyContinue
+            if ($pmProps) {
+                foreach ($pr in $pmProps.PSObject.Properties) {
+                    if ($pr.Name -match '^PS(Path|ParentPath|ChildName|Drive|Provider)$') { continue }
+                    $val = [string]$pr.Value
+                    $m = [regex]::Match($val, '(LPT\d+)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+                    if ($m.Success) {
+                        $pTag = $m.Groups[1].Value.ToUpperInvariant()
+                        if (-not $seen.ContainsKey($pTag)) {
+                            $seen[$pTag] = $true
+                            $lpts.Add([pscustomobject]@{
+                                PortName  = $pTag
+                                Name      = "프린터 포트 ($pTag)"
+                                Status    = 'OK'
+                                ErrorCode = 0
+                                IsHealthy = $true
+                            })
                         }
                     }
                 }
             }
-        } catch {}
-    }
+        }
+    } catch {}
     return @($lpts.ToArray())
 }
 
@@ -1476,11 +1512,13 @@ function Get-BrokenBarcodeUsbDevices {
     $nameRegex    = '(?i)Zebra|ZDesigner|ZD410|ZD411|ZT410|ZT411|BIXOLON|SLP-TX|TX220|TX-220'
     $excludeRegex = '(?i)Sewoo|SLK-TE|LK-TE'
 
-    $found = [System.Collections.Generic.List[object]]::new()
+    $found  = [System.Collections.Generic.List[object]]::new()
+    $wmiRan = $false
     try {
-        $pnpAll = @(Get-CimInstance -ClassName Win32_PnPEntity -ErrorAction SilentlyContinue | Where-Object {
+        $pnpAll = @(Get-CimInstance -ClassName Win32_PnPEntity -ErrorAction Stop | Where-Object {
             ([string]$_.DeviceID) -match '^(?i)(USB\\VID_|USBPRINT\\)'
         })
+        $wmiRan = $true
         foreach ($dev in $pnpAll) {
             $devId   = [string]$dev.DeviceID
             $devName = [string]$dev.Name
@@ -1518,6 +1556,47 @@ function Get-BrokenBarcodeUsbDevices {
             }
         }
     } catch {}
+
+    # WMI(Win32_PnPEntity) 클래스 손상 시 네이티브 pnputil /enum-devices 폴백 조회
+    if (-not $wmiRan) {
+        try {
+            $enumDev = Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/enum-devices', '/connected')
+            if ($enumDev.ExitCode -eq 0 -and $enumDev.Lines.Count -gt 0) {
+                $curId = ''; $curDesc = ''; $curCls = ''; $curStat = ''
+                $flushDev = {
+                    param($id, $desc, $cls, $st, $outList)
+                    if ([string]::IsNullOrWhiteSpace($id)) { return }
+                    if ($id -notmatch '^(?i)(USB\\VID_|USBPRINT\\)') { return }
+                    if (($desc -match $excludeRegex) -or ($id -match $excludeRegex)) { return }
+                    $isUp = ($id -match '^(?i)USBPRINT\\')
+                    $isBc = ($id -match $vidRegex) -or ($id -match $nameRegex) -or ($desc -match $nameRegex) -or ($isUp -and ($id -match '(?i)ZTC'))
+                    if (-not $isBc) { return }
+                    $prob = ($st -match '(?i)Problem|문제|Stopped|중지|Disabled') -or [string]::IsNullOrWhiteSpace($cls) -or ($cls -match '(?i)^(Unknown|Other|알 수 없음|기타)')
+                    if ($isUp -and ($cls -notmatch '(?i)(Printer|PrintQueue|프린터|인쇄)')) { $prob = $true }
+                    $sr = 2; if ($isUp) { $sr = 1 }
+                    if ($IncludeHealthyBarcode -or $prob) {
+                        $outList.Add([pscustomobject]@{
+                            DeviceID = $id; Name = $desc; PNPClass = $cls; Status = $st; ErrorCode = 0; IsProblem = $prob; SortRank = $sr
+                        })
+                    }
+                }
+                foreach ($ln in $enumDev.Lines) {
+                    $t = $ln.Trim()
+                    if ([string]::IsNullOrWhiteSpace($t)) {
+                        & $flushDev $curId $curDesc $curCls $curStat $found
+                        $curId = ''; $curDesc = ''; $curCls = ''; $curStat = ''
+                        continue
+                    }
+                    if ($t -match '^(?:Instance ID|인스턴스 ID)\s*:\s*(.+)$') { $curId = $matches[1].Trim() }
+                    elseif ($t -match '^(?:Device Description|장치 설명)\s*:\s*(.+)$') { $curDesc = $matches[1].Trim() }
+                    elseif ($t -match '^(?:Class Name|클래스 이름)\s*:\s*(.+)$') { $curCls = $matches[1].Trim() }
+                    elseif ($t -match '^(?:Status|상태)\s*:\s*(.+)$') { $curStat = $matches[1].Trim() }
+                }
+                & $flushDev $curId $curDesc $curCls $curStat $found
+            }
+        } catch {}
+    }
+
     return @($found.ToArray() | Sort-Object SortRank, DeviceID)
 }
 
@@ -1558,6 +1637,11 @@ function Invoke-UsbBarcodeAutoReenumerate {
                 if (($beforeProb -gt 0 -and $stillNow.Count -lt $beforeProb) -or ($beforeProb -eq 0 -and $curPorts.Count -gt 0 -and $stillNow.Count -eq 0)) { break }
             }
         }
+    } elseif ($ForceAllBarcodeUsb -or $beforePorts.Count -eq 0) {
+        # 수동 'USB 다시 인식' 요청 또는 USB 포트 부재 시 PnP 하드웨어 재검색 1회 강제 수행
+        Write-ProgressSafe -OnProgress $OnProgress -Percent 55 -Message 'PnP 하드웨어 변경 사항 재검색 실행 중...'
+        [void](Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/scan-devices'))
+        Start-Sleep -Seconds 2
     }
 
     $afterPorts  = @(Get-PrinterPortSafe | Where-Object { $_.Name -match '(?i)^USB\d+' } | ForEach-Object { [string]$_.Name } | Sort-Object)
@@ -1723,13 +1807,16 @@ function Connect-SharedHostSmart {
         }
 
         $lastRc = $rc
-        if ($rc -in @(5, 86, 1326, 1331, 1909)) {
+        if ($rc -in @(5, 86, 1272, 1326, 1331, 1909)) {
             $authErrDetected = $true
         }
     }
 
     if ($authErrDetected) {
         $sidHint = "기본 공용 암호 3종 인증 실패 (Win32=$lastRc) -> 메인 PC 암호 변경 또는 동일 Windows SID 충돌 의심"
+        if ($lastRc -eq 1272) {
+            $sidHint = "Windows 11 24H2 게스트 공유 보안 차단 (Win32=1272) -> 메인 PC 계정/암호 입력 필요"
+        }
         if (-not [string]::IsNullOrWhiteSpace($CustomUser)) {
             $sidHint = "입력한 계정($CustomUser)도 로그온 거부됨 (Win32=$lastRc) -> 메인 PC와 Windows Machine SID 동일 충돌 가능성 높음!"
         }
@@ -1743,11 +1830,15 @@ function Connect-SharedHostSmart {
         }
     }
 
+    $connErrReason = "공유 호스트($HostName) SMB 연결 실패 (Win32 Error=$lastRc)"
+    if ($lastRc -eq 384) {
+        $connErrReason = "공유 호스트($HostName)가 구형 SMB1 프로토콜만 지원하여 연결할 수 없습니다 (Win32=384)"
+    }
     return [pscustomobject]@{
         Success    = $false
         Status     = 'ConnectError'
         Win32Error = $lastRc
-        Reason     = "공유 호스트($HostName) SMB 연결 실패 (Win32 Error=$lastRc)"
+        Reason     = $connErrReason
         UsedUser   = $null
         UsedPass   = $null
     }
@@ -2205,64 +2296,124 @@ function Resolve-WsdPrinterInfo {
 function Get-PnpUtilDriverBlocks {
     $blocks = [System.Collections.Generic.List[hashtable]]::new()
     $res = Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/enum-drivers')
-    if ($res.ExitCode -ne 0 -or $res.Lines.Count -eq 0) { return @() }
-
-    $rawBlock = [System.Collections.Generic.List[object]]::new()
-
-    $flushBlock = {
-        param($pairs, $outList)
-        if ($pairs.Count -eq 0) { return }
-        $h = @{}
-        foreach ($pair in $pairs) {
-            $k = $pair.Key
-            $v = $pair.Val
-            if ($k -match '^(Published Name|게시된 이름)$' -or ($v -match '(?i)^oem\d+\.inf$' -and -not $h.ContainsKey('PublishedName'))) {
-                $h['PublishedName'] = $v
-            }
-            elseif ($k -match '^(Original Name|원래 이름)$' -or ($v -match '(?i)\.inf$' -and $v -notmatch '(?i)^oem\d+\.inf$' -and -not $h.ContainsKey('OriginalName'))) {
-                $h['OriginalName'] = $v
-            }
-            elseif ($k -match '^(Provider Name|공급자 이름)$') {
-                $h['ProviderName'] = $v
-            }
-            elseif ($k -match '^(Class Name|클래스 이름)$') {
-                $h['ClassName'] = $v
-            }
-            elseif ($k -match '^(Class GUID|클래스 GUID)$' -or ($v -match '^\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}$')) {
-                $h['ClassGuid'] = $v.ToLowerInvariant()
-            }
-            elseif ($k -match '^(Driver Version|드라이버 버전)$' -or ($v -match '^\d{2}/\d{2}/\d{4}\s+[\d\.]+$' -and -not $h.ContainsKey('DriverVersion'))) {
-                $h['DriverVersion'] = $v
-            }
-        }
-        if (-not $h.ContainsKey('ProviderName') -and $pairs.Count -ge 3 -and $h.ContainsKey('PublishedName')) {
-            $candProv = [string]$pairs[2].Val
-            if ($candProv -notmatch '^\{[0-9a-fA-F-]{36}\}$' -and $candProv -notmatch '(?i)\.inf$') {
-                $h['ProviderName'] = $candProv
-            }
-        }
-        if (-not $h.ContainsKey('ClassName') -and $pairs.Count -ge 4 -and $h.ContainsKey('PublishedName')) {
-            $candCls = [string]$pairs[3].Val
-            if ($candCls -notmatch '^\{[0-9a-fA-F-]{36}\}$') {
-                $h['ClassName'] = $candCls
-            }
-        }
-        if ($h.ContainsKey('PublishedName')) { $outList.Add($h) }
+    if ($res.ExitCode -ne 0 -or $res.Lines.Count -eq 0) {
+        # 구형 Windows 10 초기 빌드(1507/1511) 및 Win 7 호환 레거시 pnputil -e 시도
+        $res = Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('-e')
     }
 
-    foreach ($line in $res.Lines) {
-        $t = $line.Trim()
-        if ([string]::IsNullOrWhiteSpace($t)) {
-            & $flushBlock $rawBlock $blocks
-            $rawBlock.Clear()
-            continue
+    if ($res.ExitCode -eq 0 -and $res.Lines.Count -gt 0) {
+        $rawBlock = [System.Collections.Generic.List[object]]::new()
+
+        $flushBlock = {
+            param($pairs, $outList)
+            if ($pairs.Count -eq 0) { return }
+            $h = @{}
+            foreach ($pair in $pairs) {
+                $k = $pair.Key
+                $v = $pair.Val
+                if ($k -match '^(Published Name|게시된 이름)$' -or ($v -match '(?i)^oem\d+\.inf$' -and -not $h.ContainsKey('PublishedName'))) {
+                    $h['PublishedName'] = $v
+                }
+                elseif ($k -match '^(Original Name|원래 이름)$' -or ($v -match '(?i)\.inf$' -and $v -notmatch '(?i)^oem\d+\.inf$' -and -not $h.ContainsKey('OriginalName'))) {
+                    $h['OriginalName'] = $v
+                }
+                elseif ($k -match '^(Provider Name|공급자 이름|드라이버 패키지 공급자)$') {
+                    $h['ProviderName'] = $v
+                }
+                elseif ($k -match '^(Class Name|클래스 이름|클래스)$') {
+                    $h['ClassName'] = $v
+                }
+                elseif ($k -match '^(Class GUID|클래스 GUID)$' -or ($v -match '^\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}$')) {
+                    $h['ClassGuid'] = $v.ToLowerInvariant()
+                }
+                elseif ($k -match '^(Driver Version|드라이버 버전|드라이버 날짜 및 버전)$' -or ($v -match '^\d{2}/\d{2}/\d{4}\s+[\d\.]+$' -and -not $h.ContainsKey('DriverVersion'))) {
+                    $h['DriverVersion'] = $v
+                }
+            }
+            if (-not $h.ContainsKey('ProviderName') -and $pairs.Count -ge 3 -and $h.ContainsKey('PublishedName')) {
+                $candProv = [string]$pairs[2].Val
+                if ($candProv -notmatch '^\{[0-9a-fA-F-]{36}\}$' -and $candProv -notmatch '(?i)\.inf$') {
+                    $h['ProviderName'] = $candProv
+                }
+            }
+            if (-not $h.ContainsKey('ClassName') -and $pairs.Count -ge 4 -and $h.ContainsKey('PublishedName')) {
+                $candCls = [string]$pairs[3].Val
+                if ($candCls -notmatch '^\{[0-9a-fA-F-]{36}\}$') {
+                    $h['ClassName'] = $candCls
+                }
+            }
+            if ($h.ContainsKey('PublishedName')) { $outList.Add($h) }
         }
-        $m = [regex]::Match($t, '^([^:]+?)\s*:\s*(.+)$')
-        if ($m.Success) {
-            $rawBlock.Add([pscustomobject]@{ Key = $m.Groups[1].Value.Trim(); Val = $m.Groups[2].Value.Trim() })
+
+        foreach ($line in $res.Lines) {
+            $t = $line.Trim()
+            if ([string]::IsNullOrWhiteSpace($t)) {
+                & $flushBlock $rawBlock $blocks
+                $rawBlock.Clear()
+                continue
+            }
+            $m = [regex]::Match($t, '^([^:]+?)\s*:\s*(.+)$')
+            if ($m.Success) {
+                $rawBlock.Add([pscustomobject]@{ Key = $m.Groups[1].Value.Trim(); Val = $m.Groups[2].Value.Trim() })
+            }
+        }
+        & $flushBlock $rawBlock $blocks
+    }
+
+    # 레거시 pnputil -e (ClassGuid/OriginalName 미출력) 또는 pnputil 손상 시 Windows\INF\oem*.inf 헤더로 직접 보강/생성
+    $winInfDir = Join-Path $env:SystemRoot 'INF'
+    if (Test-Path -LiteralPath $winInfDir) {
+        $byPub = @{}
+        foreach ($b in $blocks) {
+            if ($b['PublishedName']) { $byPub[([string]$b['PublishedName']).ToLowerInvariant()] = $b }
+        }
+        $needInfScan = ($blocks.Count -eq 0)
+        if (-not $needInfScan) {
+            foreach ($b in $blocks) {
+                if (-not $b.ContainsKey('ClassGuid')) { $needInfScan = $true; break }
+            }
+        }
+        if ($needInfScan) {
+            foreach ($oemFile in @(Get-ChildItem -LiteralPath $winInfDir -Filter 'oem*.inf' -File -ErrorAction SilentlyContinue)) {
+                $pubKey = $oemFile.Name.ToLowerInvariant()
+                $targetH = $null
+                if ($byPub.ContainsKey($pubKey)) {
+                    $targetH = $byPub[$pubKey]
+                    if ($targetH.ContainsKey('ClassGuid') -and $targetH.ContainsKey('ProviderName')) { continue }
+                } else {
+                    $targetH = @{ PublishedName = $oemFile.Name }
+                }
+                try {
+                    $headLines = @(Get-Content -LiteralPath $oemFile.FullName -TotalCount 80 -ErrorAction Stop)
+                    $headTxt   = $headLines -join "`r`n"
+                    if (-not $targetH.ContainsKey('ClassGuid')) {
+                        $gm = [regex]::Match($headTxt, '(?im)^\s*ClassGUID\s*=\s*(\{[0-9a-fA-F\-]{36}\})')
+                        if ($gm.Success) { $targetH['ClassGuid'] = $gm.Groups[1].Value.ToLowerInvariant() }
+                    }
+                    if (-not $targetH.ContainsKey('ProviderName')) {
+                        $pm = [regex]::Match($headTxt, '(?im)^\s*Provider\s*=\s*([^;\r\n]+)')
+                        if ($pm.Success) { $targetH['ProviderName'] = $pm.Groups[1].Value.Trim().Trim('"') }
+                    }
+                    if (-not $targetH.ContainsKey('DriverVersion')) {
+                        $vm = [regex]::Match($headTxt, '(?im)^\s*DriverVer\s*=\s*([^;\r\n]+)')
+                        if ($vm.Success) { $targetH['DriverVersion'] = $vm.Groups[1].Value.Trim() }
+                    }
+                    if (-not $targetH.ContainsKey('OriginalName')) {
+                        $cm = [regex]::Match($headTxt, '(?im)^\s*CatalogFile(?:\.nt[a-z0-9]*)?\s*=\s*([^\s;\r\n]+)')
+                        if ($cm.Success) {
+                            $catBase = [IO.Path]::GetFileNameWithoutExtension($cm.Groups[1].Value.Trim())
+                            if (-not [string]::IsNullOrWhiteSpace($catBase)) { $targetH['OriginalName'] = "$catBase.inf" }
+                        }
+                    }
+                } catch {}
+                if (-not $byPub.ContainsKey($pubKey)) {
+                    $byPub[$pubKey] = $targetH
+                    $blocks.Add($targetH)
+                }
+            }
         }
     }
-    & $flushBlock $rawBlock $blocks
+
     return @($blocks.ToArray())
 }
 

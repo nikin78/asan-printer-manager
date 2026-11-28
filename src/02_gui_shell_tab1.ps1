@@ -683,6 +683,9 @@ function Sync-AllUiButtonStates {
                 else { $rLoad = '서버에 저장된 백업 폴더가 없습니다.' }
             }
             Set-ButtonTipState -Button $script:Tab2Ui.BtnLoadServer -Enabled ((-not $busy) -and $hasServer) -DisabledReason $rLoad
+            if ($script:Tab2Ui.BtnSearchServer) {
+                Set-ButtonTipState -Button $script:Tab2Ui.BtnSearchServer -Enabled ((-not $busy) -and $hasServer) -DisabledReason $rLoad
+            }
         }
         if ($script:Tab2Ui.BtnRunDeferred) {
             $rDef = $busyMsg
@@ -2300,7 +2303,16 @@ function Render-Tab1PrinterGrid {
         if ($script:Tab1Ui.HasScannedOnce) {
             $validTotal = $cntHealthy + $cntWsd + $cntSpecial + $cntWarn
             $needSrvAuth = ($script:AppState.NetworkInfo -and $script:AppState.NetworkInfo.ServerAuthRequired)
-            if ($script:Tab1Ui.LastScanOffline) {
+            if ($validTotal -eq 0) {
+                $script:Tab1Ui.PnlBanner.BackColor       = $script:Theme.AsanOrangeTint
+                $script:Tab1Ui.PnlBannerAccent.BackColor = $script:Theme.AsanOrange
+                $script:Tab1Ui.LblBanner.ForeColor       = $script:Theme.AsanOrangeText
+                if ($script:AppState.IsWin11) {
+                    $script:Tab1Ui.LblBanner.Text        = "이 PC에 백업할 프린터가 없습니다(0대). 새 PC에 프린터를 복원하려면 위 '2. 새 PC 복원' 탭을 눌러 주세요."
+                } else {
+                    $script:Tab1Ui.LblBanner.Text        = '이 PC에 백업할 일반·특수 프린터가 없습니다(0대). 가상 프린터만 설치되어 있는지 확인해 주세요.'
+                }
+            } elseif ($script:Tab1Ui.LastScanOffline) {
                 $script:Tab1Ui.PnlBanner.BackColor       = $script:Theme.AsanOrangeTint
                 $script:Tab1Ui.PnlBannerAccent.BackColor = $script:Theme.AsanOrange
                 $script:Tab1Ui.LblBanner.ForeColor       = $script:Theme.AsanOrangeText
@@ -2536,6 +2548,18 @@ function Start-Tab1BackupExecution {
     if ($net) {
         $pcIp      = [string]$net.IPAddress
         $prtBakDir = $net.PrtBakDir
+    }
+
+    if ($script:Tab1Ui.HasScannedOnce) {
+        $validCntNow = (@($script:AppState.DiagnosedPrinters | Where-Object { $_.StatusCode -notin @('ExcludedVirtual', 'ExcludedNoDriver') })).Count
+        $scanSelNow  = 0
+        if ($script:AppState.ScannerInventory) {
+            $scanSelNow = (@(@($script:AppState.ScannerInventory.AutoScanners) + @($script:AppState.ScannerInventory.UnclassifiedScanners) | Where-Object { $_.Selected })).Count
+        }
+        if ($validCntNow -eq 0 -and $scanSelNow -eq 0) {
+            $emptyWarn = Show-AsanMessageBox -Text "현재 이 PC에서 백업할 프린터와 스캐너 드라이버가 0개입니다.`r`n새 PC에서 복원을 진행 중이라면 '2. 새 PC 복원' 탭을 이용해 주세요.`r`n`r`n그래도 빈 백업을 저장하시겠습니까?" -Caption '백업 대상 0대 확인' -Buttons 'YesNo' -Icon 'Warning'
+            if ($emptyWarn -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+        }
     }
 
     if (-not $OfflineZipMode) {

@@ -411,6 +411,16 @@ function Score-DriverDisplayName {
     return $dScore
 }
 
+function Install-DriverInfSafe {
+    param([string]$InfPath)
+    if ([string]::IsNullOrWhiteSpace($InfPath) -or (-not (Test-Path -LiteralPath $InfPath))) { return $false }
+    $r1 = Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/add-driver', $InfPath, '/install')
+    if ($r1.ExitCode -eq 0 -or $r1.ExitCode -eq 259 -or $r1.ExitCode -eq 3010) { return $true }
+    # 구형 Windows 10 초기 빌드(1507/1511) 레거시 문법 폴백
+    $r2 = Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('-i', '-a', $InfPath)
+    return ($r2.ExitCode -eq 0 -or $r2.ExitCode -eq 259 -or $r2.ExitCode -eq 3010)
+}
+
 function Find-AndInstallDriverFromIndex {
     param(
         [object[]]$InfIndex,
@@ -457,23 +467,26 @@ function Find-AndInstallDriverFromIndex {
     }
 
     foreach ($cand in ($candidates | Sort-Object Score -Descending | Select-Object -First 8)) {
-        $rc = (Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/add-driver', $cand.Path, '/install')).ExitCode
-        if ($rc -eq 0 -or $rc -eq 259 -or $rc -eq 3010) {
-            $tryNames = [System.Collections.Generic.List[string]]::new()
-            if (-not [string]::IsNullOrWhiteSpace($cand.BestDisplay)) { $tryNames.Add($cand.BestDisplay) }
-            if (-not $AllowVendorUniversal -and -not $isWantedInboxGen -and -not [string]::IsNullOrWhiteSpace($WantedDriverName) -and -not $tryNames.Contains($WantedDriverName)) {
-                $tryNames.Add($WantedDriverName)
-            }
+        $pnpOk = Install-DriverInfSafe -InfPath $cand.Path
+        $tryNames = [System.Collections.Generic.List[string]]::new()
+        if (-not [string]::IsNullOrWhiteSpace($cand.BestDisplay)) { $tryNames.Add($cand.BestDisplay) }
+        if (-not $AllowVendorUniversal -and -not $isWantedInboxGen -and -not [string]::IsNullOrWhiteSpace($WantedDriverName) -and -not $tryNames.Contains($WantedDriverName)) {
+            $tryNames.Add($WantedDriverName)
+        }
 
-            foreach ($dn in $tryNames) {
+        foreach ($dn in $tryNames) {
+            if ($pnpOk) {
                 try {
                     Add-PrinterDriver -Name $dn -ErrorAction Stop
                 } catch {
                     [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/ia', '/q', '/m', $dn, '/f', $cand.Path))
                 }
-                $verify = @(Get-PrinterDriverSafe | Where-Object { $_.Name -eq $dn }) | Select-Object -First 1
-                if ($verify) { return [string]$verify.Name }
+            } else {
+                # PnP DB 손상 환경에서도 PrintUIEntry /ia /f 로 스풀러 직접 드라이버 설치 시도
+                [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/ia', '/q', '/m', $dn, '/f', $cand.Path))
             }
+            $verify = @(Get-PrinterDriverSafe | Where-Object { $_.Name -eq $dn }) | Select-Object -First 1
+            if ($verify) { return [string]$verify.Name }
         }
     }
     return $null
@@ -632,7 +645,7 @@ function Resolve-BestDriverForPrinter {
         if (-not $samUpd -and $prtIndex) {
             $us003 = @($prtIndex | Where-Object { $_.FileName -match '(?i)^us003\.inf$' }) | Select-Object -First 1
             if ($us003) {
-                [void](Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/add-driver', $us003.Path, '/install'))
+                [void](Install-DriverInfSafe -InfPath $us003.Path)
                 try {
                     Add-PrinterDriver -Name 'Samsung Universal Print Driver 3' -ErrorAction Stop
                 } catch {
@@ -664,6 +677,25 @@ function Resolve-BestDriverForPrinter {
 # ============================================================================
 # Inbox INF 제외 + 미매칭 서드파티 한정 정밀 oem*.inf 추출
 # ============================================================================
+function Export-DriverPackageFallback {
+    param(
+        [string]$SourceRepoDir,
+        [string]$TargetSubDir
+    )
+    if ([string]::IsNullOrWhiteSpace($SourceRepoDir) -or (-not (Test-Path -LiteralPath $SourceRepoDir))) { return $false }
+    try {
+        if (-not (Test-Path -LiteralPath $TargetSubDir)) {
+            New-Item -ItemType Directory -Path $TargetSubDir -Force | Out-Null
+        }
+        $rc = (Invoke-NativeCommand -FilePath 'robocopy.exe' -Arguments @($SourceRepoDir, $TargetSubDir, '/E', '/R:1', '/W:1')).ExitCode
+        if ($rc -lt 8) {
+            $hasInf = (@(Get-ChildItem -LiteralPath $TargetSubDir -Filter '*.inf' -File -ErrorAction SilentlyContinue)).Count -gt 0
+            return $hasInf
+        }
+    } catch {}
+    return $false
+}
+
 function Export-PreciseThirdPartyDrivers {
     param(
         [string[]]$ActiveDriverNames,
@@ -676,13 +708,18 @@ function Export-PreciseThirdPartyDrivers {
         New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
     }
 
-    $toExport = [System.Collections.Generic.List[string]]::new()
+    $toExport     = [System.Collections.Generic.List[string]]::new()
+    $directPkgMap = @{}
     foreach ($p in @($ExplicitPublishedNames)) {
         if (-not [string]::IsNullOrWhiteSpace($p) -and -not $toExport.Contains($p)) { $toExport.Add($p) }
     }
 
     $blocks      = @(Get-PnpUtilDriverBlocks)
-    $classBlocks = @($blocks | Where-Object { (-not $ClassGuidFilters) -or ($ClassGuidFilters.Count -eq 0) -or ($ClassGuidFilters -contains $_.ClassGuid) })
+    $classBlocks = @($blocks | Where-Object { (-not $ClassGuidFilters) -or ($ClassGuidFilters.Count -eq 0) -or ($ClassGuidFilters -contains $_['ClassGuid']) })
+    $blockByPub  = @{}
+    foreach ($cb in $blocks) {
+        if ($cb['PublishedName']) { $blockByPub[([string]$cb['PublishedName']).ToLowerInvariant()] = $cb }
+    }
 
     $unmatchedThirdParty = [System.Collections.Generic.List[string]]::new()
     if ($ActiveDriverNames -and $ActiveDriverNames.Count -gt 0) {
@@ -709,7 +746,8 @@ function Export-PreciseThirdPartyDrivers {
             $isInboxInf  = $false
 
             if ($drvMap.ContainsKey($dName) -and -not [string]::IsNullOrWhiteSpace([string]$drvMap[$dName].InfPath)) {
-                $infFileName = [IO.Path]::GetFileName([string]$drvMap[$dName].InfPath)
+                $fullInfPath = [string]$drvMap[$dName].InfPath
+                $infFileName = [IO.Path]::GetFileName($fullInfPath)
                 if ($infFileName -match $global:AsanCtx.InboxInfNameRegex) {
                     $isInboxInf = $true
                 } else {
@@ -718,8 +756,21 @@ function Export-PreciseThirdPartyDrivers {
                         $orig = [string]$b['OriginalName']
                         if (($orig -ieq $infFileName) -or ($pub -ieq $infFileName)) {
                             if ($pub -and -not $toExport.Contains($pub)) { $toExport.Add($pub) }
+                            if ($pub -and (Test-Path -LiteralPath $fullInfPath)) {
+                                $directPkgMap[$pub.ToLowerInvariant()] = [IO.Path]::GetDirectoryName($fullInfPath)
+                            }
                             $matchedThis = $true
                         }
+                    }
+                    # pnputil 매칭 실패(구형 Win10 1507/1511 또는 PnP DB 손상) 시에도 스풀러 레지스트리 InfPath 패키지 직접 보존
+                    if ((-not $matchedThis) -and ($fullInfPath -match '(?i)\\DriverStore\\FileRepository\\') -and (Test-Path -LiteralPath $fullInfPath)) {
+                        $pkgDir = [IO.Path]::GetDirectoryName($fullInfPath)
+                        $pkgKey = 'REPO:' + ([IO.Path]::GetFileName($pkgDir))
+                        if (-not $toExport.Contains($pkgKey)) {
+                            $toExport.Add($pkgKey)
+                            $directPkgMap[$pkgKey.ToLowerInvariant()] = $pkgDir
+                        }
+                        $matchedThis = $true
                     }
                 }
             }
@@ -753,12 +804,41 @@ function Export-PreciseThirdPartyDrivers {
         }
     }
 
+    $repoRoot      = Join-Path $env:SystemRoot 'System32\DriverStore\FileRepository'
     $exportedCount = 0
     foreach ($oemInf in $toExport) {
+        if ($oemInf.StartsWith('REPO:')) {
+            $pkgFolderName = $oemInf.Substring(5)
+            $srcRepoDir    = $directPkgMap[$oemInf.ToLowerInvariant()]
+            $subDir        = Join-Path $DestinationDir (Get-SafeFileName -Text $pkgFolderName)
+            if (Export-DriverPackageFallback -SourceRepoDir $srcRepoDir -TargetSubDir $subDir) {
+                $exportedCount++
+            }
+            continue
+        }
+
         $subDir = Join-Path $DestinationDir ([IO.Path]::GetFileNameWithoutExtension($oemInf))
         if (-not (Test-Path -LiteralPath $subDir)) { New-Item -ItemType Directory -Path $subDir -Force | Out-Null }
         $r = Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/export-driver', $oemInf, $subDir)
-        if ($r.ExitCode -eq 0) { $exportedCount++ }
+        $hasExportedInf = ($r.ExitCode -eq 0) -and ((@(Get-ChildItem -LiteralPath $subDir -Filter '*.inf' -File -ErrorAction SilentlyContinue)).Count -gt 0)
+        if ($hasExportedInf) {
+            $exportedCount++
+            continue
+        }
+
+        # pnputil /export-driver 미지원(Win10 1507/1511) 또는 서비스 손상 시 DriverStore\FileRepository 직접 복사 폴백
+        $fbDir = $directPkgMap[$oemInf.ToLowerInvariant()]
+        if (-not $fbDir -and (Test-Path -LiteralPath $repoRoot) -and $blockByPub.ContainsKey($oemInf.ToLowerInvariant())) {
+            $origInf = [string]$blockByPub[$oemInf.ToLowerInvariant()]['OriginalName']
+            if (-not [string]::IsNullOrWhiteSpace($origInf)) {
+                $baseOrig = [IO.Path]::GetFileNameWithoutExtension($origInf)
+                $candRepo = @(Get-ChildItem -LiteralPath $repoRoot -Directory -Filter "$baseOrig.inf_*" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending) | Select-Object -First 1
+                if ($candRepo) { $fbDir = $candRepo.FullName }
+            }
+        }
+        if ($fbDir -and (Export-DriverPackageFallback -SourceRepoDir $fbDir -TargetSubDir $subDir)) {
+            $exportedCount++
+        }
     }
     return $exportedCount
 }
