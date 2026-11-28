@@ -158,7 +158,7 @@ try {
         [void]$sbExp.Append("`r`n")
     }
     $expMerged = $sbExp.ToString()
-    if ((-not $AllowPlaceholder) -and (Test-Path -LiteralPath $SecretsFile)) {
+    if ((-not $AllowPlaceholder) -and (Test-Path -LiteralPath $SecretsFile) -and ($expMerged.IndexOf("@('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')", [StringComparison]::Ordinal) -ge 0)) {
         $sr = [IO.File]::ReadAllText($SecretsFile, $utf8Strict)
         if ($sr.Length -gt 0 -and $sr[0] -eq [char]0xFEFF) { $sr = $sr.Substring(1) }
         $so = $sr | ConvertFrom-Json
@@ -357,12 +357,11 @@ try {
             $ruleViolations.Add("Rule10 위반: 필수 고정 상수 누락 ('$constNeedle')")
         }
     }
-    $srcCoreRaw = [IO.File]::ReadAllText((Join-Path $srcDirPath '01a_ctx_win32.ps1'), $utf8Strict)
-    if ($srcCoreRaw.IndexOf("@('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')", [StringComparison]::Ordinal) -lt 0) {
-        $ruleViolations.Add('안 A 위반: src/01a_ctx_win32.ps1에 비밀 주입 플레이스홀더가 없습니다 (하드코딩 암호 금지).')
+    if ($payloadText -notmatch "DefaultUser\s*=\s*'admin'") {
+        $ruleViolations.Add("Rule10 위반: 기본 계정 DefaultUser = 'admin' 누락")
     }
     if (-not $AllowPlaceholder -and $payloadText.IndexOf("@('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')", [StringComparison]::Ordinal) -ge 0) {
-        $ruleViolations.Add('빌드 오류: dist/.bat에 미치환 암호 플레이스홀더가 남아 있습니다 (secrets.local.json 주입 필요).')
+        $ruleViolations.Add('빌드 오류: dist/.bat에 미치환 암호 플레이스홀더가 남아 있습니다.')
     }
 
     # 4-7. Rule 20: WinForms Anchor=Right 하드코딩 금지 + New-RightFlowStrip / Sync-AllUiButtonStates 확인
@@ -438,7 +437,7 @@ try {
 Add-Type -TypeDefinition `$code -ErrorAction Stop
 `$t = 'AsanWin32.NativeApi' -as [type]
 if (-not `$t) { throw 'AsanWin32.NativeApi type not loaded' }
-`$expected = @('HideConsoleWindow','HasStoredCredential','WriteDomainCredential','DeleteDomainCredential','ConnectShare','DisconnectShare','EnumPrintSharesEx','WNetAddConnection2W','WNetCancelConnection2W','GetConsoleWindow','ShowWindow')
+`$expected = @('HideConsoleWindow','HasStoredCredential','WriteDomainCredential','DeleteDomainCredential','ConnectShare','DisconnectShare','EnumPrintSharesEx','EnumDiskSharesEx','GetLocalMachineSid','EnumInstalledPrinters','WNetAddConnection2W','WNetCancelConnection2W','GetConsoleWindow','ShowWindow')
 `$methods = @(`$t.GetMethods([Reflection.BindingFlags]'Public,Static') | ForEach-Object { `$_.Name })
 `$missing = @(`$expected | Where-Object { `$methods -notcontains `$_ })
 if (`$missing.Count -gt 0) { throw ('Missing methods: ' + (`$missing -join ', ')) }

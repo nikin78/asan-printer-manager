@@ -312,7 +312,7 @@ function Complete-Sip30mPostInstall {
     )
 
     Ensure-SpoolerRunning
-    $allPrts = @(Get-Printer -ErrorAction SilentlyContinue)
+    $allPrts = @(Get-PrinterSafe)
     $sipPrt  = $allPrts | Where-Object { $_.Name -match '(?i)SISS\s+HODOO\s+SIP-30|SIP-30\(Class\)' } | Select-Object -First 1
     if (-not $sipPrt) {
         $sipPrt = $allPrts | Where-Object { $_.Name -eq $DesiredPrinterName -or $_.Name -match '(?i)SIP-30|HODOO|SISS' -or $_.DriverName -match '(?i)SIP-30|HODOO|SISS' } | Select-Object -First 1
@@ -332,17 +332,27 @@ function Complete-Sip30mPostInstall {
     }
 
     $curName = [string]$sipPrt.Name
-    Set-Printer -InputObject $sipPrt -PortName $pRes.PortName -ErrorAction Stop
+    Set-PrinterPropsSafe -PrinterObj $sipPrt -PrinterName $curName -PortName $pRes.PortName
 
     if ($curName -ne $DesiredPrinterName) {
-        $dup = @(Get-Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $DesiredPrinterName }) | Select-Object -First 1
+        $dup = @(Get-PrinterSafe | Where-Object { $_.Name -eq $DesiredPrinterName }) | Select-Object -First 1
         if ($dup) {
-            Remove-Printer -InputObject $dup -ErrorAction SilentlyContinue
+            Remove-PrinterObjectSafe -PrinterObj $dup -PrinterName $DesiredPrinterName
         }
-        $refreshed = @(Get-Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $curName }) | Select-Object -First 1
+        $refreshed = @(Get-PrinterSafe | Where-Object { $_.Name -eq $curName }) | Select-Object -First 1
         if ($refreshed) {
-            Rename-Printer -InputObject $refreshed -NewName $DesiredPrinterName -ErrorAction Stop
-            $curName = $DesiredPrinterName
+            $renamedOk = $false
+            if (-not $refreshed._NativeFallback) {
+                try {
+                    Rename-Printer -InputObject $refreshed -NewName $DesiredPrinterName -ErrorAction Stop
+                    $renamedOk = $true
+                } catch {}
+            }
+            if (-not $renamedOk) {
+                $rnRes = Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Xs', '/n', $curName, 'PrinterName', $DesiredPrinterName)
+                if ($rnRes.ExitCode -eq 0) { $renamedOk = $true }
+            }
+            if ($renamedOk) { $curName = $DesiredPrinterName }
         }
     }
 
@@ -564,10 +574,10 @@ function Send-AsanBugReport {
     $safeIp    = Get-SafeFileName -Text $PcIp
     $reportId  = "${stamp}_${safeHost}_${safeIp}"
 
-    # 현장 환경 스냅샷 수집 (읽기 전용)
+    # 현장 환경 스냅샷 수집 (WMI 손상 환경에서도 동작하도록 네이티브 안전 래퍼 사용)
     $instPrts = @()
     try {
-        $instPrts = @(Get-CimInstance -ClassName Win32_Printer -ErrorAction SilentlyContinue | ForEach-Object {
+        $instPrts = @(Get-LocalPrintersSafe | ForEach-Object {
             [pscustomobject]@{
                 Name          = [string]$_.Name
                 DriverName    = [string]$_.DriverName
@@ -581,7 +591,7 @@ function Send-AsanBugReport {
 
     $tcpPorts = @()
     try {
-        $tcpPorts = @(Get-CimInstance -ClassName Win32_TCPIPPrinterPort -ErrorAction SilentlyContinue | ForEach-Object {
+        $tcpPorts = @(Get-LocalTcpPrinterPortsSafe | ForEach-Object {
             [pscustomobject]@{
                 Name        = [string]$_.Name
                 HostAddress = [string]$_.HostAddress
@@ -731,7 +741,7 @@ function Send-AsanBugReport {
 # ============================================================================
 function Get-InstalledPrintersVerifyInfo {
     Ensure-SpoolerRunning
-    $cimPrinters = @(Get-CimInstance -ClassName Win32_Printer -ErrorAction SilentlyContinue)
+    $cimPrinters = @(Get-LocalPrintersSafe)
     $tcpRegRoot  = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors\Standard TCP/IP Port\Ports'
     $prtRegRoot  = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Printers'
 

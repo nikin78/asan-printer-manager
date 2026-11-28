@@ -468,9 +468,11 @@ function Find-AndInstallDriverFromIndex {
             foreach ($dn in $tryNames) {
                 try {
                     Add-PrinterDriver -Name $dn -ErrorAction Stop
-                    $verify = @(Get-PrinterDriver -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $dn }) | Select-Object -First 1
-                    if ($verify) { return [string]$verify.Name }
-                } catch {}
+                } catch {
+                    [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/ia', '/q', '/m', $dn, '/f', $cand.Path))
+                }
+                $verify = @(Get-PrinterDriverSafe | Where-Object { $_.Name -eq $dn }) | Select-Object -First 1
+                if ($verify) { return [string]$verify.Name }
             }
         }
     }
@@ -532,7 +534,7 @@ function Resolve-BestDriverForPrinter {
 
     # [1-A단계] 이미 스풀러에 정상 등록된 원본 드라이버 유지 (MS 인박스 범용 제외)
     # 단, -PreferExportedFirst(ZT411 등)이고 복원 전 골든 이미지에 선설치된 드라이버라면 Exported(기존 PC) 우선 탐색
-    $installedAll = @(Get-PrinterDriver -ErrorAction SilentlyContinue)
+    $installedAll = @(Get-PrinterDriverSafe)
     if (-not $ForceUpgradeGeneric -and -not $isWantedInboxGen -and -not [string]::IsNullOrWhiteSpace($WantedDriverName)) {
         $exact = $installedAll | Where-Object { ($_.Name -eq $WantedDriverName -or (Normalize-Text $_.Name) -eq $wantedNorm) -and $_.Name -notmatch $global:AsanCtx.MicrosoftInboxGenericRegex } | Select-Object -First 1
         if ($exact) {
@@ -622,17 +624,21 @@ function Resolve-BestDriverForPrinter {
 
     # ==================== [PASS 3: 4단계 삼성 최후 폴백 (UPD 3)] ====================
     if ($isSamsung) {
-        $samUpd = @(Get-PrinterDriver -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)Samsung Universal Print Driver 3' }) | Select-Object -First 1
+        $samUpd = @(Get-PrinterDriverSafe | Where-Object { $_.Name -match '(?i)Samsung Universal Print Driver 3' }) | Select-Object -First 1
         if (-not $samUpd) {
             try { Add-PrinterDriver -Name 'Samsung Universal Print Driver 3' -ErrorAction Stop } catch {}
-            $samUpd = @(Get-PrinterDriver -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)Samsung Universal Print Driver 3' }) | Select-Object -First 1
+            $samUpd = @(Get-PrinterDriverSafe | Where-Object { $_.Name -match '(?i)Samsung Universal Print Driver 3' }) | Select-Object -First 1
         }
         if (-not $samUpd -and $prtIndex) {
             $us003 = @($prtIndex | Where-Object { $_.FileName -match '(?i)^us003\.inf$' }) | Select-Object -First 1
             if ($us003) {
                 [void](Invoke-NativeCommand -FilePath 'pnputil.exe' -Arguments @('/add-driver', $us003.Path, '/install'))
-                try { Add-PrinterDriver -Name 'Samsung Universal Print Driver 3' -ErrorAction Stop } catch {}
-                $samUpd = @(Get-PrinterDriver -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)Samsung Universal Print Driver 3' }) | Select-Object -First 1
+                try {
+                    Add-PrinterDriver -Name 'Samsung Universal Print Driver 3' -ErrorAction Stop
+                } catch {
+                    [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/ia', '/q', '/m', 'Samsung Universal Print Driver 3', '/f', $us003.Path))
+                }
+                $samUpd = @(Get-PrinterDriverSafe | Where-Object { $_.Name -match '(?i)Samsung Universal Print Driver 3' }) | Select-Object -First 1
             }
         }
         if ($samUpd) {
@@ -681,7 +687,7 @@ function Export-PreciseThirdPartyDrivers {
     $unmatchedThirdParty = [System.Collections.Generic.List[string]]::new()
     if ($ActiveDriverNames -and $ActiveDriverNames.Count -gt 0) {
         $drvMap = @{}
-        foreach ($d in @(Get-PrinterDriver -ErrorAction SilentlyContinue)) {
+        foreach ($d in @(Get-PrinterDriverSafe)) {
             $k      = [string]$d.Name
             $isX64  = ([string]$d.PrinterEnvironment -match '(?i)x64')
             $hasInf = (-not [string]::IsNullOrWhiteSpace([string]$d.InfPath))

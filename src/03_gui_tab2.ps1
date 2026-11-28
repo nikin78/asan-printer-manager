@@ -1452,7 +1452,7 @@ function Initialize-Tab2RestoreUi {
         $cur = $script:Tab2Ui.CurrentSpecInfo
         if (-not $cur) { return }
         $pName        = [string]$cur.Row.PrinterName
-        $installedPrt = @(Get-Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $pName }) | Select-Object -First 1
+        $installedPrt = @(Get-PrinterSafe | Where-Object { $_.Name -eq $pName }) | Select-Object -First 1
         if (-not $installedPrt) {
             [void](Show-AsanMessageBox -Text "'$pName' 프린터가 아직 이 PC에 설치되어 있지 않습니다.`r`n복원 또는 전용 설치를 먼저 완료한 뒤 속성을 열어 주세요." -Caption '프린터 미설치' -Buttons 'OK' -Icon 'Information')
             return

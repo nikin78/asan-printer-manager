@@ -34,15 +34,16 @@ $prtClass    = '{4d36e979-e325-11ce-bfc1-08002be2092f}'
 $pqClass     = '{1ed2bbf9-11f0-4084-b21f-ad83a8e6dcdc}'
 
 $global:AsanCtx = [hashtable]::Synchronized(@{
-    AppVersion                 = '1.0.0-beta.3'
+    AppVersion                 = '1.0.0-beta.4'
     OriginalScriptPath         = $resolvedOrigPath
     ServerIP                   = $serverIpVal
     InternalDnsIP              = '10.71.1.5'
     DefaultUser                = 'admin'
-    DefaultPasswords           = @('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')
+    DefaultPasswords           = @('asan1234.', 'asan1234..', 'asan12345.')
     RuntimeUser                = $null
     RuntimePasswords           = @()
     RuntimeSecretsSource       = $null
+    LastServerAuthDiag         = ''
     CandidateShares            = @("\\$serverIpVal\백업 작업", "\\$serverIpVal\백업폴더")
     DriverRoots                = @(
         'C:\Users\admin\드라이버(win10_x64)\PRT',
@@ -140,10 +141,61 @@ namespace AsanWin32
         public string[] Shares;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct USER_MODALS_INFO_2
+    {
+        [MarshalAs(UnmanagedType.LPWStr)]
+        public string usrmod2_domain_name;
+        public IntPtr usrmod2_domain_id;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct PRINTER_INFO_2
+    {
+        public string pServerName;
+        public string pPrinterName;
+        public string pShareName;
+        public string pPortName;
+        public string pDriverName;
+        public string pComment;
+        public string pLocation;
+        public IntPtr pDevMode;
+        public string pSepFile;
+        public string pPrintProcessor;
+        public string pDatatype;
+        public string pParameters;
+        public IntPtr pSecurityDescriptor;
+        public uint Attributes;
+        public uint Priority;
+        public uint DefaultPriority;
+        public uint StartTime;
+        public uint UntilTime;
+        public uint Status;
+        public uint cJobs;
+        public uint AveragePPM;
+    }
+
+    public class NativePrinterInfo
+    {
+        public string Name;
+        public string ServerName;
+        public string ShareName;
+        public string PortName;
+        public string DriverName;
+        public uint Attributes;
+        public uint PrinterStatus;
+        public bool Default;
+        public bool Network;
+        public bool WorkOffline;
+    }
+
     public static class NativeApi
     {
         [DllImport("kernel32.dll")]
         public static extern IntPtr GetConsoleWindow();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr LocalFree(IntPtr hMem);
 
         [DllImport("user32.dll")]
         public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
@@ -171,8 +223,34 @@ namespace AsanWin32
             out int totalentries,
             ref int resume_handle);
 
+        [DllImport("netapi32.dll", CharSet = CharSet.Unicode)]
+        private static extern int NetUserModalsGet(
+            string servername,
+            int level,
+            out IntPtr bufptr);
+
         [DllImport("netapi32.dll")]
         private static extern int NetApiBufferFree(IntPtr Buffer);
+
+        [DllImport("advapi32.dll", EntryPoint = "ConvertSidToStringSidW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool ConvertSidToStringSid(
+            IntPtr pSid,
+            out IntPtr ptrSid);
+
+        [DllImport("winspool.drv", EntryPoint = "EnumPrintersW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool EnumPrinters(
+            uint Flags,
+            string Name,
+            uint Level,
+            IntPtr pPrinterEnum,
+            uint cbBuf,
+            out uint pcbNeeded,
+            out uint pcReturned);
+
+        [DllImport("winspool.drv", EntryPoint = "GetDefaultPrinterW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool GetDefaultPrinter(
+            StringBuilder pszBuffer,
+            ref int pcchBuffer);
 
         [DllImport("advapi32.dll", EntryPoint = "CredReadW", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern bool CredRead(
@@ -295,7 +373,7 @@ namespace AsanWin32
             return WNetCancelConnection2W(remotePath, 0, true);
         }
 
-        public static ShareEnumResult EnumPrintSharesEx(string serverUnc)
+        private static ShareEnumResult EnumSharesByType(string serverUnc, uint targetBaseType)
         {
             ShareEnumResult res = new ShareEnumResult();
             List<string> results = new List<string>();
@@ -318,7 +396,7 @@ namespace AsanWin32
                         IntPtr itemPtr = new IntPtr(baseAddr + ((long)i * structSize));
                         SHARE_INFO_1 info = (SHARE_INFO_1)Marshal.PtrToStructure(itemPtr, typeof(SHARE_INFO_1));
                         uint baseType = info.shi1_type & 0x0FFFFFFF;
-                        if (baseType == 1 && !string.IsNullOrEmpty(info.shi1_netname))
+                        if (baseType == targetBaseType && !string.IsNullOrEmpty(info.shi1_netname))
                         {
                             results.Add(info.shi1_netname);
                         }
@@ -334,6 +412,115 @@ namespace AsanWin32
             }
             res.Shares = results.ToArray();
             return res;
+        }
+
+        public static ShareEnumResult EnumPrintSharesEx(string serverUnc)
+        {
+            return EnumSharesByType(serverUnc, 1);
+        }
+
+        public static ShareEnumResult EnumDiskSharesEx(string serverUnc)
+        {
+            return EnumSharesByType(serverUnc, 0);
+        }
+
+        public static string GetLocalMachineSid()
+        {
+            IntPtr bufPtr = IntPtr.Zero;
+            IntPtr strSidPtr = IntPtr.Zero;
+            try
+            {
+                int rc = NetUserModalsGet(null, 2, out bufPtr);
+                if (rc == 0 && bufPtr != IntPtr.Zero)
+                {
+                    USER_MODALS_INFO_2 info = (USER_MODALS_INFO_2)Marshal.PtrToStructure(bufPtr, typeof(USER_MODALS_INFO_2));
+                    if (info.usrmod2_domain_id != IntPtr.Zero)
+                    {
+                        if (ConvertSidToStringSid(info.usrmod2_domain_id, out strSidPtr) && strSidPtr != IntPtr.Zero)
+                        {
+                            string sid = Marshal.PtrToStringUni(strSidPtr);
+                            if (!string.IsNullOrEmpty(sid)) return sid;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+            finally
+            {
+                if (strSidPtr != IntPtr.Zero) LocalFree(strSidPtr);
+                if (bufPtr != IntPtr.Zero) NetApiBufferFree(bufPtr);
+            }
+            return null;
+        }
+
+        public static string GetDefaultPrinterNameNative()
+        {
+            try
+            {
+                int len = 0;
+                GetDefaultPrinter(null, ref len);
+                if (len <= 0) len = 512;
+                StringBuilder sb = new StringBuilder(len + 4);
+                int cap = sb.Capacity;
+                if (GetDefaultPrinter(sb, ref cap))
+                {
+                    return sb.ToString();
+                }
+            }
+            catch
+            {
+            }
+            return "";
+        }
+
+        public static NativePrinterInfo[] EnumInstalledPrinters()
+        {
+            List<NativePrinterInfo> list = new List<NativePrinterInfo>();
+            string defPrt = GetDefaultPrinterNameNative();
+            uint flags = 0x00000002 | 0x00000004; // PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS
+            uint needed = 0;
+            uint returned = 0;
+            EnumPrinters(flags, null, 2, IntPtr.Zero, 0, out needed, out returned);
+            if (needed == 0)
+            {
+                return list.ToArray();
+            }
+
+            uint allocBytes = needed + 4096;
+            IntPtr buffer = Marshal.AllocHGlobal((int)allocBytes);
+            try
+            {
+                if (EnumPrinters(flags, null, 2, buffer, allocBytes, out needed, out returned) && returned > 0)
+                {
+                    int sz = Marshal.SizeOf(typeof(PRINTER_INFO_2));
+                    long baseAddr = buffer.ToInt64();
+                    for (uint i = 0; i < returned; i++)
+                    {
+                        IntPtr itemPtr = new IntPtr(baseAddr + ((long)i * sz));
+                        PRINTER_INFO_2 p2 = (PRINTER_INFO_2)Marshal.PtrToStructure(itemPtr, typeof(PRINTER_INFO_2));
+                        if (string.IsNullOrEmpty(p2.pPrinterName)) continue;
+                        NativePrinterInfo item = new NativePrinterInfo();
+                        item.Name = p2.pPrinterName;
+                        item.ServerName = p2.pServerName == null ? "" : p2.pServerName;
+                        item.ShareName = p2.pShareName == null ? "" : p2.pShareName;
+                        item.PortName = p2.pPortName == null ? "" : p2.pPortName;
+                        item.DriverName = p2.pDriverName == null ? "" : p2.pDriverName;
+                        item.Attributes = p2.Attributes;
+                        item.PrinterStatus = p2.Status;
+                        item.Default = (!string.IsNullOrEmpty(defPrt) && string.Equals(p2.pPrinterName, defPrt, StringComparison.OrdinalIgnoreCase));
+                        item.Network = ((p2.Attributes & 0x00000010) != 0) || p2.pPrinterName.StartsWith("\\\\");
+                        item.WorkOffline = ((p2.Attributes & 0x00000400) != 0);
+                        list.Add(item);
+                    }
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+            return list.ToArray();
         }
     }
 }

@@ -649,7 +649,7 @@ function Sync-AllUiButtonStates {
         $r1 = $busyMsg
         if (-not $busy) {
             if ($net -and $net.Status -eq 'IntranetOnly' -and $net.ServerAuthRequired) {
-                $r1 = '백업 서버 로그인이 필요합니다. 상단 서버 로그인을 누르거나 실행 폴더에 secrets.local.json을 넣어 주세요.'
+                $r1 = '백업 서버 로그인이 필요합니다. 상단 서버 로그인을 눌러 계정을 확인해 주세요.'
             } elseif ($net -and $net.Status -eq 'IntranetOnly') {
                 $r1 = '사내망은 연결되었으나 백업 서버가 응답하지 않습니다. ZIP 파일로 저장을 이용해 주세요.'
             } else {
@@ -947,7 +947,9 @@ function Invoke-AsanAsyncTask {
                 }
             }
             catch {
-                $errDetail = $_.Exception.Message
+                $exType    = $_.Exception.GetType().Name
+                $hrHex     = ('0x{0:X8}' -f ($_.Exception.HResult -band 0xFFFFFFFF))
+                $errDetail = "$($_.Exception.Message) [$exType $hrHex]"
                 if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) {
                     $errDetail = "$errDetail (Line $($_.InvocationInfo.ScriptLineNumber))"
                 }
@@ -1434,7 +1436,7 @@ function Show-ServerLoginDialog {
     $txtPass.Font     = $script:FontBase
 
     $lblHint = New-Object System.Windows.Forms.Label
-    $lblHint.Text      = '안내: 실행 파일과 같은 폴더에 secrets.local.json을 두면 매번 입력하지 않아도 자동으로 연결됩니다.'
+    $lblHint.Text      = '안내: 기본 공용 암호 3종은 이미 내장되어 있습니다. 서버 암호가 변경된 경우에만 입력해 주세요.'
     $lblHint.Location  = New-Object System.Drawing.Point(20, 146)
     $lblHint.Size      = New-Object System.Drawing.Size(388, 34)
     $lblHint.Font      = $script:FontSmall
@@ -1550,14 +1552,8 @@ function Invoke-EnvironmentRefreshAsync {
     $work = {
         param($arg)
         Write-ProgressSafe -Percent 20 -Message '운영체제·Machine SID 및 WPP 정책 점검 중...'
-        $osObj = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
-        $osCap = 'Windows'
-        $build = 0
-        if ($osObj) {
-            $osCap = [string]$osObj.Caption
-            [void][int]::TryParse([string]$osObj.BuildNumber, [ref]$build)
-        }
-        $sid = Get-LocalMachineSID
+        $osInfo = Get-OsVersionInfoSafe
+        $sid    = Get-LocalMachineSID
 
         Write-ProgressSafe -Percent 55 -Message "아산병원 사내망(DNS $($global:AsanCtx.InternalDnsIP)) 및 백업 서버($($global:AsanCtx.ServerIP)) 연결 확인 중..."
         $net = Test-AsanNetworkAndServer
@@ -1570,8 +1566,8 @@ function Invoke-EnvironmentRefreshAsync {
 
         Write-ProgressSafe -Percent 100 -Message '환경 진단 완료'
         return [pscustomobject]@{
-            OsCaption     = $osCap
-            IsWin11       = ($build -ge 22000 -or $osCap -match 'Windows 11')
+            OsCaption     = $osInfo.Caption
+            IsWin11       = [bool]$osInfo.IsWin11
             LocalSid      = $sid
             NetworkInfo   = $net
             ServerBackups = $backups
@@ -1591,6 +1587,9 @@ function Invoke-EnvironmentRefreshAsync {
         $script:AppState.LocalSid      = $data.LocalSid
         $script:AppState.NetworkInfo   = $data.NetworkInfo
         $script:AppState.ServerBackups = @($data.ServerBackups)
+        if ($data.NetworkInfo -and $data.NetworkInfo.ServerAuthRequired -and -not [string]::IsNullOrWhiteSpace([string]$data.NetworkInfo.ServerAuthDiag)) {
+            Add-UiLog -Message "백업 서버 인증 진단: $($data.NetworkInfo.ServerAuthDiag)" -Level 'WARN'
+        }
 
         Update-HeaderAndWppUi
 

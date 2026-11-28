@@ -260,6 +260,8 @@ function Import-RuntimeSecretsIfPresent {
                 $origDir = [IO.Path]::GetDirectoryName($origPath)
                 if (-not [string]::IsNullOrWhiteSpace($origDir)) {
                     $candidates.Add((Join-Path $origDir 'secrets.local.json'))
+                    $candidates.Add((Join-Path $origDir 'secrets.local.json.txt'))
+                    $candidates.Add((Join-Path $origDir 'secrets.local.json.json'))
                 }
             } catch {}
         }
@@ -286,7 +288,13 @@ function Import-RuntimeSecretsIfPresent {
     }
 
     try {
-        $raw = [IO.File]::ReadAllText($foundPath, [Text.Encoding]::UTF8)
+        $raw = $null
+        try {
+            $utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
+            $raw = [IO.File]::ReadAllText($foundPath, $utf8Strict)
+        } catch {
+            $raw = [IO.File]::ReadAllText($foundPath, [Text.Encoding]::Default)
+        }
         if ($raw.Length -gt 0 -and $raw[0] -eq [char]0xFEFF) { $raw = $raw.Substring(1) }
         $obj = $raw | ConvertFrom-Json
 
@@ -380,7 +388,60 @@ function Ensure-SpoolerRunning {
     }
 }
 
+function Get-OsVersionInfoSafe {
+    $caption = ''
+    $build   = 0
+    try {
+        $cvKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+        if (Test-Path -LiteralPath $cvKey) {
+            $cv = Get-ItemProperty -LiteralPath $cvKey -ErrorAction SilentlyContinue
+            if ($cv) {
+                if ($cv.PSObject.Properties.Name -contains 'ProductName') {
+                    $caption = [string]$cv.ProductName
+                }
+                if ($cv.PSObject.Properties.Name -contains 'CurrentBuildNumber') {
+                    [void][int]::TryParse([string]$cv.CurrentBuildNumber, [ref]$build)
+                } elseif ($cv.PSObject.Properties.Name -contains 'CurrentBuild') {
+                    [void][int]::TryParse([string]$cv.CurrentBuild, [ref]$build)
+                }
+            }
+        }
+    } catch {}
+    if ($build -le 0) {
+        try { $build = [int][System.Environment]::OSVersion.Version.Build } catch {}
+    }
+    if ([string]::IsNullOrWhiteSpace($caption)) {
+        try {
+            $osObj = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
+            if ($osObj) {
+                $caption = [string]$osObj.Caption
+                if ($build -le 0) { [void][int]::TryParse([string]$osObj.BuildNumber, [ref]$build) }
+            }
+        } catch {}
+    }
+    if ([string]::IsNullOrWhiteSpace($caption)) { $caption = 'Windows' }
+    $caption = ($caption -replace '^Microsoft\s+', '').Trim()
+    # Windows 11에서도 CurrentVersion\ProductName 레지스트리가 'Windows 10 ...'으로 남는 OS 특성 보정
+    if ($build -ge 22000 -and $caption -match 'Windows 10') {
+        $caption = $caption -replace 'Windows 10', 'Windows 11'
+    }
+    return [pscustomobject]@{
+        Caption = $caption
+        Build   = $build
+        IsWin11 = ($build -ge 22000 -or $caption -match 'Windows 11')
+    }
+}
+
 function Get-LocalMachineSID {
+    # 1순위: WMI 무관 순수 Win32 NetUserModalsGet API (클래스 오류 0%, AD 도메인 가입 PC에서도 로컬 SAM SID 정확 반환)
+    try {
+        $nativeSid = [AsanWin32.NativeApi]::GetLocalMachineSid()
+        if (-not [string]::IsNullOrWhiteSpace($nativeSid) -and $nativeSid -match '^S-1-5-21-\d+-\d+-\d+$') {
+            return $nativeSid
+        }
+    } catch {}
+
+    # 2순위: WMI 폴백
     try {
         $adminAcct = @(Get-CimInstance -ClassName Win32_UserAccount -Filter "LocalAccount = True AND SID LIKE '%-500'" -ErrorAction SilentlyContinue) | Select-Object -First 1
         if ($adminAcct -and $adminAcct.SID -match '^S-1-5-21-\d+-\d+-\d+-500$') {
@@ -395,77 +456,460 @@ function Get-LocalMachineSID {
     return 'SID-조회불가'
 }
 
+# ============================================================================
+# WMI 클래스 손상 환경(잘못된 클래스입니다 / 0x80041010) 완전 대응 네이티브 프린터·포트·드라이버 조회기
+# ============================================================================
+function Get-LocalPrintersSafe {
+    $outList = [System.Collections.Generic.List[object]]::new()
+    $seen    = @{}
+
+    # 1순위: Win32 Spooler 네이티브 API (winspool.drv EnumPrintersW — WMI/CIM 클래스 불필요)
+    try {
+        $nativePrts = @([AsanWin32.NativeApi]::EnumInstalledPrinters())
+        foreach ($np in $nativePrts) {
+            if (-not $np -or [string]::IsNullOrWhiteSpace([string]$np.Name)) { continue }
+            $nm = [string]$np.Name
+            $k  = $nm.ToLowerInvariant()
+            if ($seen.ContainsKey($k)) { continue }
+            $seen[$k] = $true
+            $outList.Add([pscustomobject]@{
+                Name            = $nm
+                DriverName      = [string]$np.DriverName
+                PortName        = [string]$np.PortName
+                Default         = [bool]$np.Default
+                Network         = [bool]$np.Network
+                ServerName      = [string]$np.ServerName
+                ShareName       = [string]$np.ShareName
+                WorkOffline     = [bool]$np.WorkOffline
+                PrinterStatus   = [int]$np.PrinterStatus
+                Attributes      = [uint32]$np.Attributes
+                _NativeFallback = $true
+            })
+        }
+    } catch {}
+
+    # 2순위: Win32 EnumPrinters가 비었을 때만 WMI 폴백 (try/catch 완전 격리)
+    if ($outList.Count -eq 0) {
+        try {
+            foreach ($cp in @(Get-CimInstance -ClassName Win32_Printer -ErrorAction Stop)) {
+                if (-not $cp -or [string]::IsNullOrWhiteSpace([string]$cp.Name)) { continue }
+                $nm = [string]$cp.Name
+                $k  = $nm.ToLowerInvariant()
+                if ($seen.ContainsKey($k)) { continue }
+                $seen[$k] = $true
+                $pStat = 0
+                if ($null -ne $cp.PrinterStatus) { $pStat = [int]$cp.PrinterStatus }
+                $pAttr = [uint32]0
+                if ($null -ne $cp.Attributes) { $pAttr = [uint32]([int64]$cp.Attributes -band [int64]0xFFFFFFFF) }
+                $outList.Add([pscustomobject]@{
+                    Name            = $nm
+                    DriverName      = [string]$cp.DriverName
+                    PortName        = [string]$cp.PortName
+                    Default         = [bool]$cp.Default
+                    Network         = [bool]$cp.Network
+                    ServerName      = [string]$cp.ServerName
+                    ShareName       = [string]$cp.ShareName
+                    WorkOffline     = [bool]$cp.WorkOffline
+                    PrinterStatus   = $pStat
+                    Attributes      = $pAttr
+                    _NativeFallback = $true
+                })
+            }
+        } catch {}
+    }
+
+    # 3순위: 스풀러·WMI 모두 응답 불가 시 레지스트리 직접 폴백
+    if ($outList.Count -eq 0) {
+        $defPrtReg = ''
+        try {
+            $devRaw = [string](Get-ItemProperty -LiteralPath 'HKCU:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows' -Name 'Device' -ErrorAction SilentlyContinue).Device
+            if ($devRaw -match '^([^,]+)') { $defPrtReg = $matches[1].Trim() }
+        } catch {}
+        try {
+            $prtRegRoot = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Printers'
+            if (Test-Path -LiteralPath $prtRegRoot) {
+                foreach ($pk in @(Get-ChildItem -LiteralPath $prtRegRoot -ErrorAction SilentlyContinue)) {
+                    $nm = [string]$pk.PSChildName
+                    if ([string]::IsNullOrWhiteSpace($nm)) { continue }
+                    $k = $nm.ToLowerInvariant()
+                    if ($seen.ContainsKey($k)) { continue }
+                    $rp   = Get-ItemProperty -LiteralPath $pk.PSPath -ErrorAction SilentlyContinue
+                    $drv  = ''
+                    $port = ''
+                    $attr = [uint32]0
+                    if ($rp) {
+                        if ($rp.PSObject.Properties.Name -contains 'Printer Driver') { $drv = [string]$rp.'Printer Driver' }
+                        if ($rp.PSObject.Properties.Name -contains 'Port')           { $port = [string]$rp.Port }
+                        if ($rp.PSObject.Properties.Name -contains 'Attributes' -and $null -ne $rp.Attributes) {
+                            $attr = [uint32]([int64]$rp.Attributes -band [int64]0xFFFFFFFF)
+                        }
+                    }
+                    $seen[$k] = $true
+                    $outList.Add([pscustomobject]@{
+                        Name            = $nm
+                        DriverName      = $drv
+                        PortName        = $port
+                        Default         = ((-not [string]::IsNullOrWhiteSpace($defPrtReg)) -and ($nm -ieq $defPrtReg))
+                        Network         = $nm.StartsWith('\\')
+                        ServerName      = ''
+                        ShareName       = ''
+                        WorkOffline     = (($attr -band [uint32]0x00000400) -ne 0)
+                        PrinterStatus   = 0
+                        Attributes      = $attr
+                        _NativeFallback = $true
+                    })
+                }
+            }
+        } catch {}
+        try {
+            $connRegRoot = 'HKCU:\Printers\Connections'
+            if (Test-Path -LiteralPath $connRegRoot) {
+                foreach ($ck in @(Get-ChildItem -LiteralPath $connRegRoot -ErrorAction SilentlyContinue)) {
+                    # 레지스트리 키 이름: ,,Server,Share 형식 -> \\Server\Share 복원
+                    $rawKey = [string]$ck.PSChildName
+                    $uncPrt = ($rawKey -replace '^,+', '\\') -replace ',', '\'
+                    if (-not $uncPrt.StartsWith('\\')) { continue }
+                    $k = $uncPrt.ToLowerInvariant()
+                    if ($seen.ContainsKey($k)) { continue }
+                    $cpProps = Get-ItemProperty -LiteralPath $ck.PSPath -ErrorAction SilentlyContinue
+                    $srvN = ''
+                    if ($cpProps -and ($cpProps.PSObject.Properties.Name -contains 'Server')) { $srvN = [string]$cpProps.Server }
+                    $seen[$k] = $true
+                    $outList.Add([pscustomobject]@{
+                        Name            = $uncPrt
+                        DriverName      = ''
+                        PortName        = $uncPrt
+                        Default         = ((-not [string]::IsNullOrWhiteSpace($defPrtReg)) -and ($uncPrt -ieq $defPrtReg))
+                        Network         = $true
+                        ServerName      = $srvN
+                        ShareName       = ([IO.Path]::GetFileName($uncPrt))
+                        WorkOffline     = $false
+                        PrinterStatus   = 0
+                        Attributes      = [uint32]0x00000010
+                        _NativeFallback = $true
+                    })
+                }
+            }
+        } catch {}
+    }
+
+    return @($outList.ToArray())
+}
+
+function Get-LocalTcpPrinterPortsSafe {
+    $ports = [System.Collections.Generic.List[object]]::new()
+    $seen  = @{}
+
+    # 1순위: 레지스트리 직접 조회 (Win32_TCPIPPrinterPort WMI 클래스 손상 완전 우회)
+    try {
+        $tcpRegRoot = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors\Standard TCP/IP Port\Ports'
+        if (Test-Path -LiteralPath $tcpRegRoot) {
+            foreach ($pk in @(Get-ChildItem -LiteralPath $tcpRegRoot -ErrorAction SilentlyContinue)) {
+                $pName = [string]$pk.PSChildName
+                if ([string]::IsNullOrWhiteSpace($pName)) { continue }
+                $props = Get-ItemProperty -LiteralPath $pk.PSPath -ErrorAction SilentlyContinue
+                if (-not $props) { continue }
+
+                $hostAddr = ''
+                if ($props.PSObject.Properties.Name -contains 'HostName' -and -not [string]::IsNullOrWhiteSpace([string]$props.HostName)) {
+                    $hostAddr = [string]$props.HostName
+                } elseif ($props.PSObject.Properties.Name -contains 'IPAddress' -and -not [string]::IsNullOrWhiteSpace([string]$props.IPAddress)) {
+                    $hostAddr = [string]$props.IPAddress
+                }
+                if ([string]::IsNullOrWhiteSpace($hostAddr) -and (Test-IsUsableIPv4 -IpText $pName)) {
+                    $hostAddr = $pName
+                }
+
+                $proto = 1
+                if ($props.PSObject.Properties.Name -contains 'Protocol' -and $null -ne $props.Protocol) {
+                    $proto = [int]$props.Protocol
+                }
+                $portNum = [uint32]9100
+                if ($proto -eq 2) { $portNum = [uint32]515 }
+                if ($props.PSObject.Properties.Name -contains 'PortNumber' -and $null -ne $props.PortNumber -and [int64]$props.PortNumber -gt 0) {
+                    $portNum = [uint32]$props.PortNumber
+                }
+                $queueName = ''
+                if ($props.PSObject.Properties.Name -contains 'Queue') { $queueName = [string]$props.Queue }
+                $byteCnt = $false
+                if ($props.PSObject.Properties.Name -contains 'LPR Byte Counting' -and $null -ne $props.'LPR Byte Counting') {
+                    $byteCnt = ([int]$props.'LPR Byte Counting' -ne 0)
+                }
+                $snmpOn = $false
+                if ($props.PSObject.Properties.Name -contains 'SNMP Enabled' -and $null -ne $props.'SNMP Enabled') {
+                    $snmpOn = ([int]$props.'SNMP Enabled' -ne 0)
+                }
+
+                $seen[$pName.ToLowerInvariant()] = $true
+                $ports.Add([pscustomobject]@{
+                    Name        = $pName
+                    HostAddress = $hostAddr
+                    Protocol    = $proto
+                    PortNumber  = $portNum
+                    Queue       = $queueName
+                    ByteCount   = $byteCnt
+                    SNMPEnabled = $snmpOn
+                })
+            }
+        }
+    } catch {}
+
+    # 2순위: 레지스트리에 없는 항목 보충용 WMI 조회 (오류 무시)
+    try {
+        foreach ($tp in @(Get-CimInstance -ClassName Win32_TCPIPPrinterPort -ErrorAction SilentlyContinue)) {
+            if (-not $tp -or [string]::IsNullOrWhiteSpace([string]$tp.Name)) { continue }
+            $k = ([string]$tp.Name).ToLowerInvariant()
+            if ($seen.ContainsKey($k)) { continue }
+            $seen[$k] = $true
+            $ports.Add([pscustomobject]@{
+                Name        = [string]$tp.Name
+                HostAddress = [string]$tp.HostAddress
+                Protocol    = [int]$tp.Protocol
+                PortNumber  = [uint32]$tp.PortNumber
+                Queue       = [string]$tp.Queue
+                ByteCount   = [bool]$tp.ByteCount
+                SNMPEnabled = [bool]$tp.SNMPEnabled
+            })
+        }
+    } catch {}
+
+    return @($ports.ToArray())
+}
+
+function Get-PrinterSafe {
+    try {
+        $res = @(Get-Printer -ErrorAction Stop)
+        if ($res.Count -gt 0) { return $res }
+    } catch {}
+    return @(Get-LocalPrintersSafe)
+}
+
+function Get-PrinterPortSafe {
+    try {
+        $res = @(Get-PrinterPort -ErrorAction Stop)
+        if ($res.Count -gt 0) { return $res }
+    } catch {}
+
+    $list = [System.Collections.Generic.List[object]]::new()
+    $seen = @{}
+    foreach ($tp in @(Get-LocalTcpPrinterPortsSafe)) {
+        $k = ([string]$tp.Name).ToLowerInvariant()
+        if (-not $seen.ContainsKey($k)) {
+            $seen[$k] = $true
+            $list.Add([pscustomobject]@{ Name = [string]$tp.Name; PrinterHostAddress = [string]$tp.HostAddress })
+        }
+    }
+    try {
+        $monRoot = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors'
+        if (Test-Path -LiteralPath $monRoot) {
+            foreach ($mon in @(Get-ChildItem -LiteralPath $monRoot -ErrorAction SilentlyContinue)) {
+                $pSub = Join-Path $mon.PSPath 'Ports'
+                if (Test-Path -LiteralPath $pSub) {
+                    foreach ($pk in @(Get-ChildItem -LiteralPath $pSub -ErrorAction SilentlyContinue)) {
+                        $nm = [string]$pk.PSChildName
+                        if ([string]::IsNullOrWhiteSpace($nm)) { continue }
+                        $k = $nm.ToLowerInvariant()
+                        if (-not $seen.ContainsKey($k)) {
+                            $seen[$k] = $true
+                            $list.Add([pscustomobject]@{ Name = $nm; PrinterHostAddress = '' })
+                        }
+                    }
+                }
+            }
+        }
+    } catch {}
+    try {
+        $ntPortsKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Ports'
+        if (Test-Path -LiteralPath $ntPortsKey) {
+            $ntProps = Get-ItemProperty -LiteralPath $ntPortsKey -ErrorAction SilentlyContinue
+            if ($ntProps) {
+                foreach ($pr in $ntProps.PSObject.Properties) {
+                    if ($pr.Name -match '^PS(Path|ParentPath|ChildName|Drive|Provider)$') { continue }
+                    $nm = ([string]$pr.Name).TrimEnd(':')
+                    if ([string]::IsNullOrWhiteSpace($nm)) { continue }
+                    $k = $nm.ToLowerInvariant()
+                    if (-not $seen.ContainsKey($k)) {
+                        $seen[$k] = $true
+                        $list.Add([pscustomobject]@{ Name = [string]$pr.Name; PrinterHostAddress = '' })
+                    }
+                }
+            }
+        }
+    } catch {}
+    foreach ($lp in @(Get-LocalPrintersSafe)) {
+        foreach ($rawP in @(([string]$lp.PortName) -split ',')) {
+            $pn = $rawP.Trim()
+            if ([string]::IsNullOrWhiteSpace($pn)) { continue }
+            $k = $pn.ToLowerInvariant()
+            if (-not $seen.ContainsKey($k)) {
+                $seen[$k] = $true
+                $list.Add([pscustomobject]@{ Name = $pn; PrinterHostAddress = '' })
+            }
+        }
+    }
+    return @($list.ToArray())
+}
+
+function Get-PrinterDriverSafe {
+    try {
+        $res = @(Get-PrinterDriver -ErrorAction Stop)
+        if ($res.Count -gt 0) { return $res }
+    } catch {}
+
+    $list = [System.Collections.Generic.List[object]]::new()
+    $seen = @{}
+    foreach ($envPair in @(
+        @{ Key = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Environments\Windows x64\Drivers'; Env = 'Windows x64' },
+        @{ Key = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Environments\Windows NT x86\Drivers'; Env = 'Windows x86' }
+    )) {
+        try {
+            if (-not (Test-Path -LiteralPath $envPair.Key)) { continue }
+            foreach ($verSub in @(Get-ChildItem -LiteralPath $envPair.Key -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like 'Version-*' })) {
+                foreach ($dk in @(Get-ChildItem -LiteralPath $verSub.PSPath -ErrorAction SilentlyContinue)) {
+                    $dName = [string]$dk.PSChildName
+                    if ([string]::IsNullOrWhiteSpace($dName)) { continue }
+                    $uniqKey = "$($envPair.Env)|$($dName.ToLowerInvariant())"
+                    if ($seen.ContainsKey($uniqKey)) { continue }
+                    $seen[$uniqKey] = $true
+                    $dp  = Get-ItemProperty -LiteralPath $dk.PSPath -ErrorAction SilentlyContinue
+                    $inf = ''
+                    if ($dp -and ($dp.PSObject.Properties.Name -contains 'InfPath')) { $inf = [string]$dp.InfPath }
+                    $list.Add([pscustomobject]@{
+                        Name               = $dName
+                        InfPath            = $inf
+                        PrinterEnvironment = $envPair.Env
+                        _NativeFallback    = $true
+                    })
+                }
+            }
+        } catch {}
+    }
+    return @($list.ToArray())
+}
+
 function Get-ActiveNetworkInfo {
     $ip          = 'NO_IP'
     $gw          = $null
     $adapterName = ''
     $bestIfIdx   = -1
+    $dnsListOut  = @()
 
-    $excludeAliasRegex = '(?i)Loopback|Teredo|isatap|Bluetooth|TAP-|VPN'
-    $excludeDescRegex  = '(?i)Loopback|Bluetooth|TAP-Windows|Kernel Debug'
+    $excludeNameRegex = '(?i)^(Loopback|Teredo|isatap)|Bluetooth|TAP-Windows|Npcap Loopback'
+    $candidates       = [System.Collections.Generic.List[object]]::new()
 
-    $adapterMap = @{}
-    foreach ($na in @(Get-NetAdapter -ErrorAction SilentlyContinue)) {
-        $adapterMap[[int]$na.ifIndex] = $na
-    }
+    # 1순위: WMI/CIM(Get-NetAdapter/Get-NetIPConfiguration) 완전 배제 -> 순수 .NET NetworkInterface 직접 조회 (클래스 오류 0%)
+    try {
+        foreach ($nic in @([System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces())) {
+            if (-not $nic) { continue }
+            if ($nic.OperationalStatus -ne [System.Net.NetworkInformation.OperationalStatus]::Up) { continue }
+            if ($nic.NetworkInterfaceType -eq [System.Net.NetworkInformation.NetworkInterfaceType]::Loopback -or
+                $nic.NetworkInterfaceType -eq [System.Net.NetworkInformation.NetworkInterfaceType]::Tunnel) { continue }
 
-    $metricMap = @{}
-    foreach ($ni in @(Get-NetIPInterface -AddressFamily IPv4 -ErrorAction SilentlyContinue)) {
-        $metricMap[[int]$ni.ifIndex] = [int]$ni.InterfaceMetric
-    }
+            $nName = [string]$nic.Name
+            $nDesc = [string]$nic.Description
+            if ($nName -match $excludeNameRegex -or $nDesc -match $excludeNameRegex) { continue }
 
-    $candidates = [System.Collections.Generic.List[object]]::new()
-    foreach ($cfg in @(Get-NetIPConfiguration -ErrorAction SilentlyContinue)) {
-        if (-not $cfg.NetAdapter -or $cfg.NetAdapter.Status -ne 'Up') { continue }
-        $alias = [string]$cfg.InterfaceAlias
-        $desc  = [string]$cfg.InterfaceDescription
-        if ($alias -match $excludeAliasRegex -or $desc -match $excludeDescRegex) { continue }
+            $ipProps = $null
+            try { $ipProps = $nic.GetIPProperties() } catch { continue }
+            if (-not $ipProps) { continue }
 
-        $usableIp = $null
-        foreach ($v4 in @($cfg.IPv4Address)) {
-            if (Test-IsUsableIPv4 -IpText ([string]$v4.IPAddress)) {
-                $usableIp = [string]$v4.IPAddress
-                break
+            $usableIp = $null
+            foreach ($ua in @($ipProps.UnicastAddresses)) {
+                if (-not $ua -or -not $ua.Address) { continue }
+                if ($ua.Address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) { continue }
+                $candStr = $ua.Address.IPAddressToString
+                if (Test-IsUsableIPv4 -IpText $candStr) {
+                    $usableIp = $candStr
+                    break
+                }
             }
-        }
-        if (-not $usableIp) { continue }
+            if (-not $usableIp) { continue }
 
-        $ifIdx  = [int]$cfg.InterfaceIndex
-        $isPhys = $false
-        if ($adapterMap.ContainsKey($ifIdx)) { $isPhys = [bool]$adapterMap[$ifIdx].HardwareInterface }
-        $gwIp   = $null
-        $hasGw  = $false
-        if ($cfg.IPv4DefaultGateway) {
-            $firstGw = @($cfg.IPv4DefaultGateway) | Select-Object -First 1
-            if ($firstGw -and -not [string]::IsNullOrWhiteSpace([string]$firstGw.NextHop)) {
-                $gwIp  = [string]$firstGw.NextHop
-                $hasGw = $true
+            $gwIp  = $null
+            $hasGw = $false
+            foreach ($ga in @($ipProps.GatewayAddresses)) {
+                if ($ga -and $ga.Address -and $ga.Address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
+                    $gStr = $ga.Address.IPAddressToString
+                    if (Test-IsUsableIPv4 -IpText $gStr) {
+                        $gwIp  = $gStr
+                        $hasGw = $true
+                        break
+                    }
+                }
             }
+
+            $nicDns = [System.Collections.Generic.List[string]]::new()
+            foreach ($da in @($ipProps.DnsAddresses)) {
+                if ($da -and $da.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
+                    $nicDns.Add($da.IPAddressToString)
+                }
+            }
+
+            $ifIdx = -1
+            try {
+                $v4p = $ipProps.GetIPv4Properties()
+                if ($v4p) { $ifIdx = [int]$v4p.Index }
+            } catch {}
+
+            $isPhys = ($nic.NetworkInterfaceType -in @(
+                [System.Net.NetworkInformation.NetworkInterfaceType]::Ethernet,
+                [System.Net.NetworkInformation.NetworkInterfaceType]::Wireless80211,
+                [System.Net.NetworkInformation.NetworkInterfaceType]::GigabitEthernet,
+                [System.Net.NetworkInformation.NetworkInterfaceType]::FastEthernetT,
+                [System.Net.NetworkInformation.NetworkInterfaceType]::FastEthernetFx
+            )) -and ($nDesc -notmatch '(?i)Virtual|Hyper-V|VMware|VirtualBox|VPN|Miniport')
+
+            $hasAsanDns = ($nicDns -contains $global:AsanCtx.InternalDnsIP)
+            $tier = 5
+            if ($hasAsanDns -and $hasGw) { $tier = 1 }
+            elseif ($isPhys -and $hasGw) { $tier = 2 }
+            elseif ($hasGw)              { $tier = 3 }
+            elseif ($isPhys)             { $tier = 4 }
+
+            $candidates.Add([pscustomobject]@{
+                Tier           = $tier
+                IPAddress      = $usableIp
+                Gateway        = $gwIp
+                AdapterName    = $nName
+                InterfaceIndex = $ifIdx
+                DnsServers     = $nicDns.ToArray()
+            })
         }
-        $metric = 9999
-        if ($metricMap.ContainsKey($ifIdx)) { $metric = $metricMap[$ifIdx] }
+    } catch {}
 
-        $tier = 4
-        if ($isPhys -and $hasGw) { $tier = 1 }
-        elseif ($hasGw) { $tier = 2 }
-        elseif ($isPhys) { $tier = 3 }
+    # 2순위: 사내 백업 서버 방향 커널 라우팅 테이블 역추적 (패킷 전송 없음, 0.1ms)
+    $routeLocalIp = $null
+    try {
+        $udp = New-Object System.Net.Sockets.UdpClient
+        try {
+            $udp.Connect($global:AsanCtx.ServerIP, 445)
+            $ep = [System.Net.IPEndPoint]$udp.Client.LocalEndPoint
+            if ($ep -and $ep.Address) {
+                $rStr = $ep.Address.IPAddressToString
+                if (Test-IsUsableIPv4 -IpText $rStr) { $routeLocalIp = $rStr }
+            }
+        } finally {
+            $udp.Close()
+        }
+    } catch {}
 
-        $candidates.Add([pscustomobject]@{
-            Tier           = $tier
-            Metric         = $metric
-            IPAddress      = $usableIp
-            Gateway        = $gwIp
-            AdapterName    = $alias
-            InterfaceIndex = $ifIdx
-        })
+    $best = $null
+    if ($routeLocalIp) {
+        $best = $candidates | Where-Object { $_.IPAddress -eq $routeLocalIp } | Sort-Object Tier | Select-Object -First 1
+    }
+    if (-not $best) {
+        $best = $candidates | Sort-Object Tier | Select-Object -First 1
     }
 
-    $best = $candidates | Sort-Object Tier, Metric | Select-Object -First 1
     if ($best) {
         $ip          = $best.IPAddress
         $gw          = $best.Gateway
         $adapterName = $best.AdapterName
         $bestIfIdx   = [int]$best.InterfaceIndex
+        $dnsListOut  = @($best.DnsServers)
+    } elseif ($routeLocalIp) {
+        $ip          = $routeLocalIp
+        $adapterName = 'RouteDetected'
     }
 
     return [pscustomobject]@{
@@ -473,6 +917,7 @@ function Get-ActiveNetworkInfo {
         Gateway        = $gw
         AdapterName    = $adapterName
         InterfaceIndex = $bestIfIdx
+        DnsServers     = $dnsListOut
         HasValidIP     = (Test-IsUsableIPv4 -IpText $ip)
     }
 }
@@ -515,46 +960,64 @@ function Disconnect-AllHostSessions {
     } catch {}
 }
 
-function Connect-AsanBackupServer {
-    $srvIp = $global:AsanCtx.ServerIP
-    if (-not (Test-TcpPortFast -HostIp $srvIp -Port 445 -TimeoutMs 2000)) {
-        return $null
+function Get-RemoteUserCandidates {
+    param(
+        [string]$HostName,
+        [string]$UserName
+    )
+    $list = [System.Collections.Generic.List[string]]::new()
+    if ([string]::IsNullOrWhiteSpace($UserName)) { return @() }
+    $u = $UserName.Trim()
+    if ($u -match '[\\@]') {
+        $list.Add($u)
+        $plain = ($u -split '[\\@]')[-1]
+        if (-not [string]::IsNullOrWhiteSpace($plain) -and -not $list.Contains($plain)) { $list.Add($plain) }
+        return @($list.ToArray())
     }
-
-    if ((@(Get-ConfiguredDefaultPasswords)).Count -eq 0) {
-        [void](Import-RuntimeSecretsIfPresent)
+    # NAS/Samba/Windows 파일서버 모두 호환되도록 단독 계정명(admin) -> IP\admin -> .\admin 순차 시도
+    $list.Add($u)
+    if (-not [string]::IsNullOrWhiteSpace($HostName)) {
+        $q = "$HostName\$u"
+        if (-not $list.Contains($q)) { $list.Add($q) }
     }
+    $dot = ".\$u"
+    if (-not $list.Contains($dot)) { $list.Add($dot) }
+    return @($list.ToArray())
+}
 
-    $activeShare = $null
-    foreach ($s in $global:AsanCtx.CandidateShares) {
-        if (Test-Path -LiteralPath $s) { $activeShare = $s; break }
+function Resolve-AsanBackupShareRoot {
+    param([string]$ServerIp = $global:AsanCtx.ServerIP)
+    foreach ($s in @($global:AsanCtx.CandidateShares)) {
+        try {
+            if (Test-Path -LiteralPath $s) { return [string]$s }
+        } catch {}
     }
-
-    if (-not $activeShare) {
-        $ipcPath  = "\\$srvIp\IPC$"
-        $qualUser = Get-QualifiedRemoteUser -HostName $srvIp -UserName (Get-EffectiveDefaultUser)
-        foreach ($pw in @(Get-ConfiguredDefaultPasswords)) {
-            [void][AsanWin32.NativeApi]::DisconnectShare($ipcPath)
-            $rc = [AsanWin32.NativeApi]::ConnectShare($ipcPath, $qualUser, $pw)
-            if ($rc -eq 1219) {
-                Disconnect-AllHostSessions -HostName $srvIp
-                $rc = [AsanWin32.NativeApi]::ConnectShare($ipcPath, $qualUser, $pw)
-            }
-            if ($rc -eq 0) {
-                # [보안] 백업 서버 관리자 자격증명은 로컬 PC 자격증명 관리자에 영구 저장하지 않고 세션 연결만 사용
-                foreach ($s in $global:AsanCtx.CandidateShares) {
-                    if (Test-Path -LiteralPath $s) { $activeShare = $s; break }
-                    [void][AsanWin32.NativeApi]::ConnectShare($s, $qualUser, $pw)
-                    if (Test-Path -LiteralPath $s) { $activeShare = $s; break }
+    try {
+        $diskRes = [AsanWin32.NativeApi]::EnumDiskSharesEx("\\$ServerIp")
+        if ($diskRes -and ($diskRes.Win32Error -eq 0 -or $diskRes.Win32Error -eq 234) -and $diskRes.Shares) {
+            foreach ($sh in @($diskRes.Shares)) {
+                if ([string]::IsNullOrWhiteSpace($sh) -or $sh.EndsWith('$')) { continue }
+                $unc = "\\$ServerIp\$sh"
+                if ($sh -match '(?i)백업|backup|prtbak') {
+                    try { if (Test-Path -LiteralPath $unc) { return $unc } } catch {}
                 }
             }
-            if ($activeShare) { break }
+            foreach ($sh in @($diskRes.Shares)) {
+                if ([string]::IsNullOrWhiteSpace($sh) -or $sh.EndsWith('$')) { continue }
+                $unc = "\\$ServerIp\$sh"
+                try {
+                    if (Test-Path -LiteralPath (Join-Path $unc '_PRTBAK')) { return $unc }
+                } catch {}
+            }
         }
-    }
+    } catch {}
+    return $null
+}
 
-    if (-not $activeShare) { return $null }
-
-    $prtBakDir = Join-Path $activeShare '_PRTBAK'
+function Ensure-AsanPrtBakDirectory {
+    param([string]$ActiveShare)
+    if ([string]::IsNullOrWhiteSpace($ActiveShare)) { return $null }
+    $prtBakDir = Join-Path $ActiveShare '_PRTBAK'
     try {
         if (-not (Test-Path -LiteralPath $prtBakDir)) {
             $dirItem = New-Item -ItemType Directory -Path $prtBakDir -Force -ErrorAction Stop
@@ -571,6 +1034,96 @@ function Connect-AsanBackupServer {
         if (-not (Test-Path -LiteralPath $prtBakDir)) { return $null }
     }
     return $prtBakDir
+}
+
+function Connect-AsanBackupServer {
+    $srvIp = $global:AsanCtx.ServerIP
+    $global:AsanCtx.LastServerAuthDiag = ''
+    if (-not (Test-TcpPortFast -HostIp $srvIp -Port 445 -TimeoutMs 2200)) {
+        $global:AsanCtx.LastServerAuthDiag = 'TCP445_CLOSED'
+        return $null
+    }
+
+    [void](Import-RuntimeSecretsIfPresent)
+
+    # 1단계: 이미 열려 있는 세션/기본 권한으로 바로 접근 가능한지 먼저 확인 (불필요한 세션 끊기 방지)
+    $activeShare = Resolve-AsanBackupShareRoot -ServerIp $srvIp
+    if ($activeShare) {
+        $resDir = Ensure-AsanPrtBakDirectory -ActiveShare $activeShare
+        if ($resDir) {
+            $global:AsanCtx.LastServerAuthDiag = "EXISTING_SESSION_OK($activeShare)"
+            return $resDir
+        }
+    }
+
+    # 2단계: 내장/외부 암호 목록 x 다중 계정 포맷(admin, IP\admin, .\admin)으로 공유폴더 직접 연결 및 IPC$ 병행 시도
+    $ipcPath    = "\\$srvIp\IPC$"
+    $userCands  = @(Get-RemoteUserCandidates -HostName $srvIp -UserName (Get-EffectiveDefaultUser))
+    $pwCands    = @(Get-ConfiguredDefaultPasswords)
+    $diagCodes  = [System.Collections.Generic.List[string]]::new()
+    $didReset1219 = $false
+
+    foreach ($pw in $pwCands) {
+        foreach ($uFmt in $userCands) {
+            # (A) 공유 후보 직접 인증 시도 (IPC$ 제한 서버/NAS 호환)
+            foreach ($candShare in @($global:AsanCtx.CandidateShares)) {
+                $rcS = [AsanWin32.NativeApi]::ConnectShare([string]$candShare, $uFmt, $pw)
+                if ($rcS -eq 1219 -and (-not $didReset1219)) {
+                    $didReset1219 = $true
+                    $chk1219 = Resolve-AsanBackupShareRoot -ServerIp $srvIp
+                    if ($chk1219) { $activeShare = $chk1219; break }
+                    Disconnect-AllHostSessions -HostName $srvIp
+                    $rcS = [AsanWin32.NativeApi]::ConnectShare([string]$candShare, $uFmt, $pw)
+                }
+                if ($rcS -eq 0 -or $rcS -eq 85 -or (Test-Path -LiteralPath $candShare)) {
+                    if (Test-Path -LiteralPath $candShare) {
+                        $activeShare = [string]$candShare
+                        break
+                    }
+                } else {
+                    $codeTag = "Share:$rcS"
+                    if (-not $diagCodes.Contains($codeTag)) { $diagCodes.Add($codeTag) }
+                }
+            }
+            if ($activeShare) { break }
+
+            # (B) IPC$ 인증 후 디스크 공유 탐색 (공유명이 다를 경우 자동 발견 포함)
+            [void][AsanWin32.NativeApi]::DisconnectShare($ipcPath)
+            $rcI = [AsanWin32.NativeApi]::ConnectShare($ipcPath, $uFmt, $pw)
+            if ($rcI -eq 1219 -and (-not $didReset1219)) {
+                $didReset1219 = $true
+                Disconnect-AllHostSessions -HostName $srvIp
+                $rcI = [AsanWin32.NativeApi]::ConnectShare($ipcPath, $uFmt, $pw)
+            }
+            if ($rcI -eq 0 -or $rcI -eq 1219) {
+                $activeShare = Resolve-AsanBackupShareRoot -ServerIp $srvIp
+                if (-not $activeShare) {
+                    foreach ($s in @($global:AsanCtx.CandidateShares)) {
+                        [void][AsanWin32.NativeApi]::ConnectShare([string]$s, $uFmt, $pw)
+                        if (Test-Path -LiteralPath $s) { $activeShare = [string]$s; break }
+                    }
+                }
+                if ($activeShare) { break }
+            } else {
+                $codeTagI = "IPC:$rcI"
+                if (-not $diagCodes.Contains($codeTagI)) { $diagCodes.Add($codeTagI) }
+            }
+        }
+        if ($activeShare) { break }
+    }
+
+    if (-not $activeShare) {
+        $global:AsanCtx.LastServerAuthDiag = "AUTH_FAIL(" + ($diagCodes -join ',') + ")"
+        return $null
+    }
+
+    $finalDir = Ensure-AsanPrtBakDirectory -ActiveShare $activeShare
+    if (-not $finalDir) {
+        $global:AsanCtx.LastServerAuthDiag = "PRTBAK_CREATE_FAIL($activeShare)"
+        return $null
+    }
+    $global:AsanCtx.LastServerAuthDiag = "CONNECTED($activeShare)"
+    return $finalDir
 }
 
 function Connect-AsanBackupServerWithCred {
@@ -590,37 +1143,51 @@ function Connect-AsanBackupServerWithCred {
         return [pscustomobject]@{ Ok = $false; PrtBakDir = $null; ErrorCode = 53; Message = "백업 서버($srvIp)에 연결할 수 없습니다. 사내망 연결 상태를 확인해 주세요." }
     }
 
-    $ipcPath  = "\\$srvIp\IPC$"
-    $qualUser = Get-QualifiedRemoteUser -HostName $srvIp -UserName $u
-    Disconnect-AllHostSessions -HostName $srvIp
-    $rc = [AsanWin32.NativeApi]::ConnectShare($ipcPath, $qualUser, $p)
-    if ($rc -eq 1219) {
-        Disconnect-AllHostSessions -HostName $srvIp
-        $rc = [AsanWin32.NativeApi]::ConnectShare($ipcPath, $qualUser, $p)
-    }
-
+    $ipcPath     = "\\$srvIp\IPC$"
+    $userCands   = @(Get-RemoteUserCandidates -HostName $srvIp -UserName $u)
     $activeShare = $null
-    if ($rc -eq 0) {
-        foreach ($s in $global:AsanCtx.CandidateShares) {
-            if (Test-Path -LiteralPath $s) { $activeShare = $s; break }
-            $rcShare = [AsanWin32.NativeApi]::ConnectShare($s, $qualUser, $p)
-            if ($rcShare -eq 0 -or (Test-Path -LiteralPath $s)) { $activeShare = $s; break }
+    $lastRc      = 0
+
+    Disconnect-AllHostSessions -HostName $srvIp
+
+    foreach ($uFmt in $userCands) {
+        foreach ($candShare in @($global:AsanCtx.CandidateShares)) {
+            $rcS = [AsanWin32.NativeApi]::ConnectShare([string]$candShare, $uFmt, $p)
+            if ($rcS -eq 1219) {
+                if (Test-Path -LiteralPath $candShare) { $activeShare = [string]$candShare; break }
+                Disconnect-AllHostSessions -HostName $srvIp
+                $rcS = [AsanWin32.NativeApi]::ConnectShare([string]$candShare, $uFmt, $p)
+            }
+            if ($rcS -eq 0 -or (Test-Path -LiteralPath $candShare)) {
+                $activeShare = [string]$candShare
+                break
+            }
+            $lastRc = $rcS
+        }
+        if ($activeShare) { break }
+
+        [void][AsanWin32.NativeApi]::DisconnectShare($ipcPath)
+        $rcI = [AsanWin32.NativeApi]::ConnectShare($ipcPath, $uFmt, $p)
+        if ($rcI -eq 0 -or $rcI -eq 1219) {
+            $activeShare = Resolve-AsanBackupShareRoot -ServerIp $srvIp
+            if ($activeShare) { break }
+        } else {
+            $lastRc = $rcI
         }
     }
 
     if (-not $activeShare) {
-        $errMsg = "백업 서버($srvIp) 인증에 실패했습니다 (오류 코드 $rc)."
-        if ($rc -in @(5, 86, 1326, 1331, 1909)) {
-            $errMsg = '아이디 또는 암호가 일치하지 않습니다. 계정 정보를 다시 확인해 주세요.'
-        } elseif ($rc -eq 1219) {
-            $errMsg = '기존 네트워크 세션이 충돌했습니다. 잠시 후 다시 시도해 주세요.'
-        } elseif ($rc -eq 0) {
-            $errMsg = "서버 인증은 통과했으나 백업 공유 폴더($($global:AsanCtx.CandidateShares -join ', '))에 접근할 수 없습니다."
+        $errMsg = "백업 서버($srvIp) 연결에 실패했습니다 (Win32 오류 코드: $lastRc)."
+        if ($lastRc -in @(5, 86, 1326, 1331, 1909)) {
+            $errMsg = "아이디 또는 암호가 일치하지 않습니다 (오류 코드 $lastRc). 계정 정보를 다시 확인해 주세요."
+        } elseif ($lastRc -eq 1219) {
+            $errMsg = '윈도우 탐색기 등에 다른 계정으로 서버가 이미 연결되어 있습니다. 열린 서버 폴더 창을 닫고 다시 시도해 주세요.'
+        } elseif ($lastRc -eq 67 -or $lastRc -eq 53) {
+            $errMsg = "백업 공유 폴더($($global:AsanCtx.CandidateShares -join ' 또는 '))를 찾지 못했습니다 (오류 코드 $lastRc)."
         }
-        return [pscustomobject]@{ Ok = $false; PrtBakDir = $null; ErrorCode = $rc; Message = $errMsg }
+        return [pscustomobject]@{ Ok = $false; PrtBakDir = $null; ErrorCode = $lastRc; Message = $errMsg }
     }
 
-    # [보안] 성공한 계정/암호는 현재 프로그램 메모리 세션에만 유지 (PC 영구 저장 금지, 리포트 자동 마스킹)
     $merged = [System.Collections.Generic.List[string]]::new()
     $merged.Add($p)
     foreach ($cur in @($global:AsanCtx.RuntimePasswords)) {
@@ -633,13 +1200,10 @@ function Connect-AsanBackupServerWithCred {
         $global:AsanCtx.RuntimeSecretsSource = '수동 로그인'
     }
 
-    $prtBakDir = Join-Path $activeShare '_PRTBAK'
-    try {
-        if (-not (Test-Path -LiteralPath $prtBakDir)) {
-            $dirItem = New-Item -ItemType Directory -Path $prtBakDir -Force -ErrorAction Stop
-            try { $dirItem.Attributes = $dirItem.Attributes -bor [IO.FileAttributes]::Hidden } catch {}
-        }
-    } catch {}
+    $prtBakDir = Ensure-AsanPrtBakDirectory -ActiveShare $activeShare
+    if (-not $prtBakDir) {
+        return [pscustomobject]@{ Ok = $false; PrtBakDir = $null; ErrorCode = 5; Message = "공유 폴더($activeShare)에는 연결되었으나 하위 _PRTBAK 폴더 접근 권한이 없습니다." }
+    }
 
     return [pscustomobject]@{
         Ok        = $true
@@ -651,46 +1215,37 @@ function Connect-AsanBackupServerWithCred {
 
 function Test-AsanNetworkAndServer {
     [void](Import-RuntimeSecretsIfPresent)
-    $netInfo        = Get-ActiveNetworkInfo
-    $wppInfo        = Test-WindowsProtectedPrintMode
-    $dnsOk          = $false
-    $dnsConf        = $false
-    $serverTcp      = $false
-    $serverAuthReq  = $false
-    $prtBakDir      = $null
-    $status         = 'Offline'
-    $message        = '사내망 미연결 — 고정 IP 및 DNS(10.71.1.5)를 먼저 설정해 주세요.'
-    $hasCfgPws      = ((@(Get-ConfiguredDefaultPasswords)).Count -gt 0)
+    $netInfo       = Get-ActiveNetworkInfo
+    $wppInfo       = Test-WindowsProtectedPrintMode
+    $dnsConf       = (@($netInfo.DnsServers) -contains $global:AsanCtx.InternalDnsIP)
+    $dnsOk         = $false
+    $serverTcp     = $false
+    $serverAuthReq = $false
+    $prtBakDir     = $null
+    $status        = 'Offline'
+    $message       = '사내망 미연결 — 고정 IP 및 DNS(10.71.1.5)를 먼저 설정해 주세요.'
+    $hasCfgPws     = ((@(Get-ConfiguredDefaultPasswords)).Count -gt 0)
 
-    if ($netInfo.HasValidIP) {
-        if ($netInfo.InterfaceIndex -gt 0) {
-            try {
-                $dnsServers = @(Get-DnsClientServerAddress -InterfaceIndex $netInfo.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { $_.ServerAddresses })
-                if ($dnsServers -contains $global:AsanCtx.InternalDnsIP) { $dnsConf = $true }
-            } catch {}
+    # [핵심 수정] 어댑터 IP 판별 결과와 무관하게 백업 서버(445) 도달 여부를 항상 직접 확인
+    $serverTcp = Test-TcpPortFast -HostIp $global:AsanCtx.ServerIP -Port 445 -TimeoutMs 2000
+    if ($serverTcp -or $netInfo.HasValidIP) {
+        $dnsOk = (Test-TcpPortFast -HostIp $global:AsanCtx.InternalDnsIP -Port 53 -TimeoutMs 1200) -or (Test-PingFast -HostIp $global:AsanCtx.InternalDnsIP -TimeoutMs 1000)
+    }
+
+    if ($serverTcp) {
+        $prtBakDir = Connect-AsanBackupServer
+        if ($prtBakDir) {
+            $status  = 'Online'
+            $message = "사내망 및 백업 서버 정상 연결됨 ($prtBakDir)"
+        } else {
+            $status        = 'IntranetOnly'
+            $serverAuthReq = $true
+            $diagNote      = [string]$global:AsanCtx.LastServerAuthDiag
+            $message       = "백업 서버($($global:AsanCtx.ServerIP)) 공유 폴더 인증에 실패했습니다 [$diagNote]. 상단 '서버 로그인'으로 계정을 확인해 주세요."
         }
-
-        $dnsOk     = (Test-TcpPortFast -HostIp $global:AsanCtx.InternalDnsIP -Port 53 -TimeoutMs 1200) -or (Test-PingFast -HostIp $global:AsanCtx.InternalDnsIP -TimeoutMs 1000)
-        $serverTcp = Test-TcpPortFast -HostIp $global:AsanCtx.ServerIP -Port 445 -TimeoutMs 2000
-
-        if ($serverTcp) {
-            $prtBakDir = Connect-AsanBackupServer
-            if ($prtBakDir) {
-                $status  = 'Online'
-                $message = "사내망 및 백업 서버 정상 연결됨 ($prtBakDir)"
-            } else {
-                $status        = 'IntranetOnly'
-                $serverAuthReq = $true
-                if (-not $hasCfgPws) {
-                    $message = "백업 서버($($global:AsanCtx.ServerIP))에 연결하려면 상단 '서버 로그인'을 누르거나 실행 폴더에 secrets.local.json을 넣어 주세요."
-                } else {
-                    $message = "백업 서버($($global:AsanCtx.ServerIP)) 공유 폴더 인증에 실패했습니다. 상단 '서버 로그인'으로 계정을 확인해 주세요."
-                }
-            }
-        } elseif ($dnsOk -or ($dnsConf -and $netInfo.Gateway -and (Test-PingFast -HostIp $netInfo.Gateway -TimeoutMs 1000))) {
-            $status  = 'IntranetOnly'
-            $message = "사내망은 연결되었으나 백업 서버($($global:AsanCtx.ServerIP))가 응답하지 않습니다."
-        }
+    } elseif ($dnsOk -or ($netInfo.HasValidIP -and $dnsConf -and $netInfo.Gateway -and (Test-PingFast -HostIp $netInfo.Gateway -TimeoutMs 1000))) {
+        $status  = 'IntranetOnly'
+        $message = "사내망은 연결되었으나 백업 서버($($global:AsanCtx.ServerIP))가 응답하지 않습니다."
     }
 
     return [pscustomobject]@{
@@ -702,6 +1257,7 @@ function Test-AsanNetworkAndServer {
         DnsOk                  = $dnsOk
         ServerTcpOk            = $serverTcp
         ServerAuthRequired     = $serverAuthReq
+        ServerAuthDiag         = [string]$global:AsanCtx.LastServerAuthDiag
         HasConfiguredPasswords = $hasCfgPws
         SecretsLoadedFrom      = $global:AsanCtx.RuntimeSecretsSource
         PrtBakDir              = $prtBakDir
@@ -857,6 +1413,7 @@ function Get-SpecialPrinterProfile {
 
 function Get-DeviceManagerLptPorts {
     $lpts = [System.Collections.Generic.List[object]]::new()
+    $seen = @{}
     try {
         $portDevs = @(Get-CimInstance -ClassName Win32_PnPEntity -Filter "ClassGuid = '{4d36e978-e325-11ce-bfc1-08002be2092f}'" -ErrorAction SilentlyContinue)
         foreach ($d in $portDevs) {
@@ -867,6 +1424,7 @@ function Get-DeviceManagerLptPorts {
                 $stat    = [string]$d.Status
                 $errCode = 0
                 if ($null -ne $d.ConfigManagerErrorCode) { $errCode = [int]$d.ConfigManagerErrorCode }
+                $seen[$pTag] = $true
                 $lpts.Add([pscustomobject]@{
                     PortName  = $pTag
                     Name      = $dName
@@ -877,6 +1435,36 @@ function Get-DeviceManagerLptPorts {
             }
         }
     } catch {}
+
+    # WMI 클래스 손상 시 커널 DEVICEMAP 레지스트리에서 활성 LPT 포트 직접 확인
+    if ($lpts.Count -eq 0) {
+        try {
+            $parMapKey = 'HKLM:\HARDWARE\DEVICEMAP\PARALLEL PORTS'
+            if (Test-Path -LiteralPath $parMapKey) {
+                $pmProps = Get-ItemProperty -LiteralPath $parMapKey -ErrorAction SilentlyContinue
+                if ($pmProps) {
+                    foreach ($pr in $pmProps.PSObject.Properties) {
+                        if ($pr.Name -match '^PS(Path|ParentPath|ChildName|Drive|Provider)$') { continue }
+                        $val = [string]$pr.Value
+                        $m = [regex]::Match($val, '(LPT\d+)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+                        if ($m.Success) {
+                            $pTag = $m.Groups[1].Value.ToUpperInvariant()
+                            if (-not $seen.ContainsKey($pTag)) {
+                                $seen[$pTag] = $true
+                                $lpts.Add([pscustomobject]@{
+                                    PortName  = $pTag
+                                    Name      = "프린터 포트 ($pTag)"
+                                    Status    = 'OK'
+                                    ErrorCode = 0
+                                    IsHealthy = $true
+                                })
+                            }
+                        }
+                    }
+                }
+            }
+        } catch {}
+    }
     return @($lpts.ToArray())
 }
 
@@ -940,7 +1528,7 @@ function Invoke-UsbBarcodeAutoReenumerate {
         [scriptblock]$OnProgress = $null
     )
 
-    $beforePorts = @(Get-PrinterPort -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)^USB\d+' } | ForEach-Object { [string]$_.Name } | Sort-Object)
+    $beforePorts = @(Get-PrinterPortSafe | Where-Object { $_.Name -match '(?i)^USB\d+' } | ForEach-Object { [string]$_.Name } | Sort-Object)
     $candidates  = @(Get-BrokenBarcodeUsbDevices -IncludeHealthyBarcode:$ForceAllBarcodeUsb)
     $beforeProb  = (@($candidates | Where-Object { $_.IsProblem })).Count
 
@@ -962,7 +1550,7 @@ function Invoke-UsbBarcodeAutoReenumerate {
         $maxWait = [math]::Max(2, $WaitSeconds)
         for ($sec = 0; $sec -lt $maxWait; $sec++) {
             Start-Sleep -Seconds 1
-            $curPorts = @(Get-PrinterPort -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)^USB\d+' } | ForEach-Object { [string]$_.Name })
+            $curPorts = @(Get-PrinterPortSafe | Where-Object { $_.Name -match '(?i)^USB\d+' } | ForEach-Object { [string]$_.Name })
             $addedNow = @($curPorts | Where-Object { $beforePorts -notcontains $_ })
             if ($addedNow.Count -gt 0) { break }
             if ($sec -ge 3) {
@@ -972,7 +1560,7 @@ function Invoke-UsbBarcodeAutoReenumerate {
         }
     }
 
-    $afterPorts  = @(Get-PrinterPort -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)^USB\d+' } | ForEach-Object { [string]$_.Name } | Sort-Object)
+    $afterPorts  = @(Get-PrinterPortSafe | Where-Object { $_.Name -match '(?i)^USB\d+' } | ForEach-Object { [string]$_.Name } | Sort-Object)
     $newPorts    = @($afterPorts | Where-Object { $beforePorts -notcontains $_ })
     $stillBroken = @(Get-BrokenBarcodeUsbDevices)
     $promotedOk  = ($newPorts.Count -gt 0) -or ($beforeProb -gt 0 -and $stillBroken.Count -lt $beforeProb)
@@ -1090,12 +1678,15 @@ function Connect-SharedHostSmart {
 
     $attempts = [System.Collections.Generic.List[object]]::new()
     if (-not [string]::IsNullOrWhiteSpace($CustomUser)) {
-        $qUser = Get-QualifiedRemoteUser -HostName $HostName -UserName $CustomUser
-        $attempts.Add([pscustomobject]@{ User = $qUser; Pass = [string]$CustomPass; IsCustom = $true })
+        foreach ($uCand in @(Get-RemoteUserCandidates -HostName $HostName -UserName $CustomUser)) {
+            $attempts.Add([pscustomobject]@{ User = $uCand; Pass = [string]$CustomPass; IsCustom = $true })
+        }
     } else {
-        $qDef = Get-QualifiedRemoteUser -HostName $HostName -UserName (Get-EffectiveDefaultUser)
+        $uCandsDef = @(Get-RemoteUserCandidates -HostName $HostName -UserName (Get-EffectiveDefaultUser))
         foreach ($pw in @(Get-ConfiguredDefaultPasswords)) {
-            $attempts.Add([pscustomobject]@{ User = $qDef; Pass = $pw; IsCustom = $false })
+            foreach ($uDef in $uCandsDef) {
+                $attempts.Add([pscustomobject]@{ User = $uDef; Pass = $pw; IsCustom = $false })
+            }
         }
     }
 
@@ -1383,7 +1974,8 @@ function Resolve-WsdPrinterInfo {
                 if ($pnpPropCache.ContainsKey($instId)) {
                     $cachedEntry = $pnpPropCache[$instId]
                 } else {
-                    $propsList = @(Get-PnpDeviceProperty -InstanceId $instId -ErrorAction SilentlyContinue)
+                    $propsList = @()
+                    try { $propsList = @(Get-PnpDeviceProperty -InstanceId $instId -ErrorAction SilentlyContinue) } catch {}
                     $blobText  = ($propsList | ForEach-Object {
                         if ($_.Data -is [array]) { ($_.Data -join ' ') } else { [string]$_.Data }
                     }) -join ' '
@@ -1732,8 +2324,8 @@ function Get-LocalPrinterDiagnostics {
     param([switch]$OfflineMode)
 
     Ensure-SpoolerRunning
-    $cimPrinters = @(Get-CimInstance -ClassName Win32_Printer -ErrorAction SilentlyContinue)
-    $tcpPorts    = @(Get-CimInstance -ClassName Win32_TCPIPPrinterPort -ErrorAction SilentlyContinue)
+    $cimPrinters = @(Get-LocalPrintersSafe)
+    $tcpPorts    = @(Get-LocalTcpPrinterPortsSafe)
     $results     = [System.Collections.Generic.List[object]]::new()
 
     foreach ($p in $cimPrinters) {

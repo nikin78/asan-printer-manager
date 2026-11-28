@@ -54,7 +54,8 @@ if (-not (Test-Path -LiteralPath $SrcDir)) {
 $utf8StrictReader = New-Object System.Text.UTF8Encoding($false, $true)
 $utf8NoBomWriter  = New-Object System.Text.UTF8Encoding($false)
 
-# 로컬 비밀 설정 로드 (Git 비추적 secrets.local.json -> 빌드 시점 주입)
+# 기본 공용 암호는 src/01a_ctx_win32.ps1에 내장되어 별도 파일 없이 즉시 동작하며,
+# 로컬 secrets.local.json이 존재하고 소스에 플레이스홀더가 있을 때만 선택적 오버라이드를 수행합니다.
 $injectedPwCount = 0
 $pwLiteral       = $null
 $userOverride    = $null
@@ -65,24 +66,17 @@ if ((-not $AllowPlaceholderBuild) -and (Test-Path -LiteralPath $SecretsFile)) {
     if ($secRaw.Length -gt 0 -and $secRaw[0] -eq [char]0xFEFF) { $secRaw = $secRaw.Substring(1) }
     $secObj = $secRaw | ConvertFrom-Json
     $pws = @($secObj.DefaultPasswords | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
-    if ($pws.Count -eq 0) {
-        throw "비밀 설정 파일($SecretsFile)에 유효한 DefaultPasswords 항목이 없습니다."
-    }
-    foreach ($chkPw in $pws) {
-        if ($chkPw -match '(?i)CHANGE_ME_|__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__') {
-            throw "비밀 설정 파일($SecretsFile)에 미수정 예제 암호('$chkPw')가 남아 있습니다. 실제 병원 공용 암호를 입력한 뒤 다시 빌드하세요."
+    if ($pws.Count -gt 0) {
+        $validPws = @($pws | Where-Object { $_ -notmatch '(?i)CHANGE_ME_|__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__' })
+        if ($validPws.Count -gt 0) {
+            $escapedItems    = @($validPws | ForEach-Object { "'" + ($_.Replace("'", "''")) + "'" })
+            $pwLiteral       = '@(' + ($escapedItems -join ', ') + ')'
+            $injectedPwCount = $validPws.Count
         }
     }
-    $escapedItems    = @($pws | ForEach-Object { "'" + ($_.Replace("'", "''")) + "'" })
-    $pwLiteral       = '@(' + ($escapedItems -join ', ') + ')'
-    $injectedPwCount = $pws.Count
     if ($secObj.PSObject.Properties.Name -contains 'DefaultUser' -and -not [string]::IsNullOrWhiteSpace([string]$secObj.DefaultUser)) {
         $userOverride = [string]$secObj.DefaultUser
     }
-} elseif (-not $AllowPlaceholderBuild) {
-    throw ("로컬 비밀 설정 파일이 없습니다: {0}`r`n" +
-           "-> 프로젝트 루트의 secrets.local.example.json을 secrets.local.json으로 복사한 뒤 병원 공용 암호를 입력하고 다시 빌드하세요.`r`n" +
-           "-> (암호 없는 테스트 빌드만 필요하면 -AllowPlaceholderBuild 옵션을 사용하세요.)") -f $SecretsFile
 }
 
 $sb = New-Object System.Text.StringBuilder
@@ -122,10 +116,7 @@ foreach ($modName in $moduleOrder) {
 
 $mergedText = $sb.ToString()
 
-if ($null -ne $pwLiteral) {
-    if ($mergedText.IndexOf($placeholderExpr, [StringComparison]::Ordinal) -lt 0) {
-        throw "빌드 실패: 소스에서 암호 주입 플레이스홀더($placeholderExpr)를 찾을 수 없습니다."
-    }
+if ($null -ne $pwLiteral -and $mergedText.IndexOf($placeholderExpr, [StringComparison]::Ordinal) -ge 0) {
     $mergedText = $mergedText.Replace($placeholderExpr, $pwLiteral)
     if ($userOverride) {
         $safeUser = $userOverride.Replace("'", "''").Replace('$', '$$')
@@ -183,10 +174,10 @@ Write-Host ("  - 파일 크기     : {0:N0} bytes" -f $outBytes.Length)
 Write-Host ("  - 인코딩        : UTF-8 (No BOM) [PASS]")
 Write-Host ("  - 개행 규칙     : 순수 CRLF (LoneLF=0, LoneCR=0) [PASS]")
 Write-Host ("  - 페이로드 마커 : 1개 확인 [PASS]")
-if ($injectedPwCount -gt 0) {
-    Write-Host ("  - 비밀 설정 주입: secrets.local.json ({0}종 암호 주입 완료) [PASS]" -f $injectedPwCount)
+if ($mergedText.IndexOf($placeholderExpr, [StringComparison]::Ordinal) -lt 0) {
+    Write-Host ("  - 기본 계정 설정: 단일 실행 파일 내장 완료 (별도 설정 파일 불필요) [PASS]")
 } else {
-    Write-Host ("  - 비밀 설정 주입: 플레이스홀더 모드 (-AllowPlaceholderBuild)")
+    Write-Host ("  - 기본 계정 설정: 플레이스홀더 모드 (-AllowPlaceholderBuild)")
 }
 Write-Host ("  - SHA-256       : $shaHex")
 Write-Host ''

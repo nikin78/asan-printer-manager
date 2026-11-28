@@ -365,7 +365,26 @@ if (`$bixVend -notcontains 'BIXOLON') { throw 'TX220 벤더 매핑 누락' }
 `$zbrPkg  = @(Get-DetectedVendors -Text 'Zebra Technologies zbrn.inf')
 if ((`$zbrVend -notcontains 'ZEBRA') -or (`$zbrPkg -notcontains 'ZEBRA')) { throw 'ZT411 정규 벤더 매칭 오류' }
 
-# 2-F. 런타임 외부 secrets.local.json 자동 로드 · 플레이스홀더/예제 필터 · 런타임 암호 자동 마스킹 검증
+# 2-F. 내장 기본 암호 · Win32 네이티브 프린터/SID(WMI 비의존) · 다중 계정 포맷 · 런타임 시크릿 검증
+if ((@(Get-ConfiguredDefaultPasswords)).Count -lt 3) {
+    throw '내장 기본 공용 암호 3종 누락'
+}
+`$nativeSidVal = [AsanWin32.NativeApi]::GetLocalMachineSid()
+if ([string]::IsNullOrWhiteSpace(`$nativeSidVal) -or `$nativeSidVal -notmatch '^S-1-5-21-\d+-\d+-\d+$') {
+    throw "NativeApi::GetLocalMachineSid 실패: `$nativeSidVal"
+}
+`$nativePrtsCheck = @([AsanWin32.NativeApi]::EnumInstalledPrinters())
+`$safePrtsCheck   = @(Get-LocalPrintersSafe)
+`$safePortsCheck  = @(Get-LocalTcpPrinterPortsSafe)
+`$safeDrvsCheck   = @(Get-PrinterDriverSafe)
+if (`$safePrtsCheck.Count -eq 0 -and `$nativePrtsCheck.Count -gt 0) {
+    throw 'Get-LocalPrintersSafe 반환 누락'
+}
+`$uVariants = @(Get-RemoteUserCandidates -HostName '172.25.152.232' -UserName 'admin')
+if (`$uVariants.Count -lt 3 -or `$uVariants[0] -ne 'admin' -or (`$uVariants -notcontains '172.25.152.232\admin') -or (`$uVariants -notcontains '.\admin')) {
+    throw ("Get-RemoteUserCandidates 다중 포맷 생성 오류: " + (`$uVariants -join ', '))
+}
+
 `$origRtPws  = `$global:AsanCtx.RuntimePasswords
 `$origRtUser = `$global:AsanCtx.RuntimeUser
 `$origRtSrc  = `$global:AsanCtx.RuntimeSecretsSource
