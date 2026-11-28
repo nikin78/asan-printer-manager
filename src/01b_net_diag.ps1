@@ -128,7 +128,7 @@ function Test-IsUsableIPv4 {
     return $true
 }
 
-function Extract-FirstUsableIPv4 {
+function Select-FirstUsableIPv4 {
     param(
         [string]$Text,
         [switch]$UrlOnly
@@ -381,7 +381,7 @@ function Stop-SpoolerSafe {
     return $false
 }
 
-function Ensure-SpoolerRunning {
+function Start-SpoolerSafe {
     param([int]$TimeoutSeconds = 10)
     $svc = Get-Service -Name Spooler -ErrorAction SilentlyContinue
     if (-not $svc) { return }
@@ -747,12 +747,13 @@ function Get-PrinterPortSafe {
             if ($ntProps) {
                 foreach ($pr in $ntProps.PSObject.Properties) {
                     if ($pr.Name -match '^PS(Path|ParentPath|ChildName|Drive|Provider)$') { continue }
-                    $nm = ([string]$pr.Name).TrimEnd(':')
+                    $nm = ([string]$pr.Name).Trim()
                     if ([string]::IsNullOrWhiteSpace($nm)) { continue }
                     $k = $nm.ToLowerInvariant()
-                    if (-not $seen.ContainsKey($k)) {
+                    $kNoColon = $k.TrimEnd(':')
+                    if ((-not $seen.ContainsKey($k)) -and (-not $seen.ContainsKey($kNoColon))) {
                         $seen[$k] = $true
-                        $list.Add([pscustomobject]@{ Name = [string]$pr.Name; PrinterHostAddress = '' })
+                        $list.Add([pscustomobject]@{ Name = $nm; PrinterHostAddress = '' })
                     }
                 }
             }
@@ -1048,7 +1049,7 @@ function Resolve-AsanBackupShareRoot {
     return $null
 }
 
-function Ensure-AsanPrtBakDirectory {
+function Initialize-AsanPrtBakDirectory {
     param([string]$ActiveShare)
     if ([string]::IsNullOrWhiteSpace($ActiveShare)) { return $null }
     $prtBakDir = Join-Path $ActiveShare '_PRTBAK'
@@ -1083,7 +1084,7 @@ function Connect-AsanBackupServer {
     # 1단계: 이미 열려 있는 세션/기본 권한으로 바로 접근 가능한지 먼저 확인 (불필요한 세션 끊기 방지)
     $activeShare = Resolve-AsanBackupShareRoot -ServerIp $srvIp
     if ($activeShare) {
-        $resDir = Ensure-AsanPrtBakDirectory -ActiveShare $activeShare
+        $resDir = Initialize-AsanPrtBakDirectory -ActiveShare $activeShare
         if ($resDir) {
             $global:AsanCtx.LastServerAuthDiag = "EXISTING_SESSION_OK($activeShare)"
             return $resDir
@@ -1151,7 +1152,7 @@ function Connect-AsanBackupServer {
         return $null
     }
 
-    $finalDir = Ensure-AsanPrtBakDirectory -ActiveShare $activeShare
+    $finalDir = Initialize-AsanPrtBakDirectory -ActiveShare $activeShare
     if (-not $finalDir) {
         $global:AsanCtx.LastServerAuthDiag = "PRTBAK_CREATE_FAIL($activeShare)"
         return $null
@@ -1238,7 +1239,7 @@ function Connect-AsanBackupServerWithCred {
         $global:AsanCtx.RuntimeSecretsSource = '수동 로그인'
     }
 
-    $prtBakDir = Ensure-AsanPrtBakDirectory -ActiveShare $activeShare
+    $prtBakDir = Initialize-AsanPrtBakDirectory -ActiveShare $activeShare
     if (-not $prtBakDir) {
         return [pscustomobject]@{ Ok = $false; PrtBakDir = $null; ErrorCode = 5; Message = "공유 폴더($activeShare)에는 연결되었으나 하위 _PRTBAK 폴더 접근 권한이 없습니다." }
     }
@@ -1571,7 +1572,7 @@ function Get-BrokenBarcodeUsbDevices {
                     $isUp = ($id -match '^(?i)USBPRINT\\')
                     $isBc = ($id -match $vidRegex) -or ($id -match $nameRegex) -or ($desc -match $nameRegex) -or ($isUp -and ($id -match '(?i)ZTC'))
                     if (-not $isBc) { return }
-                    $prob = ($st -match '(?i)Problem|문제|Stopped|중지|Disabled') -or [string]::IsNullOrWhiteSpace($cls) -or ($cls -match '(?i)^(Unknown|Other|알 수 없음|기타)')
+                    $prob = ($st -match '(?i)Problem|문제|Stopped|중지|Disabled|사용 안 함|Error|오류') -or [string]::IsNullOrWhiteSpace($cls) -or ($cls -match '(?i)^(Unknown|Other|알 수 없음|기타)')
                     if ($isUp -and ($cls -notmatch '(?i)(Printer|PrintQueue|프린터|인쇄)')) { $prob = $true }
                     $sr = 2; if ($isUp) { $sr = 1 }
                     if ($IncludeHealthyBarcode -or $prob) {
@@ -1967,7 +1968,7 @@ function Test-TcpIpPrinterHealth {
     }
 }
 
-function Clean-DeviceString {
+function Format-DeviceString {
     param([string]$Raw)
     if ([string]::IsNullOrWhiteSpace($Raw)) { return $null }
     if ($Raw -match ';([^;]+)$') { $Raw = $matches[1] }
@@ -1983,7 +1984,7 @@ function Resolve-WsdPrinterInfo {
         [string]$DriverName,
         [switch]$SkipNetworkProbe
     )
-    $foundIp    = Extract-FirstUsableIPv4 -Text "$PortName $PrinterName"
+    $foundIp    = Select-FirstUsableIPv4 -Text "$PortName $PrinterName"
     $foundModel = $null
 
     $matchKeys = [System.Collections.Generic.List[string]]::new()
@@ -2007,7 +2008,7 @@ function Resolve-WsdPrinterInfo {
                     if ($uClean.Length -ge 8 -and -not $matchKeys.Contains($uClean)) { $matchKeys.Add($uClean) }
                 }
                 if (-not $foundIp -and ($pn -match $ipKeyAllowRegex -or $pv -match 'https?://') -and $pn -notmatch $ipKeyDenyRegex) {
-                    $cand = Extract-FirstUsableIPv4 -Text $pv
+                    $cand = Select-FirstUsableIPv4 -Text $pv
                     if ($cand) { $foundIp = $cand }
                 }
             }
@@ -2050,7 +2051,7 @@ function Resolve-WsdPrinterInfo {
                         if ($instId.IndexOf($mk, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $directHit = $true; break }
                     }
                 } elseif ($wsdStage -eq 2) {
-                    $cleanFn = Clean-DeviceString -Raw $fName
+                    $cleanFn = Format-DeviceString -Raw $fName
                     if (($fName -ieq $PrinterName) -or ($cleanFn -and $cleanFn -ieq $PrinterName)) {
                         $directHit = $true
                     }
@@ -2086,7 +2087,7 @@ function Resolve-WsdPrinterInfo {
                         foreach ($pr in $props) {
                             if ([string]$pr.KeyName -match '(?i)(FriendlyName|DeviceDesc|ModelName|Model$)') {
                                 $pvTxt = if ($pr.Data -is [array]) { ($pr.Data -join ' ') } else { [string]$pr.Data }
-                                $pvCln = Clean-DeviceString -Raw $pvTxt
+                                $pvCln = Format-DeviceString -Raw $pvTxt
                                 if (($pvTxt -ieq $PrinterName) -or ($pvCln -and $pvCln -ieq $PrinterName)) { $propHit = $true; break }
                             }
                         }
@@ -2105,10 +2106,10 @@ function Resolve-WsdPrinterInfo {
                         $pVal = if ($pr.Data -is [array]) { ($pr.Data -join ' ') } else { [string]$pr.Data }
                         if ([string]::IsNullOrWhiteSpace($pVal)) { continue }
                         if ($pKey -match $ipKeyAllowRegex) {
-                            $candIp = Extract-FirstUsableIPv4 -Text $pVal
+                            $candIp = Select-FirstUsableIPv4 -Text $pVal
                             if ($candIp) { $foundIp = $candIp; break }
                         } elseif ($pVal -match 'https?://') {
-                            $candIp = Extract-FirstUsableIPv4 -Text $pVal -UrlOnly
+                            $candIp = Select-FirstUsableIPv4 -Text $pVal -UrlOnly
                             if ($candIp) { $foundIp = $candIp; break }
                         }
                     }
@@ -2119,12 +2120,12 @@ function Resolve-WsdPrinterInfo {
                         $pKey = [string]$pr.KeyName
                         if ($pKey -match '(?i)(ModelName|Model$|FriendlyName|DeviceDesc)') {
                             $pVal = if ($pr.Data -is [array]) { ($pr.Data -join ' ') } else { [string]$pr.Data }
-                            $candModel = Clean-DeviceString -Raw $pVal
+                            $candModel = Format-DeviceString -Raw $pVal
                             if ($candModel) { $foundModel = $candModel; break }
                         }
                     }
                     if (-not $foundModel) {
-                        $candFn = Clean-DeviceString -Raw $fName
+                        $candFn = Format-DeviceString -Raw $fName
                         if ($candFn) { $foundModel = $candFn }
                     }
                 }
@@ -2169,7 +2170,7 @@ function Resolve-WsdPrinterInfo {
                 if ($subProps) {
                     foreach ($propName in @('FriendlyName', 'DeviceDesc')) {
                         $rv = [string]$subProps.$propName
-                        $rc = Clean-DeviceString -Raw $rv
+                        $rc = Format-DeviceString -Raw $rv
                         if (($rv -ieq $PrinterName) -or ($rc -and $rc -ieq $PrinterName)) { $hit = $true; break }
                     }
                 }
@@ -2188,10 +2189,10 @@ function Resolve-WsdPrinterInfo {
                         if ($pn -match $ipKeyDenyRegex) { continue }
                         $pv = [string]$prop.Value
                         if ($pn -match $ipKeyAllowRegex) {
-                            $cand = Extract-FirstUsableIPv4 -Text $pv
+                            $cand = Select-FirstUsableIPv4 -Text $pv
                             if ($cand) { $foundIp = $cand; break }
                         } elseif ($pv -match 'https?://') {
-                            $cand = Extract-FirstUsableIPv4 -Text $pv -UrlOnly
+                            $cand = Select-FirstUsableIPv4 -Text $pv -UrlOnly
                             if ($cand) { $foundIp = $cand; break }
                         }
                     }
@@ -2200,7 +2201,7 @@ function Resolve-WsdPrinterInfo {
 
             if (-not $foundModel -and $subProps) {
                 foreach ($propName in @('FriendlyName', 'DeviceDesc')) {
-                    $cand = Clean-DeviceString -Raw ([string]$subProps.$propName)
+                    $cand = Format-DeviceString -Raw ([string]$subProps.$propName)
                     if ($cand) { $foundModel = $cand; break }
                 }
                 if (-not $foundModel -and $subProps.HardwareID) {
@@ -2392,7 +2393,43 @@ function Get-PnpUtilDriverBlocks {
                     }
                     if (-not $targetH.ContainsKey('ProviderName')) {
                         $pm = [regex]::Match($headTxt, '(?im)^\s*Provider\s*=\s*([^;\r\n]+)')
-                        if ($pm.Success) { $targetH['ProviderName'] = $pm.Groups[1].Value.Trim().Trim('"') }
+                        if ($pm.Success) {
+                            $provVal = $pm.Groups[1].Value.Trim().Trim('"')
+                            if ($provVal -match '^%([^%]+)%$') {
+                                $tokKey = $matches[1].Trim()
+                                $fullTxt = Get-Content -LiteralPath $oemFile.FullName -Raw -ErrorAction SilentlyContinue
+                                if (-not [string]::IsNullOrWhiteSpace($fullTxt)) {
+                                    $bestStr = $null
+                                    $bestPr  = 0
+                                    $curS    = ''
+                                    foreach ($rl in ($fullTxt -split "`r?`n")) {
+                                        $tl = $rl.Trim()
+                                        if (-not $tl -or $tl.StartsWith(';')) { continue }
+                                        $sm2 = [regex]::Match($tl, '^\s*\[([^\]]+)\]\s*(?:;.*)?$')
+                                        if ($sm2.Success) { $curS = $sm2.Groups[1].Value.Trim(); continue }
+                                        if ($curS -match '(?i)^strings(?:\.([0-9a-f]+))?$') {
+                                            $lt2 = ''
+                                            if ($matches[1]) { $lt2 = $matches[1].ToLowerInvariant() }
+                                            $pr2 = 1
+                                            if ($lt2 -eq '') { $pr2 = 3 }
+                                            elseif ($lt2 -in @('0412', '0409')) { $pr2 = 2 }
+                                            $km2 = [regex]::Match($tl, '^\s*([^=;]+?)\s*=\s*(?:"([^"]+)"|([^;\r\n]+))')
+                                            if ($km2.Success -and ($km2.Groups[1].Value.Trim().Trim('%') -ieq $tokKey) -and $pr2 -ge $bestPr) {
+                                                $val2 = $km2.Groups[2].Value
+                                                if ([string]::IsNullOrWhiteSpace($val2)) { $val2 = $km2.Groups[3].Value }
+                                                $val2 = $val2.Trim()
+                                                if (-not [string]::IsNullOrWhiteSpace($val2)) {
+                                                    $bestPr  = $pr2
+                                                    $bestStr = $val2
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (-not [string]::IsNullOrWhiteSpace($bestStr)) { $provVal = $bestStr }
+                                }
+                            }
+                            $targetH['ProviderName'] = $provVal
+                        }
                     }
                     if (-not $targetH.ContainsKey('DriverVersion')) {
                         $vm = [regex]::Match($headTxt, '(?im)^\s*DriverVer\s*=\s*([^;\r\n]+)')
@@ -2474,7 +2511,7 @@ function Get-ScannerDriverInventory {
 function Get-LocalPrinterDiagnostics {
     param([switch]$OfflineMode)
 
-    Ensure-SpoolerRunning
+    Start-SpoolerSafe
     $cimPrinters = @(Get-LocalPrintersSafe)
     $tcpPorts    = @(Get-LocalTcpPrinterPortsSafe)
     $results     = [System.Collections.Generic.List[object]]::new()

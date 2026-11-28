@@ -1,7 +1,7 @@
 ﻿# ============================================================================
 # 모델 줄기/와일드카드 매칭 + 2패스 드라이버 해결 엔진
 # ============================================================================
-function Normalize-Text {
+function Format-NormalizedText {
     param([string]$Text)
     if ([string]::IsNullOrWhiteSpace($Text)) { return '' }
     return (($Text -replace '[^\p{L}\p{Nd}]', '').ToLowerInvariant())
@@ -202,7 +202,7 @@ function Get-InfDisplayNames {
     return @($names.ToArray())
 }
 
-function Build-InfIndexCache {
+function New-InfIndexCache {
     param([IO.FileInfo[]]$InfFiles)
     $cache = [System.Collections.Generic.List[object]]::new()
     if (-not $InfFiles -or $InfFiles.Count -eq 0) { return @() }
@@ -260,7 +260,7 @@ function Build-InfIndexCache {
         $cache.Add([pscustomobject]@{
             Path         = $inf.FullName
             FileName     = $inf.Name
-            TextNorm     = (Normalize-Text $text)
+            TextNorm     = (Format-NormalizedText $text)
             DisplayNames = $dispNames
             Vendors      = $vendors
         })
@@ -345,7 +345,7 @@ function Get-LocalPrtFolderInfFiles {
     return @($infList.ToArray())
 }
 
-function Score-DriverDisplayName {
+function Measure-DriverDisplayName {
     param(
         [string]$DisplayName,
         [string]$SearchTarget,
@@ -377,7 +377,7 @@ function Score-DriverDisplayName {
         return -1
     }
 
-    $dnNorm = Normalize-Text $DisplayName
+    $dnNorm = Format-NormalizedText $DisplayName
     $dScore = 0
     if ($DisplayName -eq $SearchTarget) { $dScore += 1200 }
     elseif ($WantedNorm -and $dnNorm -eq $WantedNorm) { $dScore += 1100 }
@@ -385,7 +385,7 @@ function Score-DriverDisplayName {
     $tokHits  = 0
     $digitHit = $false
     foreach ($t in @($Tokens)) {
-        $tNorm = Normalize-Text $t
+        $tNorm = Format-NormalizedText $t
         if ($dnNorm.Contains($tNorm)) {
             $tokHits++
             if ($t -match '^[a-z0-9]+$' -and $t -match '\d' -and $t -notmatch '^\d+(?:dpi|bit)$') {
@@ -434,7 +434,7 @@ function Find-AndInstallDriverFromIndex {
     if (-not $InfIndex -or $InfIndex.Count -eq 0) { return $null }
 
     $isWantedInboxGen = ($WantedDriverName -match $global:AsanCtx.MicrosoftInboxGenericRegex)
-    $wantedNorm       = Normalize-Text $SearchTarget
+    $wantedNorm       = Format-NormalizedText $SearchTarget
     $tokens           = @(Get-SignificantTokens $SearchTarget)
     $modelStems       = @(Get-ModelStems -Tokens $tokens)
     $wantedHasDigits  = ($modelStems.Count -gt 0)
@@ -450,7 +450,7 @@ function Find-AndInstallDriverFromIndex {
         $bestDispScore = -1
 
         foreach ($dn in $entry.DisplayNames) {
-            $dScore = Score-DriverDisplayName -DisplayName $dn -SearchTarget $SearchTarget -WantedNorm $wantedNorm -WantedVendor $WantedVendor -Tokens $tokens -ModelStems $modelStems -WantedHasDigits $wantedHasDigits -PreferPcl6 $PreferPcl6 -AllowVendorUniversal $AllowVendorUniversal
+            $dScore = Measure-DriverDisplayName -DisplayName $dn -SearchTarget $SearchTarget -WantedNorm $wantedNorm -WantedVendor $WantedVendor -Tokens $tokens -ModelStems $modelStems -WantedHasDigits $wantedHasDigits -PreferPcl6 $PreferPcl6 -AllowVendorUniversal $AllowVendorUniversal
             if ($dScore -ge 160 -and $dScore -gt $bestDispScore) {
                 $bestDispScore = $dScore
                 $bestDispName  = $dn
@@ -492,7 +492,7 @@ function Find-AndInstallDriverFromIndex {
     return $null
 }
 
-function Build-ProtocolNoticeText {
+function New-ProtocolNoticeText {
     param(
         [string]$DriverName,
         [string]$OrigProto,
@@ -539,8 +539,8 @@ function Resolve-BestDriverForPrinter {
     if (-not $wantedVendor) { $wantedVendor = Get-DetectedVendor -Text $PrinterName }
     $isSamsung       = ($wantedVendor -eq 'SAMSUNG')
     $origProto       = Get-DriverProtocolTag -DriverName $WantedDriverName
-    $wantedNorm      = Normalize-Text $WantedDriverName
-    $searchNorm      = Normalize-Text $searchTarget
+    $wantedNorm      = Format-NormalizedText $WantedDriverName
+    $searchNorm      = Format-NormalizedText $searchTarget
     $tokens          = @(Get-SignificantTokens $searchTarget)
     $modelStems      = @(Get-ModelStems -Tokens $tokens)
     $wantedHasDigits = ($modelStems.Count -gt 0)
@@ -549,7 +549,7 @@ function Resolve-BestDriverForPrinter {
     # 단, -PreferExportedFirst(ZT411 등)이고 복원 전 골든 이미지에 선설치된 드라이버라면 Exported(기존 PC) 우선 탐색
     $installedAll = @(Get-PrinterDriverSafe)
     if (-not $ForceUpgradeGeneric -and -not $isWantedInboxGen -and -not [string]::IsNullOrWhiteSpace($WantedDriverName)) {
-        $exact = $installedAll | Where-Object { ($_.Name -eq $WantedDriverName -or (Normalize-Text $_.Name) -eq $wantedNorm) -and $_.Name -notmatch $global:AsanCtx.MicrosoftInboxGenericRegex } | Select-Object -First 1
+        $exact = $installedAll | Where-Object { ($_.Name -eq $WantedDriverName -or (Format-NormalizedText $_.Name) -eq $wantedNorm) -and $_.Name -notmatch $global:AsanCtx.MicrosoftInboxGenericRegex } | Select-Object -First 1
         if ($exact) {
             $isExactPreExisting = ($null -ne $PreExistingDrivers -and $PreExistingDrivers.ContainsKey(([string]$exact.Name).ToLowerInvariant()))
             if (-not ($PreferExportedFirst -and $isExactPreExisting)) {
@@ -571,41 +571,41 @@ function Resolve-BestDriverForPrinter {
     $expIndex = $DriverIndexCache['Exported']
     $hitExp = Find-AndInstallDriverFromIndex -InfIndex $expIndex -SearchTarget $searchTarget -WantedDriverName $WantedDriverName -WantedVendor $wantedVendor -PreferPcl6:$preferPcl6 -AllowVendorUniversal:$false
     if ($hitExp) {
-        $pNotice = Build-ProtocolNoticeText -DriverName $hitExp -OrigProto $origProto -PreferPcl6 $preferPcl6
+        $pNotice = New-ProtocolNoticeText -DriverName $hitExp -OrigProto $origProto -PreferPcl6 $preferPcl6
         return [pscustomobject]@{ Success = $true; DriverName = $hitExp; Source = 'ExportedBackupDriver'; UsedSamFallback = $false; ProtocolNotice = $pNotice }
     }
 
     $bestBuiltIn    = $null
     $bestBuiltScore = -1
     foreach ($drv in $installedAll) {
-        $sc = Score-DriverDisplayName -DisplayName $drv.Name -SearchTarget $searchTarget -WantedNorm $searchNorm -WantedVendor $wantedVendor -Tokens $tokens -ModelStems $modelStems -WantedHasDigits $wantedHasDigits -PreferPcl6 $preferPcl6 -AllowVendorUniversal $false
+        $sc = Measure-DriverDisplayName -DisplayName $drv.Name -SearchTarget $searchTarget -WantedNorm $searchNorm -WantedVendor $wantedVendor -Tokens $tokens -ModelStems $modelStems -WantedHasDigits $wantedHasDigits -PreferPcl6 $preferPcl6 -AllowVendorUniversal $false
         if ($sc -ge 160 -and $sc -gt $bestBuiltScore) {
             $bestBuiltScore = $sc
             $bestBuiltIn    = [string]$drv.Name
         }
     }
     if ($bestBuiltIn) {
-        $pNotice = Build-ProtocolNoticeText -DriverName $bestBuiltIn -OrigProto $origProto -PreferPcl6 $preferPcl6
+        $pNotice = New-ProtocolNoticeText -DriverName $bestBuiltIn -OrigProto $origProto -PreferPcl6 $preferPcl6
         return [pscustomobject]@{ Success = $true; DriverName = $bestBuiltIn; Source = 'Win11GoldenSpooler'; UsedSamFallback = $false; ProtocolNotice = $pNotice }
     }
 
     if ($null -eq $DriverIndexCache['DriverStore']) {
-        $DriverIndexCache['DriverStore'] = @(Build-InfIndexCache -InfFiles (Get-DriverStorePrinterInfFiles))
+        $DriverIndexCache['DriverStore'] = @(New-InfIndexCache -InfFiles (Get-DriverStorePrinterInfFiles))
     }
     $storeIndex = $DriverIndexCache['DriverStore']
     $hitStore   = Find-AndInstallDriverFromIndex -InfIndex $storeIndex -SearchTarget $searchTarget -WantedDriverName $WantedDriverName -WantedVendor $wantedVendor -PreferPcl6:$preferPcl6 -AllowVendorUniversal:$false
     if ($hitStore) {
-        $pNotice = Build-ProtocolNoticeText -DriverName $hitStore -OrigProto $origProto -PreferPcl6 $preferPcl6
+        $pNotice = New-ProtocolNoticeText -DriverName $hitStore -OrigProto $origProto -PreferPcl6 $preferPcl6
         return [pscustomobject]@{ Success = $true; DriverName = $hitStore; Source = 'Win11DriverStore'; UsedSamFallback = $false; ProtocolNotice = $pNotice }
     }
 
     if ($null -eq $DriverIndexCache['LocalPrt']) {
-        $DriverIndexCache['LocalPrt'] = @(Build-InfIndexCache -InfFiles (Get-LocalPrtFolderInfFiles))
+        $DriverIndexCache['LocalPrt'] = @(New-InfIndexCache -InfFiles (Get-LocalPrtFolderInfFiles))
     }
     $prtIndex = $DriverIndexCache['LocalPrt']
     $hitPrt   = Find-AndInstallDriverFromIndex -InfIndex $prtIndex -SearchTarget $searchTarget -WantedDriverName $WantedDriverName -WantedVendor $wantedVendor -PreferPcl6:$preferPcl6 -AllowVendorUniversal:$false
     if ($hitPrt) {
-        $pNotice = Build-ProtocolNoticeText -DriverName $hitPrt -OrigProto $origProto -PreferPcl6 $preferPcl6
+        $pNotice = New-ProtocolNoticeText -DriverName $hitPrt -OrigProto $origProto -PreferPcl6 $preferPcl6
         return [pscustomobject]@{ Success = $true; DriverName = $hitPrt; Source = 'LocalPrtFolder'; UsedSamFallback = $false; ProtocolNotice = $pNotice }
     }
 
@@ -614,7 +614,7 @@ function Resolve-BestDriverForPrinter {
     $bestUnivSc = -1
     foreach ($drv in $installedAll) {
         if ($drv.Name -notmatch $global:AsanCtx.VendorUniversalRegex) { continue }
-        $sc = Score-DriverDisplayName -DisplayName $drv.Name -SearchTarget $searchTarget -WantedNorm $searchNorm -WantedVendor $wantedVendor -Tokens $tokens -ModelStems $modelStems -WantedHasDigits $wantedHasDigits -PreferPcl6 $preferPcl6 -AllowVendorUniversal $true
+        $sc = Measure-DriverDisplayName -DisplayName $drv.Name -SearchTarget $searchTarget -WantedNorm $searchNorm -WantedVendor $wantedVendor -Tokens $tokens -ModelStems $modelStems -WantedHasDigits $wantedHasDigits -PreferPcl6 $preferPcl6 -AllowVendorUniversal $true
         if ($sc -ge 160 -and $sc -gt $bestUnivSc) {
             $bestUnivSc = $sc
             $bestUniv   = [string]$drv.Name

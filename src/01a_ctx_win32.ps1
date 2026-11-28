@@ -34,7 +34,7 @@ $prtClass    = '{4d36e979-e325-11ce-bfc1-08002be2092f}'
 $pqClass     = '{1ed2bbf9-11f0-4084-b21f-ad83a8e6dcdc}'
 
 $global:AsanCtx = [hashtable]::Synchronized(@{
-    AppVersion                 = '1.0.0-beta.5'
+    AppVersion                 = '1.0.0-beta.6'
     OriginalScriptPath         = $resolvedOrigPath
     ServerIP                   = $serverIpVal
     InternalDnsIP              = '10.71.1.5'
@@ -606,7 +606,7 @@ namespace AsanWin32
             PRINTER_DEFAULTS pd = new PRINTER_DEFAULTS();
             pd.pDatatype = null;
             pd.pDevMode = IntPtr.Zero;
-            pd.DesiredAccess = 0x00000004; // PRINTER_ACCESS_ADMINISTER
+            pd.DesiredAccess = 0x000F000C; // PRINTER_ALL_ACCESS (DeletePrinter 권한 필수)
             if (!OpenPrinter(printerName, out hPrt, ref pd) || hPrt == IntPtr.Zero)
             {
                 return false;

@@ -2,7 +2,7 @@
 
 이 문서는 `asan-desktop-ui` 스킬의 보조 레퍼런스입니다. PowerShell 5.1 + `.NET Framework 4.x` WinForms 기반 단일 `.bat`/`.ps1` 도구를 제작할 때 아래 검증된 패턴을 그대로 재사용하세요.
 
-> **PS 5.1 엄격 문법 주의:** `? :`, `??`, `&&`, `||`, 해시테이블 리터럴(`@{ ... }`) 내부 `if`, WinForms 이벤트 핸들러 내 로컬 변수 클로저 캡처(`$sender`, `$script:Ui`, `DialogResult`만 사용), C# 6+ 문법을 절대 사용하지 마세요.
+> **PS 5.1 엄격 문법 주의:** `? :`, `??`, `&&`, `||`, 해시테이블 리터럴(`@{ ... }`) 내부 `if`, WinForms 이벤트 핸들러 내 로컬 변수 클로저 캡처(`param($ctrl, $e)`의 `$ctrl`, `$script:Ui`, `DialogResult`만 사용 — 자동 변수 `$sender` 덮어쓰기 금지), C# 6+ 문법을 절대 사용하지 마세요.
 
 ---
 
@@ -133,9 +133,9 @@ function Register-DisabledTooltipTree {
     }
     if ($hasChildBtn) {
         $Root.Add_MouseMove({
-            param($sender, $e)
+            param($ctrl, $e)
             if (-not $script:Ui.ToolTip) { return }
-            $hit = $sender.GetChildAtPoint($e.Location)
+            $hit = $ctrl.GetChildAtPoint($e.Location)
             if ($hit -and ($hit -is [System.Windows.Forms.Button]) -and (-not $hit.Enabled)) {
                 $reason = ''
                 if ($script:Ui.DisabledReasons.ContainsKey($hit)) { $reason = [string]$script:Ui.DisabledReasons[$hit] }
@@ -144,9 +144,9 @@ function Register-DisabledTooltipTree {
                     if ($script:Ui.LastDisabledBtn -ne $hit) {
                         if ($script:Ui.LastDisabledHost) { try { $script:Ui.ToolTip.Hide($script:Ui.LastDisabledHost) } catch {} }
                         try {
-                            $script:Ui.ToolTip.Show($reason, $sender, ($hit.Left + 6), ($hit.Bottom + 4), 7000)
+                            $script:Ui.ToolTip.Show($reason, $ctrl, ($hit.Left + 6), ($hit.Bottom + 4), 7000)
                             $script:Ui.LastDisabledBtn  = $hit
-                            $script:Ui.LastDisabledHost = $sender
+                            $script:Ui.LastDisabledHost = $ctrl
                         } catch {}
                     }
                     return
@@ -159,9 +159,9 @@ function Register-DisabledTooltipTree {
             }
         })
         $Root.Add_MouseLeave({
-            param($sender, $e)
-            if ($script:Ui.LastDisabledHost -eq $sender -and $script:Ui.ToolTip) {
-                try { $script:Ui.ToolTip.Hide($sender) } catch {}
+            param($ctrl, $e)
+            if ($script:Ui.LastDisabledHost -eq $ctrl -and $script:Ui.ToolTip) {
+                try { $script:Ui.ToolTip.Hide($ctrl) } catch {}
                 $script:Ui.LastDisabledBtn  = $null
                 $script:Ui.LastDisabledHost = $null
             }
@@ -170,7 +170,7 @@ function Register-DisabledTooltipTree {
 }
 ```
 
-> `New-StyledButton` 생성 직후 `$btn.Add_Paint`에서 `if ($sender.Enabled) { return }` 가드를 두고 `DisabledBg` 채움 + `DashStyle::Dash` 1px 사각형 + `TextRenderer::DrawText`(`DisabledFg`, 비굵은 폰트)를 그리면 완료됩니다. 참고 원본: `src/02_gui_shell_tab1.ps1`.
+> `New-StyledButton` 생성 직후 `$btn.Add_Paint`에서 `if ($ctrl.Enabled) { return }` 가드를 두고 `DisabledBg` 채움 + `DashStyle::Dash` 1px 사각형 + `TextRenderer::DrawText`(`DisabledFg`, 비굵은 폰트)를 그리면 완료됩니다. 참고 원본: `src/02_gui_shell_tab1.ps1`.
 
 ---
 

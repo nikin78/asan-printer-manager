@@ -56,7 +56,6 @@ $utf8NoBomWriter  = New-Object System.Text.UTF8Encoding($false)
 
 # 기본 공용 암호는 src/01a_ctx_win32.ps1에 내장되어 별도 파일 없이 즉시 동작하며,
 # 로컬 secrets.local.json이 존재하고 소스에 플레이스홀더가 있을 때만 선택적 오버라이드를 수행합니다.
-$injectedPwCount = 0
 $pwLiteral       = $null
 $userOverride    = $null
 $placeholderExpr = "@('__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__')"
@@ -69,9 +68,8 @@ if ((-not $AllowPlaceholderBuild) -and (Test-Path -LiteralPath $SecretsFile)) {
     if ($pws.Count -gt 0) {
         $validPws = @($pws | Where-Object { $_ -notmatch '(?i)CHANGE_ME_|__ASAN_DEFAULT_PASSWORDS_PLACEHOLDER__' })
         if ($validPws.Count -gt 0) {
-            $escapedItems    = @($validPws | ForEach-Object { "'" + ($_.Replace("'", "''")) + "'" })
-            $pwLiteral       = '@(' + ($escapedItems -join ', ') + ')'
-            $injectedPwCount = $validPws.Count
+            $escapedItems = @($validPws | ForEach-Object { "'" + ($_.Replace("'", "''")) + "'" })
+            $pwLiteral    = '@(' + ($escapedItems -join ', ') + ')'
         }
     }
     if ($secObj.PSObject.Properties.Name -contains 'DefaultUser' -and -not [string]::IsNullOrWhiteSpace([string]$secObj.DefaultUser)) {

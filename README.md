@@ -1,4 +1,4 @@
-# 서울아산병원 프린터 · 드라이버 마이그레이션 도구 (`v1.0.0-beta.5`)
+# 서울아산병원 프린터 · 드라이버 마이그레이션 도구 (`v1.0.0-beta.6`)
 
 > **컴퓨터를 새 PC로 교체할 때, 기존 PC에 쓰던 프린터·바코드기·스캐너를 버튼 몇 번으로 그대로 옮겨 주는 프로그램입니다.**  
 > 별도 설치 불필요 · 설정 파일 만들기 불필요 · **`Asan_Printer_Manager.bat` 파일 딱 1개만 받아 실행하면 끝!**
@@ -188,10 +188,10 @@ Windows 11 최신 버전에서 이 기능이 켜져 있으면 교세라·삼성�
 
 > 일반 사용자분들은 여기부터는 읽지 않으셔도 됩니다. 유지보수 및 코드 수정 시 참고하는 기술 명세입니다.
 
-### 핵심 기술 명세 (`v1.0.0-beta.5`)
-* **단일 파일 무의존성 구조:** Windows 기본 PowerShell 5.0/5.1 + `.NET Framework 4.x` + 인라인 C# 5.0 Win32 P/Invoke(`AsanWin32.NativeApi`)로 구성되어 외부 런타임이 전혀 필요하지 않습니다(구형 Windows 10 초기 빌드 `1507`/`1511`부터 최신 Windows 11 `24H2`까지 모두 호환).
-* **골든 이미지 손상 · WMI 오류 완벽 대응 네이티브 엔진:** 병원 골든 이미지 PC에서 흔히 발생하는 WMI 클래스 오류(`잘못된 클래스입니다` / `0x80041010`), 비활성화된 인쇄 스풀러, 구형/손상된 `pnputil` 환경에서도 멈추지 않도록 프린터 조회·등록·삭제·기본 지정(`winspool.drv` `EnumPrintersW` / `AddPrinterW` / `AddPrinterConnectionW` / `SetDefaultPrinterW`), Machine SID(`netapi32.dll` `NetUserModalsGet`), 네트워크/라우팅(`.NET NetworkInterface` + 망분리 가상 스위치 필터링), 드라이버 추출(`DriverStore\FileRepository` 및 `INF\oem*.inf` 직접 폴백), LPT 포트(`DEVICEMAP\PARALLEL PORTS` 병행 조회)를 모두 네이티브/레지스트리 기반으로 동작시킵니다.
-* **Windows 11 공유 프린터 차단 자동 우회:** Windows 11(`22H2`~`24H2`)에서 작업 그룹 공유 프린터 연결 시 발생하는 RPC/Point-and-Print 오류(`0x0000011b` / `0x00000709` / `0x00000bcb`)를 방지하기 위해 `RpcUseNamedPipeProtocol=1` 호환 정책을 자동 적용하고, 원격 드라이버 다운로드가 차단될 경우 로컬 포트(`\\IP\공유명`) + 로컬 x64 드라이버 방식으로 자동 우회 복원합니다.
+### 핵심 기술 명세 (`v1.0.0-beta.6`)
+* **단일 파일 무의존성 구조:** Windows 기본 PowerShell 5.0/5.1 + `.NET Framework 4.x` + 인라인 C# 5.0 Win32 P/Invoke(`AsanWin32.NativeApi`)로 구성되어 외부 런타임이 전혀 필요하지 않습니다(구형 Windows 10 초기 빌드 `1507`/`1511`부터 최신 Windows 11 `24H2`까지 모두 호환, 전 모듈 `PSScriptAnalyzer` 경고 0건).
+* **골든 이미지 손상 · WMI 오류 완벽 대응 네이티브 엔진:** 병원 골든 이미지 PC에서 흔히 발생하는 WMI 클래스 오류(`잘못된 클래스입니다` / `0x80041010`), 비활성화된 인쇄 스풀러, 구형/손상된 `pnputil` 환경에서도 멈추지 않도록 프린터 조회·등록·삭제·기본 지정(`winspool.drv` `EnumPrintersW` / `AddPrinterW` / `DeletePrinter(PRINTER_ALL_ACCESS)` / `AddPrinterConnectionW` / `SetDefaultPrinterW`), Machine SID(`netapi32.dll` `NetUserModalsGet`), 네트워크/라우팅(`.NET NetworkInterface` + 망분리 가상 스위치 필터링), 드라이버 추출(`DriverStore\FileRepository` 및 `INF\oem*.inf` `[Strings]` 토큰 해석 폴백), LPT·USB 진단(`DEVICEMAP\PARALLEL PORTS` 및 `pnputil` 폴백)을 모두 네이티브/레지스트리 기반으로 동작시킵니다.
+* **Windows 11 공유 프린터 차단 자동 우회:** Windows 11(`22H2`~`24H2`)에서 작업 그룹 공유 프린터 연결 시 발생하는 RPC/Point-and-Print 오류(`0x0000011b` / `0x00000709` / `0x00000bcb`)를 방지하기 위해 `RpcUseNamedPipeProtocol=1` 호환 정책을 자동 적용하고, 호스트+공유명 정밀 검증 후 원격 드라이버 다운로드가 차단될 경우 로컬 포트(`\\IP\공유명`) + 로컬 x64 드라이버 방식으로 자동 우회 복원(기본 프린터 지정 포함)합니다.
 * **강화된 백업 서버 SMB 인증:** 기본 공용 계정(`admin` + 3종 암호)이 내장되어 별도 파일 없이 즉시 연결되며, 기존 세션 우선 재사용 및 공유 경로 직접 인증(`admin` / `IP\admin` / `.\admin` 다중 포맷 + `NetShareEnum` 디스크 공유 탐색)을 수행합니다.
 * **보안 및 안전 가드:** 실행 종료 시 백업 서버 SMB 세션 즉시 해제, 오류 리포트 전송 시 비밀번호 `[REDACTED]` 마스킹, 빈 백업(0대) 덮어쓰기 방지 확인 가드, 스풀러 중지 상태 원자적 레지스트리 정책 적용, `_PRTBAK` 직계 하위 및 마커 검증 가드.
 * 버전별 변경 내역: [CHANGELOG.md](./CHANGELOG.md) · 현장 테스트 시나리오: [docs/E2E_TEST_CHECKLIST_v16.md](./docs/E2E_TEST_CHECKLIST_v16.md)
@@ -200,7 +200,7 @@ Windows 11 최신 버전에서 이 기능이 켜져 있으면 교세라·삼성�
 
 ```text
 asan-printer-manager/
-├── VERSION                         # 단일 버전 기준 (1.0.0-beta.5)
+├── VERSION                         # 단일 버전 기준 (1.0.0-beta.6)
 ├── AGENTS.md / HANDOFF.md          # AI 에이전트 작업 규칙 및 집↔직장 인수인계서
 ├── README.md / CHANGELOG.md        # 사용자 가이드 및 변경 이력
 ├── .agents/skills/asan-desktop-ui/ # 아산병원 데스크톱 툴 공용 GUI 디자인 시스템 스킬

@@ -3,8 +3,7 @@
 # ============================================================================
 function Find-LocalSpecialInstaller {
     param(
-        [string]$SpecialType,
-        [switch]$SkipRemoteProbe
+        [string]$SpecialType
     )
 
     $baseRoots = @(
@@ -14,7 +13,7 @@ function Find-LocalSpecialInstaller {
     )
 
     if ($SpecialType -eq 'ZEBRA_ZT411') {
-        # [정책] 원격 드라이버 서버 접근 금지 -> 모든 골든 이미지 공통 로컬 경로 최우선 탐색 (-SkipRemoteProbe는 하위호환 유지)
+        # [정책] 원격 드라이버 서버 접근 금지 -> 모든 골든 이미지 공통 로컬 경로 최우선 탐색
         $ztSearchDirs = [System.Collections.Generic.List[string]]::new()
         foreach ($exactDir in @(
             'C:\Users\admin\드라이버(win10_x64)\AMIS 3.0 장비\ZT411 (약국용 신형라벨프린터)',
@@ -158,17 +157,16 @@ function Find-LocalSpecialInstaller {
 function Get-SpecialPrinterAssistantInfo {
     param(
         $SpecialRow,
-        [switch]$SkipRemoteProbe,
         [object[]]$PreloadedLpts = $null
     )
 
-    $inst = Find-LocalSpecialInstaller -SpecialType $SpecialRow.SpecialType -SkipRemoteProbe:$SkipRemoteProbe
+    $inst = Find-LocalSpecialInstaller -SpecialType $SpecialRow.SpecialType
     switch ($SpecialRow.SpecialType) {
         'SIP30M_IDCARD' {
             $ipHint = '백업 IP'
             if ($SpecialRow.HostAddress) { $ipHint = [string]$SpecialRow.HostAddress }
             else {
-                $exIp = Extract-FirstUsableIPv4 -Text ([string]$SpecialRow.PortName)
+                $exIp = Select-FirstUsableIPv4 -Text ([string]$SpecialRow.PortName)
                 if ($exIp) { $ipHint = $exIp }
             }
 
@@ -311,7 +309,7 @@ function Complete-Sip30mPostInstall {
         [string]$BackupSourcePath = $null
     )
 
-    Ensure-SpoolerRunning
+    Start-SpoolerSafe
     $allPrts = @(Get-PrinterSafe)
     $sipPrt  = $allPrts | Where-Object { $_.Name -match '(?i)SISS\s+HODOO\s+SIP-30|SIP-30\(Class\)' } | Select-Object -First 1
     if (-not $sipPrt) {
@@ -326,7 +324,7 @@ function Complete-Sip30mPostInstall {
         return [pscustomobject]@{ Success = $false; Message = "유효한 SIP-30M 대상 TCP/IPv4 주소가 아닙니다: '$TargetIp'" }
     }
 
-    $pRes = Ensure-RestoredPortSafe -PortObj $null -FallbackName $TargetIp -OverrideKind 'TCPIP' -OverrideHostIp $TargetIp
+    $pRes = Initialize-RestoredPortSafe -PortObj $null -FallbackName $TargetIp -OverrideKind 'TCPIP' -OverrideHostIp $TargetIp
     if (-not $pRes.Success) {
         return [pscustomobject]@{ Success = $false; Message = "TCP/IP 포트($TargetIp) 생성 실패: $($pRes.Reason)" }
     }
@@ -353,7 +351,7 @@ function Complete-Sip30mPostInstall {
                 } catch {}
             }
             if (-not $renamedOk) {
-                [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Xs', '/n', $curName, 'PrinterName', $DesiredPrinterName))
+                [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Xs', '/q', '/n', $curName, 'PrinterName', $DesiredPrinterName))
                 $chkRen = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $DesiredPrinterName }) | Select-Object -First 1
                 if ($chkRen) { $renamedOk = $true }
             }
@@ -420,7 +418,7 @@ function Reset-ClientSpoolerAndHostCred {
             Get-ChildItem -LiteralPath $spoolQueueDir -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
         }
     } finally {
-        Ensure-SpoolerRunning
+        Start-SpoolerSafe
     }
 
     if (-not [string]::IsNullOrWhiteSpace($HostName)) {
@@ -609,8 +607,9 @@ function Send-AsanBugReport {
 
     $lptPorts = @(Get-DeviceManagerLptPorts)
     $usbPrintDevs = @()
+    $usbWmiRan    = $false
     try {
-        $usbPrintDevs = @(Get-CimInstance -ClassName Win32_PnPEntity -ErrorAction SilentlyContinue | Where-Object {
+        $usbPrintDevs = @(Get-CimInstance -ClassName Win32_PnPEntity -ErrorAction Stop | Where-Object {
             ([string]$_.DeviceID) -match '^(?i)(USBPRINT\\|USB\\VID_(0A5F|1504|0525|154F))' -or
             (([string]$_.DeviceID) -match '^(?i)USB\\' -and $null -ne $_.ConfigManagerErrorCode -and [int]$_.ConfigManagerErrorCode -ne 0)
         } | ForEach-Object {
@@ -622,7 +621,21 @@ function Send-AsanBugReport {
                 ErrorCode = [int]$_.ConfigManagerErrorCode
             }
         })
+        $usbWmiRan = $true
     } catch {}
+    if (-not $usbWmiRan) {
+        try {
+            $usbPrintDevs = @(Get-BrokenBarcodeUsbDevices -IncludeHealthyBarcode | ForEach-Object {
+                [pscustomobject]@{
+                    DeviceID  = [string]$_.DeviceID
+                    Name      = [string]$_.Name
+                    PNPClass  = [string]$_.PNPClass
+                    Status    = [string]$_.Status
+                    ErrorCode = [int]$_.ErrorCode
+                }
+            })
+        } catch {}
+    }
 
     $cleanTarget = Protect-ReportSensitiveText -Text $TargetPrinter      -ExtraSecrets $ExtraSecrets
     $cleanLoaded = Protect-ReportSensitiveText -Text $LoadedBackupSource -ExtraSecrets $ExtraSecrets
@@ -745,7 +758,7 @@ function Send-AsanBugReport {
 # [H2 Fix] 설치 프린터 SNMP/양방향 검증 조회 (Runspace 실행을 위해 코어 편입)
 # ============================================================================
 function Get-InstalledPrintersVerifyInfo {
-    Ensure-SpoolerRunning
+    Start-SpoolerSafe
     $cimPrinters = @(Get-LocalPrintersSafe)
     $tcpRegRoot  = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors\Standard TCP/IP Port\Ports'
     $prtRegRoot  = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Printers'

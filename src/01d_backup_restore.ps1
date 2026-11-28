@@ -30,7 +30,7 @@ function Invoke-PrinterBackupEngine {
     )
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    Ensure-SpoolerRunning
+    Start-SpoolerSafe
 
     if ([string]::IsNullOrWhiteSpace($OriginalScriptPath)) { $OriginalScriptPath = $global:AsanCtx.OriginalScriptPath }
     if (-not (Test-Path -LiteralPath $global:AsanCtx.WorkBaseDir)) { New-Item -ItemType Directory -Path $global:AsanCtx.WorkBaseDir -Force | Out-Null }
@@ -489,7 +489,7 @@ function Test-BackupDataDeferred {
 
         $hostAddr = $null
         if ($portObj -and $portObj.HostAddress) { $hostAddr = [string]$portObj.HostAddress }
-        else { $hostAddr = Extract-FirstUsableIPv4 -Text $port }
+        else { $hostAddr = Select-FirstUsableIPv4 -Text $port }
 
         $liveStatus = 'Healthy'
         if ($p.BackupStatusCode) { $liveStatus = [string]$p.BackupStatusCode }
@@ -711,14 +711,14 @@ function Set-PrinterPropsSafe {
     }
     if ([string]::IsNullOrWhiteSpace($nm)) { throw '프린터 이름이 비어 있어 속성을 변경할 수 없습니다.' }
     if (-not [string]::IsNullOrWhiteSpace($DriverName)) {
-        [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Xs', '/n', $nm, 'DriverName', $DriverName))
+        [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Xs', '/q', '/n', $nm, 'DriverName', $DriverName))
         $chkD = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $nm }) | Select-Object -First 1
         if (-not $chkD -or ([string]$chkD.DriverName -ine $DriverName)) {
             throw "드라이버 변경이 스풀러에 반영되지 않았습니다 ($DriverName)"
         }
     }
     if (-not [string]::IsNullOrWhiteSpace($PortName)) {
-        [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Xs', '/n', $nm, 'PortName', $PortName))
+        [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/Xs', '/q', '/n', $nm, 'PortName', $PortName))
         $chkP = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $nm }) | Select-Object -First 1
         if (-not $chkP -or (([string]$chkP.PortName -split ',' | ForEach-Object { $_.Trim() }) -notcontains $PortName)) {
             throw "포트 변경이 스풀러에 반영되지 않았습니다 ($PortName)"
@@ -794,13 +794,29 @@ function Add-SharedPrinterConnectionSafe {
         $lastErr = $_.Exception.Message
     }
 
+    $chkHost  = ''
     $chkShare = [IO.Path]::GetFileName($ConnectionName)
-    $exists = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $ConnectionName -or ($_.Network -and $_.ShareName -ieq $chkShare) }) | Select-Object -First 1
+    $cmConn   = [regex]::Match($ConnectionName, '^\\\\([^\\]+)\\(.+)$')
+    if ($cmConn.Success) {
+        $chkHost  = $cmConn.Groups[1].Value.Trim()
+        $chkShare = $cmConn.Groups[2].Value.TrimEnd('\')
+    }
+    $matchShared = {
+        param($pItem)
+        if ($pItem.Name -ieq $ConnectionName) { return $true }
+        if ($pItem.Network -and ([string]$pItem.ShareName -ieq $chkShare)) {
+            $srvClean = ([string]$pItem.ServerName).Trim().TrimStart('\')
+            if ([string]::IsNullOrWhiteSpace($chkHost) -or ($srvClean -ieq $chkHost)) { return $true }
+        }
+        return $false
+    }
+
+    $exists = @(Get-LocalPrintersSafe | Where-Object { & $matchShared $_ }) | Select-Object -First 1
     if ($exists) { return }
 
     $nativeRc = [AsanWin32.NativeApi]::AddPrinterConnectionNative($ConnectionName)
     if ($nativeRc -eq 0) {
-        $exists = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $ConnectionName -or ($_.Network -and $_.ShareName -ieq $chkShare) }) | Select-Object -First 1
+        $exists = @(Get-LocalPrintersSafe | Where-Object { & $matchShared $_ }) | Select-Object -First 1
         if ($exists) { return }
     } elseif ([string]::IsNullOrWhiteSpace($lastErr)) {
         $lastErr = "Win32 AddPrinterConnection 오류 코드=$nativeRc"
@@ -808,13 +824,13 @@ function Add-SharedPrinterConnectionSafe {
 
     [void](Invoke-NativeCommand -FilePath 'rundll32.exe' -Arguments @('printui.dll,PrintUIEntry', '/in', '/q', '/n', $ConnectionName))
     Start-Sleep -Milliseconds 400
-    $exists = @(Get-LocalPrintersSafe | Where-Object { $_.Name -ieq $ConnectionName -or ($_.Network -and $_.ShareName -ieq $chkShare) }) | Select-Object -First 1
+    $exists = @(Get-LocalPrintersSafe | Where-Object { & $matchShared $_ }) | Select-Object -First 1
     if ($exists) { return }
 
     throw "공유 프린터 스풀러 등록 미확인 ($lastErr / Native=$nativeRc)"
 }
 
-function Ensure-RestoredPortSafe {
+function Initialize-RestoredPortSafe {
     param(
         $PortObj,
         [string]$FallbackName,
@@ -873,8 +889,10 @@ function Ensure-RestoredPortSafe {
                 if ($PortObj -and $PortObj.PortNumber -and [int]$PortObj.PortNumber -gt 0) { $pNum = [int]$PortObj.PortNumber }
                 [void](Stop-SpoolerSafe)
                 try {
+                    $protoDword = 1
+                    if ($isLpr) { $protoDword = 2 }
                     New-Item -Path $tcpPortKey -Force -ErrorAction Stop | Out-Null
-                    Set-ItemProperty -LiteralPath $tcpPortKey -Name 'Protocol' -Value $(if ($isLpr) { 2 } else { 1 }) -Type DWord
+                    Set-ItemProperty -LiteralPath $tcpPortKey -Name 'Protocol' -Value $protoDword -Type DWord
                     Set-ItemProperty -LiteralPath $tcpPortKey -Name 'Version' -Value 2 -Type DWord
                     Set-ItemProperty -LiteralPath $tcpPortKey -Name 'HostName' -Value $hostIp -Type String
                     Set-ItemProperty -LiteralPath $tcpPortKey -Name 'IPAddress' -Value '' -Type String
@@ -884,12 +902,14 @@ function Ensure-RestoredPortSafe {
                     Set-ItemProperty -LiteralPath $tcpPortKey -Name 'SNMP Enabled' -Value 0 -Type DWord
                     Set-ItemProperty -LiteralPath $tcpPortKey -Name 'SNMP Index' -Value 1 -Type DWord
                     if ($isLpr) {
+                        $byteCntDword = 0
+                        if ($PortObj.ByteCount) { $byteCntDword = 1 }
                         Set-ItemProperty -LiteralPath $tcpPortKey -Name 'Queue' -Value ([string]$PortObj.Queue) -Type String
                         Set-ItemProperty -LiteralPath $tcpPortKey -Name 'Double Spool' -Value 0 -Type DWord
-                        Set-ItemProperty -LiteralPath $tcpPortKey -Name 'LPR Byte Counting' -Value $(if ($PortObj.ByteCount) { 1 } else { 0 }) -Type DWord
+                        Set-ItemProperty -LiteralPath $tcpPortKey -Name 'LPR Byte Counting' -Value $byteCntDword -Type DWord
                     }
                 } finally {
-                    Ensure-SpoolerRunning
+                    Start-SpoolerSafe
                 }
             }
             return [pscustomobject]@{ Success = $true; PortName = $pName; Reason = $null; AuthFailedHost = $null }
@@ -925,7 +945,7 @@ function Ensure-RestoredPortSafe {
                 try {
                     [Microsoft.Win32.Registry]::SetValue('HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Ports', $pName, '')
                 } finally {
-                    Ensure-SpoolerRunning
+                    Start-SpoolerSafe
                 }
                 $chk = @(Get-PrinterPortSafe | Where-Object { $_.Name -ieq $pName }) | Select-Object -First 1
                 if ($chk) { return [pscustomobject]@{ Success = $true; PortName = $pName; Reason = $null; AuthFailedHost = $null } }
@@ -940,7 +960,7 @@ function Ensure-RestoredPortSafe {
                 try {
                     [Microsoft.Win32.Registry]::SetValue('HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Ports', $pName, '')
                 } finally {
-                    Ensure-SpoolerRunning
+                    Start-SpoolerSafe
                 }
             }
             return [pscustomobject]@{ Success = $true; PortName = $pName; Reason = $null; AuthFailedHost = $null }
@@ -993,7 +1013,7 @@ function Invoke-AsanStandardPolicyAtomic {
         [object[]]$PendingRegImports = @()
     )
 
-    Ensure-SpoolerRunning
+    Start-SpoolerSafe
 
     if ($CleanMigratedVirtuals) {
         foreach ($p in @(Get-PrinterSafe)) {
@@ -1072,7 +1092,7 @@ function Invoke-AsanStandardPolicyAtomic {
         }
     }
     finally {
-        Ensure-SpoolerRunning
+        Start-SpoolerSafe
     }
     return [pscustomobject]@{
         SpoolerStopped   = $spoolerStopped
@@ -1091,7 +1111,7 @@ function Invoke-PrinterRestoreEngine {
     )
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    Ensure-SpoolerRunning
+    Start-SpoolerSafe
 
     $wppCheck = Test-WindowsProtectedPrintMode
     if ($wppCheck.IsEnabled -and -not $IgnoreWppWarning) {
@@ -1123,6 +1143,7 @@ function Invoke-PrinterRestoreEngine {
     $samFallbackList    = [System.Collections.Generic.List[string]]::new()
     $ztManualPrefsList  = [System.Collections.Generic.List[string]]::new()
     $pendingRegImports  = [System.Collections.Generic.List[object]]::new()
+    $renamedQueueMap    = @{}
     $needsUsbReplug     = $false
     $brmRestoredOk      = $false
 
@@ -1139,7 +1160,9 @@ function Invoke-PrinterRestoreEngine {
             $preExistingDrivers[([string]$ed.Name).ToLowerInvariant()] = $true
         }
 
-        Write-ProgressSafe -OnProgress $OnProgress -Percent 10 -Message '[1/6] 백업 데이터 로컬 스테이징 준비 중...'
+        $ipTag = ''
+        if (-not [string]::IsNullOrWhiteSpace($PcIp)) { $ipTag = " (대상 PC IP: $PcIp)" }
+        Write-ProgressSafe -OnProgress $OnProgress -Percent 10 -Message "[1/6] 백업 데이터 로컬 스테이징 준비 중$ipTag..."
         if ($isZip) {
             [System.IO.Compression.ZipFile]::ExtractToDirectory($SourcePath, $localTemp)
         } else {
@@ -1194,7 +1217,7 @@ function Invoke-PrinterRestoreEngine {
                     [Microsoft.Win32.Registry]::SetValue('HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Ports', $up, '')
                 }
             } finally {
-                Ensure-SpoolerRunning
+                Start-SpoolerSafe
             }
         }
 
@@ -1318,7 +1341,7 @@ function Invoke-PrinterRestoreEngine {
             }
         }
         # ExportedDrivers 인덱스만 선구축, DriverStore/LocalPrt는 드라이버 미발견 시 지연(Lazy) 구축
-        $exportedIndex          = @(Build-InfIndexCache -InfFiles $expInfs)
+        $exportedIndex          = @(New-InfIndexCache -InfFiles $expInfs)
         $usedZtLocalUsbFallback = $false
         if ($usbSpecialVendors.Count -gt 0) {
             $registeredZebraBackup = $false
@@ -1340,7 +1363,7 @@ function Invoke-PrinterRestoreEngine {
                 $_.Name -match '(?i)ZT41[01]' -and ($SkipPrintBrm -or (-not $preExistingDrivers.ContainsKey(([string]$_.Name).ToLowerInvariant())))
             })).Count -gt 0
             if ($hasSelectedZt411Usb -and (-not $registeredZebraBackup) -and (-not $brmAddedZtDrv)) {
-                $ztLocalFallback = Find-LocalSpecialInstaller -SpecialType 'ZEBRA_ZT411' -SkipRemoteProbe
+                $ztLocalFallback = Find-LocalSpecialInstaller -SpecialType 'ZEBRA_ZT411'
                 if ($ztLocalFallback -and $ztLocalFallback.InfPath -and (Test-Path -LiteralPath $ztLocalFallback.InfPath)) {
                     if (Install-DriverInfSafe -InfPath $ztLocalFallback.InfPath) {
                         $usedZtLocalUsbFallback = $true
@@ -1400,7 +1423,7 @@ function Invoke-PrinterRestoreEngine {
                 if ((-not $isSharedConnection) -and ($row.PortKind -eq 'USB' -or $existingPort -match '(?i)^USB\d+')) {
                     $curPortExists = @(Get-PrinterPortSafe | Where-Object { $_.Name -ieq $existingPort }) | Select-Object -First 1
                     if (-not $curPortExists) {
-                        $uRes = Ensure-RestoredPortSafe -PortObj $null -FallbackName $row.PortName -OverrideKind 'USB'
+                        $uRes = Initialize-RestoredPortSafe -PortObj $null -FallbackName $row.PortName -OverrideKind 'USB'
                         if ($uRes.Success) {
                             try {
                                 Set-PrinterPropsSafe -PrinterObj $existing -PrinterName $pName -PortName $uRes.PortName
@@ -1506,7 +1529,7 @@ function Invoke-PrinterRestoreEngine {
                     if (-not [string]::IsNullOrWhiteSpace([string]$row.DriverName)) {
                         $drvFb = Resolve-BestDriverForPrinter -PrinterName ([IO.Path]::GetFileName($conn)) -WantedDriverName ([string]$row.DriverName) -DriverIndexCache $driverIndexCache -ExcludeFromPcl6:$spec.ExcludeFromPcl6 -PreExistingDrivers $preExistingDrivers
                         if ($drvFb.Success) {
-                            $uncPortRes = Ensure-RestoredPortSafe -PortObj $null -FallbackName $conn -OverrideKind 'LOCAL_UNC'
+                            $uncPortRes = Initialize-RestoredPortSafe -PortObj $null -FallbackName $conn -OverrideKind 'LOCAL_UNC'
                             if ($uncPortRes.Success) {
                                 $localQueueName = $pName
                                 if ($localQueueName.StartsWith('\\')) {
@@ -1517,6 +1540,7 @@ function Invoke-PrinterRestoreEngine {
                                 }
                                 try {
                                     Add-LocalPrinterQueueSafe -PrinterName $localQueueName -DriverName $drvFb.DriverName -PortName $uncPortRes.PortName
+                                    $renamedQueueMap[$pName.ToLowerInvariant()] = $localQueueName
                                     $restoreLog.Add([pscustomobject]@{ Level = 'Success'; Target = $localQueueName; Message = "공유 Point-and-Print 차단 우회 성공 — 로컬 포트($conn) 및 드라이버($($drvFb.DriverName))로 자동 복원 완료" })
                                     $fallbackDone = $true
                                 } catch {}
@@ -1562,7 +1586,7 @@ function Invoke-PrinterRestoreEngine {
                 $portObj = @($backupData.Ports | Where-Object { $_.Name -ieq $targetPortName }) | Select-Object -First 1
             }
 
-            $pRes = Ensure-RestoredPortSafe -PortObj $portObj -FallbackName $targetPortName -OverrideKind $overrideKind -OverrideHostIp $overrideHostIp
+            $pRes = Initialize-RestoredPortSafe -PortObj $portObj -FallbackName $targetPortName -OverrideKind $overrideKind -OverrideHostIp $overrideHostIp
             if (-not $pRes.Success) {
                 $failures.Add([pscustomobject]@{ PrinterName = $pName; PortName = $targetPortName; DriverName = $drvRes.DriverName; Reason = $pRes.Reason; HostName = $pRes.AuthFailedHost })
                 if ($pRes.AuthFailedHost -and -not $seenAuth.ContainsKey($pRes.AuthFailedHost.ToLowerInvariant())) {
@@ -1666,7 +1690,11 @@ function Invoke-PrinterRestoreEngine {
         if ($backupData -and -not [string]::IsNullOrWhiteSpace([string]$backupData.DefaultPrinter)) {
             $defTarget = [string]$backupData.DefaultPrinter
             if ($selectedNames -contains $defTarget) {
-                [void](Set-DefaultPrinterSafe -PrinterName $defTarget)
+                $actualDefName = $defTarget
+                if ($renamedQueueMap.ContainsKey($defTarget.ToLowerInvariant())) {
+                    $actualDefName = [string]$renamedQueueMap[$defTarget.ToLowerInvariant()]
+                }
+                [void](Set-DefaultPrinterSafe -PrinterName $actualDefName)
             }
         }
 

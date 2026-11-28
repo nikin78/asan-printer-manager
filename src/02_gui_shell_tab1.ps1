@@ -288,7 +288,7 @@ function New-RightFlowStrip {
     return $flp
 }
 
-function Apply-ButtonVisualState {
+function Set-ButtonVisualState {
     param([System.Windows.Forms.Button]$Button)
     if (-not $Button -or $Button.IsDisposed) { return }
     if (-not $script:Ui.ButtonStyles -or -not $script:Ui.ButtonStyles.ContainsKey($Button)) { return }
@@ -349,9 +349,9 @@ function Register-DisabledTooltipTree {
 
     if ($hasChildBtn) {
         $Root.Add_MouseMove({
-            param($sender, $e)
+            param($ctrl, $e)
             if (-not $script:Ui.ToolTip) { return }
-            $hit = $sender.GetChildAtPoint($e.Location)
+            $hit = $ctrl.GetChildAtPoint($e.Location)
             if ($hit -and ($hit -is [System.Windows.Forms.Button]) -and (-not $hit.Enabled)) {
                 $reason = ''
                 if ($script:Ui.DisabledReasons.ContainsKey($hit)) {
@@ -365,9 +365,9 @@ function Register-DisabledTooltipTree {
                             try { $script:Ui.ToolTip.Hide($script:Ui.LastDisabledHost) } catch {}
                         }
                         try {
-                            $script:Ui.ToolTip.Show($reason, $sender, ($hit.Left + 6), ($hit.Bottom + 4), 7000)
+                            $script:Ui.ToolTip.Show($reason, $ctrl, ($hit.Left + 6), ($hit.Bottom + 4), 7000)
                             $script:Ui.LastDisabledBtn  = $hit
-                            $script:Ui.LastDisabledHost = $sender
+                            $script:Ui.LastDisabledHost = $ctrl
                         } catch {}
                     }
                     return
@@ -380,9 +380,9 @@ function Register-DisabledTooltipTree {
             }
         })
         $Root.Add_MouseLeave({
-            param($sender, $e)
-            if ($script:Ui.LastDisabledHost -eq $sender -and $script:Ui.ToolTip) {
-                try { $script:Ui.ToolTip.Hide($sender) } catch {}
+            param($ctrl, $e)
+            if ($script:Ui.LastDisabledHost -eq $ctrl -and $script:Ui.ToolTip) {
+                try { $script:Ui.ToolTip.Hide($ctrl) } catch {}
                 $script:Ui.LastDisabledBtn  = $null
                 $script:Ui.LastDisabledHost = $null
             }
@@ -470,30 +470,30 @@ function New-StyledButton {
         Font         = $font
         DisabledFont = $disF
     }
-    Apply-ButtonVisualState -Button $btn
+    Set-ButtonVisualState -Button $btn
     $btn.Add_EnabledChanged({
-        param($sender, $e)
-        Apply-ButtonVisualState -Button $sender
+        param($ctrl, $e)
+        Set-ButtonVisualState -Button $ctrl
     })
     # WinForms 기본 GrayText(#6D6D6D)를 대체해 비활성 상태를 점선 테두리·연한 무채색으로 직관적 표시
     $btn.Add_Paint({
-        param($sender, $e)
-        if ($sender.Enabled) { return }
+        param($ctrl, $e)
+        if ($ctrl.Enabled) { return }
         $g  = $e.Graphics
-        $rc = New-Object System.Drawing.Rectangle(0, 0, $sender.Width, $sender.Height)
+        $rc = New-Object System.Drawing.Rectangle(0, 0, $ctrl.Width, $ctrl.Height)
         $br = New-Object System.Drawing.SolidBrush($script:Theme.DisabledBg)
         $g.FillRectangle($br, $rc)
         $br.Dispose()
 
         $pen = New-Object System.Drawing.Pen($script:Theme.DisabledBorder, 1)
         $pen.DashStyle = [System.Drawing.Drawing2D.DashStyle]::Dash
-        $g.DrawRectangle($pen, 0, 0, ($sender.Width - 1), ($sender.Height - 1))
+        $g.DrawRectangle($pen, 0, 0, ($ctrl.Width - 1), ($ctrl.Height - 1))
         $pen.Dispose()
 
         $drawFont = $script:FontBase
-        if ($sender.Font -and $sender.Font.Size -lt 8.8) { $drawFont = $script:FontSmall }
+        if ($ctrl.Font -and $ctrl.Font.Size -lt 8.8) { $drawFont = $script:FontSmall }
         $flags = [System.Windows.Forms.TextFormatFlags]::HorizontalCenter -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor [System.Windows.Forms.TextFormatFlags]::EndEllipsis -bor [System.Windows.Forms.TextFormatFlags]::SingleLine
-        [System.Windows.Forms.TextRenderer]::DrawText($g, $sender.Text, $drawFont, $rc, $script:Theme.DisabledFg, $flags)
+        [System.Windows.Forms.TextRenderer]::DrawText($g, $ctrl.Text, $drawFont, $rc, $script:Theme.DisabledFg, $flags)
     })
 
     if ($RegisterBusy) { $script:Ui.BusyControls.Add($btn) }
@@ -881,7 +881,7 @@ function Stop-ActiveAsyncRunspace {
     $script:AsyncState.IsBusy        = $false
 }
 
-function Drain-AsyncLogQueue {
+function Receive-AsyncLogQueue {
     $item = $null
     while ($global:AsanCtx.LogQueue.TryDequeue([ref]$item)) {
         if ($null -eq $item) { continue }
@@ -1020,8 +1020,8 @@ function Show-WppRemediationDialog {
     $btnOpen.Dock = [System.Windows.Forms.DockStyle]::Left
     $btnOpen.Tag  = $WppStatus
     $btnOpen.Add_Click({
-        param($sender, $e)
-        $w = $sender.Tag
+        param($ctrl, $e)
+        $w = $ctrl.Tag
         if (-not $w) { return }
         try {
             if ($w.IsPolicyEnforced) {
@@ -1030,7 +1030,7 @@ function Show-WppRemediationDialog {
                 Start-Process -FilePath $w.SettingsUri
             }
         } catch {
-            [void](Show-AsanMessageBox -Text "설정 창을 열지 못했습니다: $($_.Exception.Message)" -Caption '열기 실패' -Buttons 'OK' -Icon 'Warning' -Owner ($sender.FindForm()))
+            [void](Show-AsanMessageBox -Text "설정 창을 열지 못했습니다: $($_.Exception.Message)" -Caption '열기 실패' -Buttons 'OK' -Icon 'Warning' -Owner ($ctrl.FindForm()))
         }
     })
 
@@ -1947,11 +1947,11 @@ function Initialize-MainGuiShell {
     $tabMain.Padding  = New-Object System.Drawing.Point(18, 6)
 
     $tabMain.Add_DrawItem({
-        param($sender, $e)
+        param($ctrl, $e)
         $g   = $e.Graphics
-        $tab = $sender.TabPages[$e.Index]
-        $rc  = $sender.GetTabRect($e.Index)
-        $sel = ($sender.SelectedIndex -eq $e.Index)
+        $tab = $ctrl.TabPages[$e.Index]
+        $rc  = $ctrl.GetTabRect($e.Index)
+        $sel = ($ctrl.SelectedIndex -eq $e.Index)
 
         $bgCol = $script:Theme.AsanMintSoft
         $fgCol = $script:Theme.InkSecondary
@@ -2010,7 +2010,7 @@ function Initialize-MainGuiShell {
     $timer.Interval = 150
     $timer.Add_Tick({
         try {
-            Drain-AsyncLogQueue
+            Receive-AsyncLogQueue
             if ($script:AsyncState.AsyncResult -and $script:AsyncState.AsyncResult.IsCompleted) {
                 $script:AsyncState.PollTimer.Stop()
                 $psRef      = $script:AsyncState.PowerShell
@@ -2025,7 +2025,7 @@ function Initialize-MainGuiShell {
 
                 try {
                     $rawOut = $psRef.EndInvoke($resRef)
-                    Drain-AsyncLogQueue
+                    Receive-AsyncLogQueue
                     $first = @($rawOut) | Select-Object -Last 1
                     if ($first -and $first.PSObject.Properties.Name -contains 'Ok') {
                         $okFlag  = [bool]$first.Ok
@@ -2074,7 +2074,7 @@ function Initialize-MainGuiShell {
 
     # ---------------- [6] 전역 단축키 (F5 / Alt+1~4) & 안전한 종료 가드 ----------------
     $form.Add_KeyDown({
-        param($sender, $e)
+        param($ctrl, $e)
         if ($e.KeyCode -eq [System.Windows.Forms.Keys]::F5 -and -not $script:AsyncState.IsBusy) {
             $e.Handled = $true
             Invoke-EnvironmentRefreshAsync
@@ -2090,7 +2090,7 @@ function Initialize-MainGuiShell {
     })
 
     $form.Add_FormClosing({
-        param($sender, $e)
+        param($ctrl, $e)
         $wasBusy    = [bool]$script:AsyncState.IsBusy
         $pausedPoll = $false
         if ($wasBusy) {
@@ -2218,7 +2218,7 @@ function Update-Tab1NetworkState {
     }
 }
 
-function Render-Tab1PrinterGrid {
+function Update-Tab1PrinterGrid {
     $dgv = $script:Tab1Ui.DgvPrinters
     if (-not $dgv -or $dgv.IsDisposed) { return }
 
@@ -2375,7 +2375,7 @@ function Update-Tab1ScannerBar {
     }
 }
 
-# [C1 Fix] DialogResult + $sender.CommitEdit로 클로저 소실 완전 제거
+# [C1 Fix] DialogResult + $ctrl.CommitEdit로 클로저 소실 완전 제거
 function Show-UnclassifiedScannerDialog {
     $inv = $script:AppState.ScannerInventory
     if (-not $inv -or (@($inv.UnclassifiedScanners)).Count -eq 0) { return }
@@ -2437,9 +2437,9 @@ function Show-UnclassifiedScannerDialog {
     }
 
     $dgv.Add_CurrentCellDirtyStateChanged({
-        param($sender, $e)
-        if ($sender.IsCurrentCellDirty) {
-            [void]$sender.CommitEdit([System.Windows.Forms.DataGridViewDataErrorContexts]::Commit)
+        param($ctrl, $e)
+        if ($ctrl.IsCurrentCellDirty) {
+            [void]$ctrl.CommitEdit([System.Windows.Forms.DataGridViewDataErrorContexts]::Commit)
         }
     })
 
@@ -2523,7 +2523,7 @@ function Invoke-Tab1ScanAsync {
             Add-UiLog -Message "장치관리자 LPT 포트 감지: $lptTxt (EPSON TM-T88VI 등 LPT1 무드라이버 장비는 드라이버 백업 제외, LPT1 인식만 확인)" -Level 'INFO'
         }
 
-        Render-Tab1PrinterGrid
+        Update-Tab1PrinterGrid
         Update-Tab1ScannerBar
         Update-Tab1NetworkState
 
@@ -2662,7 +2662,7 @@ function Start-Tab1BackupExecution {
             if ($data.UsedScannerInv) { $script:AppState.ScannerInventory = $data.UsedScannerInv }
             $script:Tab1Ui.HasScannedOnce      = $true
             $script:Tab1Ui.LastScanOffline     = ($res.Mode -eq 'OfflineZip')
-            Render-Tab1PrinterGrid
+            Update-Tab1PrinterGrid
             Update-Tab1ScannerBar
         }
 
@@ -2774,7 +2774,7 @@ function Initialize-Tab1BackupUi {
     $chkVirt.Font      = $script:FontBase
     $chkVirt.ForeColor = $script:Theme.InkPrimary
     $chkVirt.Margin    = New-Object System.Windows.Forms.Padding(0, 5, 0, 0)
-    $chkVirt.Add_CheckedChanged({ Render-Tab1PrinterGrid })
+    $chkVirt.Add_CheckedChanged({ Update-Tab1PrinterGrid })
     if ($tip) { $tip.SetToolTip($chkVirt, 'PDF, OneNote, Fax 등 기본 가상 프린터를 목록에 함께 표시합니다') }
     $flpToolLeft.Controls.AddRange(@($btnScan, $chkVirt))
 

@@ -108,7 +108,7 @@ try {
 
     $synJsonObj = [pscustomobject]@{
         FormatVersion    = 6
-        AppVersion       = '1.0.0-beta.3'
+        AppVersion       = '1.0.0-beta.6'
         SourceComputer   = 'WIN11-OLD-PC'
         SourceIP         = '172.25.99.99'
         SourceOsName     = 'Windows 11 Enterprise'
@@ -309,7 +309,7 @@ if ((`$sindohVends -contains 'RICOH') -or (`$sindohVends -notcontains 'SINDOH'))
 }
 `$ztTokens = @(Get-SignificantTokens 'ZDesigner ZT411-203dpi ZPL')
 `$ztStems  = @(Get-ModelStems -Tokens `$ztTokens)
-`$zdScore  = Score-DriverDisplayName -DisplayName 'ZDesigner ZD410-203dpi ZPL' -SearchTarget 'ZDesigner ZT411-203dpi ZPL' -WantedNorm (Normalize-Text 'ZDesigner ZT411-203dpi ZPL') -WantedVendor 'ZEBRA' -Tokens `$ztTokens -ModelStems `$ztStems -WantedHasDigits (`$ztStems.Count -gt 0) -PreferPcl6 `$false -AllowVendorUniversal `$false
+`$zdScore  = Measure-DriverDisplayName -DisplayName 'ZDesigner ZD410-203dpi ZPL' -SearchTarget 'ZDesigner ZT411-203dpi ZPL' -WantedNorm (Format-NormalizedText 'ZDesigner ZT411-203dpi ZPL') -WantedVendor 'ZEBRA' -Tokens `$ztTokens -ModelStems `$ztStems -WantedHasDigits (`$ztStems.Count -gt 0) -PreferPcl6 `$false -AllowVendorUniversal `$false
 if (`$zdScore -ge 160) {
     throw "Zebra 203dpi 이기종 오매칭(ZT411->ZD410 Score=`$zdScore)"
 }
@@ -329,7 +329,7 @@ try {
 } finally {
     `$env:COMPUTERNAME = `$oldComp
 }
-`$ztLocalInst = Find-LocalSpecialInstaller -SpecialType 'ZEBRA_ZT411' -SkipRemoteProbe
+`$ztLocalInst = Find-LocalSpecialInstaller -SpecialType 'ZEBRA_ZT411'
 if (`$ztLocalInst.ExePath -and `$ztLocalInst.ExePath -match '(?i)PrnInst') {
     throw "ZT411 설치기에서 금지된 PrnInst.exe 오인식: `$(`$ztLocalInst.ExePath)"
 }
@@ -339,7 +339,7 @@ foreach (`$ztField in @(`$ztLocalInst.Folder, `$ztLocalInst.ExePath, `$ztLocalIn
     }
 }
 
-# 2-D2. Build-InfIndexCache Provider=%Token% 간접 참조 해석 검증 (ZDesigner.inf 패턴)
+# 2-D2. New-InfIndexCache Provider=%Token% 간접 참조 해석 검증 (ZDesigner.inf 패턴)
 `$tmpInfPath = Join-Path '$($workRoot -replace "'", "''")' 'fake_indirect.inf'
 `$tmpInfBody = @(
     '[Version]',
@@ -351,7 +351,7 @@ foreach (`$ztField in @(`$ztLocalInst.Folder, `$ztLocalInst.ExePath, `$ztLocalIn
     'EP="Zebra Technologies Corporation"'
 ) -join "`r`n"
 [IO.File]::WriteAllText(`$tmpInfPath, `$tmpInfBody, (New-Object System.Text.UTF8Encoding(`$false)))
-`$infIdxRes = @(Build-InfIndexCache -InfFiles @((Get-Item -LiteralPath `$tmpInfPath)))
+`$infIdxRes = @(New-InfIndexCache -InfFiles @((Get-Item -LiteralPath `$tmpInfPath)))
 if (`$infIdxRes.Count -ne 1 -or (`$infIdxRes[0].Vendors -notcontains 'ZEBRA')) {
     throw "Provider=%Token% 간접 참조 벤더 해석 실패: `$(`$infIdxRes[0].Vendors -join ',')"
 }
@@ -383,6 +383,9 @@ if (`$safePrtsCheck.Count -eq 0 -and `$nativePrtsCheck.Count -gt 0) {
 `$uVariants = @(Get-RemoteUserCandidates -HostName '172.25.152.232' -UserName 'admin')
 if (`$uVariants.Count -lt 3 -or `$uVariants[0] -ne 'admin' -or (`$uVariants -notcontains '172.25.152.232\admin') -or (`$uVariants -notcontains '.\admin')) {
     throw ("Get-RemoteUserCandidates 다중 포맷 생성 오류: " + (`$uVariants -join ', '))
+}
+if ([AsanWin32.NativeApi]::DeleteLocalPrinterNative('__ASAN_NONEXISTENT_PRINTER_PROBE__')) {
+    throw 'DeleteLocalPrinterNative 미존재 프린터 오성공'
 }
 
 `$origRtPws  = `$global:AsanCtx.RuntimePasswords
@@ -421,10 +424,10 @@ try {
 if (-not `$wcSam -or -not `$wcKyo) { throw "와일드카드 매칭 실패 (Sam=`$wcSam, Kyo=`$wcKyo)" }
 
 `$toks = @(Get-SignificantTokens 'Kyocera ECOSYS PA5000dn')
-`$sMs  = Score-DriverDisplayName -DisplayName 'Microsoft IPP Class Driver' -SearchTarget 'Kyocera ECOSYS PA5000dn' -WantedNorm (Normalize-Text 'Kyocera ECOSYS PA5000dn') -WantedVendor 'KYOCERA' -Tokens `$toks -ModelStems `$stemsKyo -WantedHasDigits `$true -PreferPcl6 `$true -AllowVendorUniversal `$true
-`$sKx1 = Score-DriverDisplayName -DisplayName 'Kyocera KX DRIVER for Universal Printing' -SearchTarget 'Kyocera ECOSYS PA5000dn' -WantedNorm (Normalize-Text 'Kyocera ECOSYS PA5000dn') -WantedVendor 'KYOCERA' -Tokens `$toks -ModelStems `$stemsKyo -WantedHasDigits `$true -PreferPcl6 `$true -AllowVendorUniversal `$false
-`$sKx2 = Score-DriverDisplayName -DisplayName 'Kyocera KX DRIVER for Universal Printing' -SearchTarget 'Kyocera ECOSYS PA5000dn' -WantedNorm (Normalize-Text 'Kyocera ECOSYS PA5000dn') -WantedVendor 'KYOCERA' -Tokens `$toks -ModelStems `$stemsKyo -WantedHasDigits `$true -PreferPcl6 `$true -AllowVendorUniversal `$true
-`$sUpd = Score-DriverDisplayName -DisplayName 'Samsung Universal Print Driver 3' -SearchTarget 'Samsung SL-M3820ND' -WantedNorm (Normalize-Text 'Samsung SL-M3820ND') -WantedVendor 'SAMSUNG' -Tokens @(Get-SignificantTokens 'Samsung SL-M3820ND') -ModelStems `$stemsSam -WantedHasDigits `$true -PreferPcl6 `$true -AllowVendorUniversal `$true
+`$sMs  = Measure-DriverDisplayName -DisplayName 'Microsoft IPP Class Driver' -SearchTarget 'Kyocera ECOSYS PA5000dn' -WantedNorm (Format-NormalizedText 'Kyocera ECOSYS PA5000dn') -WantedVendor 'KYOCERA' -Tokens `$toks -ModelStems `$stemsKyo -WantedHasDigits `$true -PreferPcl6 `$true -AllowVendorUniversal `$true
+`$sKx1 = Measure-DriverDisplayName -DisplayName 'Kyocera KX DRIVER for Universal Printing' -SearchTarget 'Kyocera ECOSYS PA5000dn' -WantedNorm (Format-NormalizedText 'Kyocera ECOSYS PA5000dn') -WantedVendor 'KYOCERA' -Tokens `$toks -ModelStems `$stemsKyo -WantedHasDigits `$true -PreferPcl6 `$true -AllowVendorUniversal `$false
+`$sKx2 = Measure-DriverDisplayName -DisplayName 'Kyocera KX DRIVER for Universal Printing' -SearchTarget 'Kyocera ECOSYS PA5000dn' -WantedNorm (Format-NormalizedText 'Kyocera ECOSYS PA5000dn') -WantedVendor 'KYOCERA' -Tokens `$toks -ModelStems `$stemsKyo -WantedHasDigits `$true -PreferPcl6 `$true -AllowVendorUniversal `$true
+`$sUpd = Measure-DriverDisplayName -DisplayName 'Samsung Universal Print Driver 3' -SearchTarget 'Samsung SL-M3820ND' -WantedNorm (Format-NormalizedText 'Samsung SL-M3820ND') -WantedVendor 'SAMSUNG' -Tokens @(Get-SignificantTokens 'Samsung SL-M3820ND') -ModelStems `$stemsSam -WantedHasDigits `$true -PreferPcl6 `$true -AllowVendorUniversal `$true
 if (`$sMs -ne -1 -or `$sKx1 -ne -1 -or `$sKx2 -lt 200 -or `$sUpd -ne -1) {
     throw "2패스 스코어링 오류 (MS=`$sMs, KX_P1=`$sKx1, KX_P2=`$sKx2, SamUPD3=`$sUpd)"
 }
@@ -588,7 +591,7 @@ Sync-AllUiButtonStates
                 # 탭 2로 이동 후 합성 ZIP 로드 테스트
                 `$script:Ui.TabMain.SelectedIndex = 1
                 `$script:SmokeStage = 2
-                Load-Tab2BackupSourceAsync -SourcePath '$($synZip -replace "'", "''")'
+                Import-Tab2BackupSourceAsync -SourcePath '$($synZip -replace "'", "''")'
             }
             2 {
                 # 탭 2 합성 백업 로드 및 SEWOO 잠금 / 도우미 자동 펼침 검증

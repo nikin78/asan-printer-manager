@@ -22,7 +22,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 $projRoot    = Split-Path -Parent $PSScriptRoot
 $versionFile = Join-Path $projRoot 'VERSION'
-$expectedVer = '1.0.0-beta.3'
+$expectedVer = '1.0.0-beta.6'
 if (Test-Path -LiteralPath $versionFile) {
     $expectedVer = ([IO.File]::ReadAllText($versionFile, [Text.Encoding]::UTF8)).Trim()
 }
@@ -330,14 +330,15 @@ try {
         }
     }
 
-    # 4-5. Rule 13: PrintUIEntry /Ss, /Sr 호출에 /q 필수
+    # 4-5. Rule 13: 비대화형 PrintUIEntry (/Ss, /Sr, /Xs, /if, /ia, /in, /dl, /dn, /dd) 호출에 /q 필수
     $printUiLines = @($payloadText -split "`r?`n" | Select-String -Pattern 'PrintUIEntry' -SimpleMatch)
     $ssSrCount = 0
     foreach ($pl in $printUiLines) {
-        if ($pl.Line -match '/S[sr]\b') {
+        if ($pl.Line.TrimStart().StartsWith('#')) { continue }
+        if ($pl.Line -match '/(S[sr]|Xs|if|ia|in|dl|dn|dd)\b') {
             $ssSrCount++
             if ($pl.Line -notmatch '/q\b') {
-                $ruleViolations.Add("Rule13 위반: PrintUIEntry /Ss 또는 /Sr 에 /q 누락 (Line $($pl.LineNumber))")
+                $ruleViolations.Add("Rule13 위반: 비대화형 PrintUIEntry 호출에 /q 누락 (Line $($pl.LineNumber))")
             }
         }
     }

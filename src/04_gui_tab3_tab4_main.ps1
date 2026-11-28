@@ -48,7 +48,7 @@ $script:Tab4Ui = @{
 # ============================================================================
 # [탭 3 UI] 설치 프린터 검증 그리드 렌더링 및 액션 함수
 # ============================================================================
-function Render-Tab3VerifyGrid {
+function Update-Tab3VerifyGrid {
     $dgv = $script:Tab3Ui.DgvVerify
     if (-not $dgv -or $dgv.IsDisposed) { return }
 
@@ -157,7 +157,7 @@ function Invoke-Tab3RefreshAsync {
         $script:Tab3Ui.InstalledList = @($data)
         $script:Tab3Ui.HasLoadedOnce = $true
         $script:Tab3Ui.NeedsRefresh  = $false
-        Render-Tab3VerifyGrid
+        Update-Tab3VerifyGrid
     }
     Invoke-AsanAsyncTask -TaskName '설치 프린터 검증 상태 조회' -WorkScript $work -OnComplete $done -Indeterminate
 }
@@ -279,7 +279,7 @@ function Initialize-Tab3VerifyUi {
                 return
             }
             $script:Tab3Ui.InstalledList = @($data.Printers)
-            Render-Tab3VerifyGrid
+            Update-Tab3VerifyGrid
             if ($data.Policy -and (-not $data.Policy.SpoolerStopped)) {
                 [void](Show-AsanMessageBox -Text '일부 설정을 적용했으나 Print Spooler 중지 대기 시간이 초과되었습니다. 빨간 항목이 남아 있다면 다시 시도해 주세요.' -Caption '일괄 수정 확인 필요' -Buttons 'OK' -Icon 'Warning')
             } else {
@@ -310,7 +310,7 @@ function Initialize-Tab3VerifyUi {
                 return
             }
             $script:Tab3Ui.InstalledList = @($data.Printers)
-            Render-Tab3VerifyGrid
+            Update-Tab3VerifyGrid
             [void](Show-AsanMessageBox -Text $data.Result.Reason -Caption '인쇄 대기열 초기화 완료' -Buttons 'OK' -Icon 'Information')
         }
         Invoke-AsanAsyncTask -TaskName '인쇄 대기열 초기화' -WorkScript $work -OnComplete $done -Indeterminate
@@ -322,7 +322,7 @@ function Initialize-Tab3VerifyUi {
     $chkVirt.Font      = $script:FontBase
     $chkVirt.ForeColor = $script:Theme.InkPrimary
     $chkVirt.Margin    = New-Object System.Windows.Forms.Padding(0, 5, 0, 0)
-    $chkVirt.Add_CheckedChanged({ Render-Tab3VerifyGrid })
+    $chkVirt.Add_CheckedChanged({ Update-Tab3VerifyGrid })
     if ($tip) { $tip.SetToolTip($chkVirt, 'PDF, OneNote, Fax 등 기본 가상 프린터를 목록에 함께 표시합니다') }
 
     $flpTopBar.Controls.AddRange(@($btnRef, $btnFix, $btnReset, $chkVirt))
@@ -454,7 +454,7 @@ function Initialize-Tab3VerifyUi {
 # ============================================================================
 # [탭 4 UI] 서버 백업 관리 ([C2] RightFlowStrip + [H3] PreviewCache + [C4])
 # ============================================================================
-function Render-Tab4ServerGrid {
+function Update-Tab4ServerGrid {
     $dgv = $script:Tab4Ui.DgvServer
     if (-not $dgv -or $dgv.IsDisposed) { return }
 
@@ -716,7 +716,7 @@ function Initialize-Tab4ServerUi {
     $txtSearch.Size   = New-Object System.Drawing.Size(210, 24)
     $txtSearch.Margin = New-Object System.Windows.Forms.Padding(0, 2, 6, 0)
     $txtSearch.Add_TextChanged({
-        Render-Tab4ServerGrid
+        Update-Tab4ServerGrid
         Request-Tab4PreviewDebounced
     })
 
@@ -771,7 +771,7 @@ function Initialize-Tab4ServerUi {
             $script:Tab4Ui.PreviewCache.Clear()
             $script:AppState.ServerBackups = @($data.Entries)
             Update-Tab2ServerDropdown
-            Render-Tab4ServerGrid
+            Update-Tab4ServerGrid
             Update-Tab4PreviewBox
             [void](Show-AsanMessageBox -Text "5일 이상 경과된 백업 폴더 $($data.Removed.Count)개를 정리했습니다." -Caption '일괄 정리 완료' -Buttons 'OK' -Icon 'Information')
         }
@@ -821,12 +821,12 @@ function Initialize-Tab4ServerUi {
         }
     })
     $dgv.Add_CellDoubleClick({
-        param($sender, $e)
+        param($ctrl, $e)
         if ($e.RowIndex -lt 0 -or $script:AsyncState.IsBusy) { return }
         $sel = Get-Tab4SelectedBackupEntry
         if ($sel) {
             $script:Ui.TabMain.SelectedIndex = 1
-            Load-Tab2BackupSourceAsync -SourcePath $sel.FullPath
+            Import-Tab2BackupSourceAsync -SourcePath $sel.FullPath
         }
     })
 
@@ -874,7 +874,7 @@ function Initialize-Tab4ServerUi {
             return
         }
         $script:Ui.TabMain.SelectedIndex = 1
-        Load-Tab2BackupSourceAsync -SourcePath $sel.FullPath
+        Import-Tab2BackupSourceAsync -SourcePath $sel.FullPath
     })
 
     $btnOpenDir = New-StyledButton -Text '폴더 열기' -Width 100 -Height 36 -Variant 'Secondary'
@@ -926,7 +926,7 @@ function Initialize-Tab4ServerUi {
             $script:Tab4Ui.PreviewCache.Clear()
             $script:AppState.ServerBackups = @($data)
             Update-Tab2ServerDropdown
-            Render-Tab4ServerGrid
+            Update-Tab4ServerGrid
             Update-Tab4PreviewBox
             Add-UiLog -Message '선택한 서버 백업 폴더를 삭제했습니다.' -Level 'INFO'
         }
@@ -1026,7 +1026,7 @@ function Initialize-Tab4ServerUi {
 
     $script:Ui.OnEnvRefreshed.Add({
         $script:Tab4Ui.PreviewCache.Clear()
-        Render-Tab4ServerGrid
+        Update-Tab4ServerGrid
         Update-Tab4PreviewBox
     })
 }
@@ -1071,7 +1071,7 @@ function Start-AsanPrinterManagerApp {
             if ($script:AppState.IsWin11 -and $bestMatch) {
                 $script:Ui.TabMain.SelectedIndex = 1
                 Add-UiLog -Message "현재 PC와 일치하는 서버 백업을 자동으로 불러옵니다: $($bestMatch.Name)" -Level 'INFO'
-                Load-Tab2BackupSourceAsync -SourcePath $bestMatch.FullPath
+                Import-Tab2BackupSourceAsync -SourcePath $bestMatch.FullPath
             } else {
                 $script:Ui.TabMain.SelectedIndex = 0
                 if ($script:AppState.IsWin11) {

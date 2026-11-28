@@ -8,6 +8,26 @@
 
 ---
 
+## [v1.0.0-beta.6] - 2026-11-28
+
+### 재귀 심층 코드 리뷰 기능 버그 수정 (Fixed)
+* **Win32 네이티브 프린터 삭제 권한 버그 수정 (`DeleteLocalPrinterNative`):** `OpenPrinterW` 요청 권한이 `PRINTER_ACCESS_ADMINISTER`(`0x00000004`)만 설정되어 `DeletePrinter()` 호출 시 `ERROR_ACCESS_DENIED(5)`로 실패할 수 있던 문제를 **`PRINTER_ALL_ACCESS`(`0x000F000C`)**로 수정했습니다.
+* **다중 호스트 동일 공유명(`kyoceraf`/`samsungm`) 거짓 성공 충돌 수정 (`Add-SharedPrinterConnectionSafe`):** 서로 다른 호스트 PC가 같은 공유명을 사용할 때 기존 호스트의 공유 프린터 때문에 신규 호스트 연결 실패가 성공으로 오판되어 Win 11 `LOCAL_UNC` 우회 복원이 누락되던 버그를 **호스트(`ServerName`) + 공유명(`ShareName`) 동시 일치 검증**으로 수정했습니다.
+* **Win 11 Point-and-Print 우회 복원 시 기본 프린터 유실 수정 (`Invoke-PrinterRestoreEngine`):** 공유 프린터가 `LOCAL_UNC` 로컬 큐(`$localQueueName`)로 자동 우회 복원된 경우에도 원래 기본 프린터였다면 새 로컬 큐 이름으로 기본 프린터가 정상 지정되도록 매핑(`$renamedQueueMap`)을 추가했습니다.
+* **비대화형 `PrintUIEntry /Xs` 팝업 멈춤 방지 (`/q`) 및 정적 검증 확대:** `Set-PrinterPropsSafe`와 `Complete-Sip30mPostInstall`의 `PrintUIEntry /Xs` 호출에 `/q`를 추가해 백그라운드 Runspace 모달 창 멈춤을 차단하고, `scripts/verify_static.ps1` CHK-4가 모든 비대화형 `PrintUIEntry` (`/Ss`, `/Sr`, `/Xs`, `/if`, `/ia`, `/in`, `/dl`, `/dn`, `/dd`)의 `/q`를 강제 검증하도록 강화했습니다.
+* **손상 환경 폴백 정밀도 향상:**
+  * `Get-PnpUtilDriverBlocks`의 `oem*.inf` 폴백이 `Provider = %Token%` 간접 참조를 `[Strings]` 섹션(따옴표/비따옴표 및 영문·한글 우선순위)에서 실제 제조사명으로 해석하도록 보강했습니다.
+  * `Send-AsanBugReport`의 USB 바코드 장치 수집에 WMI 손상 시 `Get-BrokenBarcodeUsbDevices` (`pnputil`) 폴백을 추가하고, 한국어 `pnputil` 상태 키워드(`사용 안 함`/`오류`)를 확장했습니다.
+  * `Get-PrinterPortSafe` 레지스트리 폴백의 `:` 콜론 중복 키를 정규화하고, 탭 2 특수장비 전환 시(`Update-Tab2SpecialSelection`) `SIP-30M 설정 마무리` 버튼 토글 직후 도우미 패널 높이를 즉시 재계산하도록 보강했습니다.
+
+### 전 저장소 정적 분석(`PSScriptAnalyzer`) 경고 0건 정리 (Changed)
+* `scripts/build_single_bat.ps1`: 미사용 잔여 변수 `$injectedPwCount` 제거 (`PSUseDeclaredVarsMoreThanAssignments`).
+* `src/02`~`04`: WinForms 이벤트 핸들러 12곳의 `param($sender, $e)`를 `param($ctrl, $e)`로 통일해 PowerShell 자동 변수(`$Sender`) 경고 제거 (`PSAvoidAssignmentToAutomaticVariable`).
+* `src/01b`~`04` & `scripts/`: 비승인 동사 함수 17개를 PowerShell 표준 승인 동사(`Get-Verb`)로 일괄 정비(`Extract-*`→`Select-*`, `Ensure-SpoolerRunning`→`Start-SpoolerSafe`, `Ensure-*`→`Initialize-*`, `Clean-*`/`Normalize-*`→`Format-*`, `Build-*`→`New-*`, `Score-*`→`Measure-*`, `Apply-*`→`Set-*`, `Drain-*`→`Receive-*`, `Render-*`→`Update-*`, `Load-*`→`Import-*`) (`PSUseApprovedVerbs`).
+* 미사용 매개변수 2건 정리: `Invoke-PrinterRestoreEngine`의 `$PcIp`를 복원 스테이징 진행 로그에 활용하고, 원격 서버 탐색이 영구 폐지된 `Find-LocalSpecialInstaller`/`Get-SpecialPrinterAssistantInfo`의 잔여 `-SkipRemoteProbe` 스위치를 제거했습니다 (`PSReviewUnusedParameter`).
+
+---
+
 ## [v1.0.0-beta.5] - 2026-11-28
 
 ### 기종·OS 전수 호환성 보강 및 기능 버그 수정 (Fixed — 망분리 9,803대 전 기종·Win 10 초기 빌드~Win 11 24H2·골든 이미지 손상 완벽 대응)

@@ -19,7 +19,7 @@
 
 * **최종 배포물:** `dist/Asan_Printer_Manager.bat` (단일 실행 파일, 외부 의존성 0개 — Python 등 미사용, `.gitignore` 처리 + **GitHub Releases에 즉시 실행 가능한 완성본 `.bat` 배포**)
 * **기본 공용 계정 내장:** 현장 작업 편의성을 위해 병원 내 공용 계정(`admin` + 공용 암호 3종)은 `src/01a_ctx_win32.ps1`에 기본 내장되어 별도 설정 파일 없이 단일 `.bat`만으로 즉시 작동합니다. *(서버 암호 변경 시에는 상단 `서버 로그인` UI 또는 선택적 `secrets.local.json`으로 대응합니다.)*
-* **버전 기준:** `VERSION` 파일 (현재 SemVer `1.0.0-beta.5`, `src/01a_ctx_win32.ps1`의 `$global:AsanCtx.AppVersion`과 항상 동기화)
+* **버전 기준:** `VERSION` 파일 (현재 SemVer `1.0.0-beta.6`, `src/01a_ctx_win32.ps1`의 `$global:AsanCtx.AppVersion`과 항상 동기화)
 * **소스 모듈 (`src/` — 9개 모듈):**
   * `00_bootstrap.bat` — Zero-USB-Write `%TEMP%` 스테이징, WOW64 `Sysnative`, URL-Safe Base64 UAC, `-STA`, `RC == 99` 가드 (`UTF-8 No BOM` + `CRLF`)
   * `01a_ctx_win32.ps1` — `$global:AsanCtx` 전역 컨텍스트, C# 5.0 `AsanWin32.NativeApi`, `Hide-ConsoleWindowSafe` (`UTF-8 With BOM` + `CRLF`)
@@ -46,7 +46,7 @@
 4. **PowerShell 5.1 & C# 5.0 엄격 문법:**
    * PS 7+ 문법 전면 금지 (`? :`, `??`, `??=`, `&&`, `||`, `ForEach-Object -Parallel`).
    * **해시테이블 리터럴(`@{ ... }`) 내부 `if` 문 절대 금지.**
-   * WinForms 대화상자·비동기 콜백에서 로컬 변수 클로저 캡처 금지 (`DialogResult`, `$sender.Tag`, `$script:AsyncState.CallbackState`만 사용).
+   * WinForms 대화상자·비동기 콜백에서 로컬 변수 클로저 캡처 금지 (`DialogResult`, `param($ctrl, $e)`의 `$ctrl.Tag`, `$script:AsyncState.CallbackState`만 사용 — 자동 변수 `$sender` 덮어쓰기 금지).
    * JSON 직렬화 전 문자열 배열 빈 값/`$null` 필터링.
    * 인라인 `Add-Type` C# 코드는 **C# 5.0**만 사용 (`$"..."`, `?.`, `nameof`, 식 본문 멤버 금지).
 5. **Runspace 격리 규칙:** 비동기 `$work = { ... }` 블록에서 호출하는 모든 내부 함수는 반드시 코어 모듈(`src/01a_ctx_win32.ps1`~`01e_special_report_snapshot.ps1`) 중 `src/01e_special_report_snapshot.ps1`의 `$script:CoreFunctionNames` 스냅샷 **이전**에 정의하고 `Verb-Noun` 형식(`^[A-Za-z]+-[A-Za-z0-9]+$`)을 지킬 것.
@@ -54,7 +54,7 @@
 7. **IPv4 대역 하드코딩 금지:** 병원망은 `172.*`, `10.*` 외 `19*.*`도 사용하므로 특정 사설 대역만 허용하지 말 것.
 8. **현장 안전 규칙:**
    * `net.exe` 파싱 및 `cmdkey.exe` 호출 금지 (`AsanWin32.NativeApi` P/Invoke 유지).
-   * 모든 `PrintUIEntry /Ss`, `/Sr` 호출에 반드시 **`/q`** 포함.
+   * 모든 비대화형 `PrintUIEntry` (`/Ss`, `/Sr`, `/Xs`, `/if`, `/ia`, `/in`, `/dl`, `/dn`, `/dd`) 호출에 반드시 **`/q`** 포함.
    * `Remove-Printer`, `Set-Printer`, `Rename-Printer`는 반드시 **`-InputObject`** 사용 (`-Name` 금지).
    * `PrintBrm -r` 전 Win 11 골든 이미지 기존 프린터 스냅샷 보존.
    * 레지스트리 정책(`SNMP Enabled = 0`, `Attributes` `[uint32]` `0xFFFFF7FF` 마스킹, `.reg` import)은 `Stop-Service Spooler` 상태에서 원자적 적용 후 재시작.

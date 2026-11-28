@@ -206,7 +206,7 @@ function Update-Tab2ServerDropdown {
     Sync-AllUiButtonStates
 }
 
-function Render-Tab2NotesBanner {
+function Update-Tab2NotesBanner {
     param(
         [object[]]$BackupNotes = @(),
         [string[]]$ExtraWarnings = @()
@@ -256,7 +256,7 @@ function Update-Tab2GridSummary {
     Sync-AllUiButtonStates
 }
 
-function Render-Tab2RestoreGrid {
+function Update-Tab2RestoreGrid {
     $dgv = $script:Tab2Ui.DgvRestore
     if (-not $dgv -or $dgv.IsDisposed) { return }
 
@@ -416,7 +416,7 @@ function Update-Tab2SpecialSelection {
     if ($script:Tab2Ui.SpecialInfoCache -and $script:Tab2Ui.SpecialInfoCache.ContainsKey($cacheKey)) {
         $info = $script:Tab2Ui.SpecialInfoCache[$cacheKey]
     } else {
-        $info = Get-SpecialPrinterAssistantInfo -SpecialRow $selRow -SkipRemoteProbe -PreloadedLpts @($script:Tab2Ui.LocalLptsCache)
+        $info = Get-SpecialPrinterAssistantInfo -SpecialRow $selRow -PreloadedLpts @($script:Tab2Ui.LocalLptsCache)
         if ($script:Tab2Ui.SpecialInfoCache) { $script:Tab2Ui.SpecialInfoCache[$cacheKey] = $info }
     }
     $script:Tab2Ui.CurrentSpecInfo = [pscustomobject]@{
@@ -446,6 +446,7 @@ function Update-Tab2SpecialSelection {
         $script:Tab2Ui.BtnSpecInstall.Text = '전용 설치 실행'
     }
 
+    Update-Tab2HelperHeightSafe
     Sync-AllUiButtonStates
 }
 
@@ -474,7 +475,7 @@ function Update-Tab2SpecialPanel {
 # ============================================================================
 # [공개 진입점] 백업 소스 로드 및 지연 검증 (탭 2 자체 및 탭 4에서 공용 호출)
 # ============================================================================
-function Load-Tab2BackupSourceAsync {
+function Import-Tab2BackupSourceAsync {
     param(
         [string]$SourcePath,
         [switch]$ForceLiveProbe
@@ -593,8 +594,8 @@ function Load-Tab2BackupSourceAsync {
             $extraWarns.Add("공유 인증 확인 필요 · 공유 PC $($script:AppState.AuthFailedHosts.Count)곳에서 연결이 거부되었습니다. 아래 공유 인증 탭에서 해결해 주세요.")
         }
 
-        Render-Tab2NotesBanner -BackupNotes @($bd.BackupNotes) -ExtraWarnings $extraWarns.ToArray()
-        Render-Tab2RestoreGrid
+        Update-Tab2NotesBanner -BackupNotes @($bd.BackupNotes) -ExtraWarnings $extraWarns.ToArray()
+        Update-Tab2RestoreGrid
         Update-Tab2AuthPanel
         Update-Tab2SpecialPanel
 
@@ -654,7 +655,7 @@ function Start-Tab2RestoreExecution {
             if ($r.SpecialType -notin @('SEWOO_TE201', 'EPSON_TMT88_LPT')) { $r.Selected = $true }
         }
         $skipBrmFlag = $true
-        Render-Tab2RestoreGrid
+        Update-Tab2RestoreGrid
     }
 
     $selectedCount = (@($rowsToRestore | Where-Object { $_.Selected })).Count
@@ -757,7 +758,7 @@ function Start-Tab2RestoreExecution {
         if ($script:AppState.CurrentBackupMeta -and $script:AppState.CurrentBackupMeta.Data) {
             $origNotes = @($script:AppState.CurrentBackupMeta.Data.BackupNotes)
         }
-        Render-Tab2NotesBanner -BackupNotes $origNotes -ExtraWarnings $extra.ToArray()
+        Update-Tab2NotesBanner -BackupNotes $origNotes -ExtraWarnings $extra.ToArray()
         Update-Tab2AuthPanel
         Update-Tab2SpecialPanel
 
@@ -917,7 +918,7 @@ function Invoke-Tab2HostAuthActionAsync {
                     }
                 }
             }
-            Render-Tab2RestoreGrid
+            Update-Tab2RestoreGrid
             Update-Tab2AuthPanel
 
             [void](Show-AsanMessageBox -Text "호스트($targetHost) 인증에 성공했습니다! ($($authRes.Reason))`r`n`r`n이제 [실패 항목만 재시도] 또는 [선택 항목 복원 시작] 버튼을 눌러 복원을 완료하세요." -Caption '공유 호스트 인증 성공' -Buttons 'OK' -Icon 'Information')
@@ -1123,7 +1124,7 @@ function Initialize-Tab2RestoreUi {
         if ($idx -ge 0 -and $idx -lt $script:Tab2Ui.ComboBackupEntries.Count) {
             $pickedPath = [string]$script:Tab2Ui.ComboBackupEntries[$idx].FullPath
             if ($pickedPath -ine [string]$script:Tab2Ui.LoadedSourcePath) {
-                Load-Tab2BackupSourceAsync -SourcePath $pickedPath
+                Import-Tab2BackupSourceAsync -SourcePath $pickedPath
             }
         }
     })
@@ -1134,7 +1135,7 @@ function Initialize-Tab2RestoreUi {
     $btnLoadSrv.Add_Click({
         $idx = $script:Tab2Ui.CmbServerBackups.SelectedIndex
         if ($idx -ge 0 -and $idx -lt $script:Tab2Ui.ComboBackupEntries.Count) {
-            Load-Tab2BackupSourceAsync -SourcePath $script:Tab2Ui.ComboBackupEntries[$idx].FullPath
+            Import-Tab2BackupSourceAsync -SourcePath $script:Tab2Ui.ComboBackupEntries[$idx].FullPath
         }
     })
 
@@ -1164,7 +1165,7 @@ function Initialize-Tab2RestoreUi {
             $ofd.InitialDirectory = $global:AsanCtx.OfflineLocalRoot
         }
         if ($ofd.ShowDialog($script:Ui.Form) -eq [System.Windows.Forms.DialogResult]::OK) {
-            Load-Tab2BackupSourceAsync -SourcePath $ofd.FileName
+            Import-Tab2BackupSourceAsync -SourcePath $ofd.FileName
         }
         $ofd.Dispose()
     })
@@ -1175,7 +1176,7 @@ function Initialize-Tab2RestoreUi {
     $btnDeferred.Enabled = $false
     $btnDeferred.Add_Click({
         if (-not [string]::IsNullOrWhiteSpace($script:Tab2Ui.LoadedSourcePath)) {
-            Load-Tab2BackupSourceAsync -SourcePath $script:Tab2Ui.LoadedSourcePath -ForceLiveProbe
+            Import-Tab2BackupSourceAsync -SourcePath $script:Tab2Ui.LoadedSourcePath -ForceLiveProbe
         }
     })
 
@@ -1312,13 +1313,13 @@ function Initialize-Tab2RestoreUi {
     }
 
     $dgv.Add_CurrentCellDirtyStateChanged({
-        param($sender, $e)
-        if ($sender.IsCurrentCellDirty) {
-            [void]$sender.CommitEdit([System.Windows.Forms.DataGridViewDataErrorContexts]::Commit)
+        param($ctrl, $e)
+        if ($ctrl.IsCurrentCellDirty) {
+            [void]$ctrl.CommitEdit([System.Windows.Forms.DataGridViewDataErrorContexts]::Commit)
         }
     })
     $dgv.Add_CellValueChanged({
-        param($sender, $e)
+        param($ctrl, $e)
         if ($e.ColumnIndex -eq 0 -and $e.RowIndex -ge 0) {
             Sync-Tab2GridSelectionToState
             Update-Tab2GridSummary
